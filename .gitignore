@@ -1,0 +1,6 @@
+# Binary files
+*.rar
+*.zip
+
+# WoW Interface Code
+BlizzardInterfaceCode/
