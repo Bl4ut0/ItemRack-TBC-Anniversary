@@ -1,6 +1,6 @@
 # ItemRack - TBC Anniversary Edition
 
-A port of the classic ItemRack addon for **World of Warcraft: The Burning Crusade Classic Anniversary Edition (2.5.4)**.
+A port of the classic ItemRack addon for **World of Warcraft: The Burning Crusade Classic Anniversary Edition (2.5.5)**.
 
 ## Credits
 
