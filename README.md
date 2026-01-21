@@ -40,6 +40,7 @@ The TBC Anniversary Edition runs on a modern WoW client engine, which required s
 ### Key Changes
 - API namespace migrations (`C_Container`, `C_Item`, `C_AddOns`)
 - Button template compatibility fixes for secure action handling
+- **Visual Fix:** Resolved yellow triangle artifacts in Options Menu via texture cleanup
 - Deprecation fallback shims for critical functions
 
 ## Support

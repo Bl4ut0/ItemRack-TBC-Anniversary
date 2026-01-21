@@ -763,9 +763,40 @@
 		<Size>
 			<AbsDimension x="36" y="36"/>
 		</Size>
+		<PushedTexture file="Interface\Buttons\UI-Quickslot-Depress"/>
+		<HighlightTexture file="Interface\Buttons\ButtonHilight-Square" alphaMode="ADD"/>
+		<CheckedTexture file="Interface\Buttons\CheckButtonHilight" alphaMode="ADD"/>
 		<Scripts>
 			<OnLoad>
 				self:RegisterForClicks("LeftButtonUp","RightButtonUp")
+				
+				-- Hide broken overlays (by key)
+				if self.QuickKeybindHighlightTexture then self.QuickKeybindHighlightTexture:Hide() end
+				if self.IconMask then self.IconMask:Hide() end
+				if self.NewActionTexture then self.NewActionTexture:Hide() end
+				if self.SpellHighlightTexture then self.SpellHighlightTexture:Hide() end
+				if self.Flash then self.Flash:Hide() end
+
+				-- Programmatically hide specific anonymous textures (Triangle Hunting)
+				-- We keep Normal, Pushed, Highlight, Checked. We hide the rest.
+				for _, region in ipairs({self:GetRegions()}) do
+					if region:GetObjectType() == "Texture" then
+						local isStandard = false
+						if region == self.NormalTexture or region == self:GetNormalTexture() then isStandard = true end
+						if region == self.PushedTexture or region == self:GetPushedTexture() then isStandard = true end
+						if region == self.HighlightTexture or region == self:GetHighlightTexture() then isStandard = true end
+						if region == self.CheckedTexture or region == self:GetCheckedTexture() then isStandard = true end
+						
+						-- Also check if it's the named Icon (which usually has a name, but just in case)
+						if region:GetName() then isStandard = true end
+
+						if not isStandard then
+							region:SetTexture(nil)
+							region:Hide()
+							region:SetAlpha(0)
+						end
+					end
+				end
 			</OnLoad>
 			<OnClick>
 				PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)

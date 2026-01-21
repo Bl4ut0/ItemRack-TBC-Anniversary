@@ -198,3 +198,34 @@ Use these commands in-game to verify shims are working:
 ```
 
 Expected output: `type: macro macrotext: /use 13`
+
+---
+
+## Options Menu Texture Cleanup
+**File:** `ItemRackOptions/ItemRackOptions.xml`
+
+### Problem
+The buttons in the **ItemRack Options** menu (`ItemRackOptInvTemplate`, used for slot selection) inherited from `ActionButtonTemplate`. In the TBC Anniversary client, this template introduces several anonymous texture overlays (likely using missing Atlases) which render as a large **Yellow Triangle** when the button is interacted with (clicked/selected).
+
+Standard texture overrides were insufficient because the artifacts were rendering as additional "anonymous" textures layered on top of the button.
+
+### Solution
+We implemented a robust programmatic cleanup in the `OnLoad` script of `ItemRackOptInvTemplate`:
+1.  **Iterate all regions** of the button.
+2.  **Identify standard textures** (`NormalTexture`, `PushedTexture`, `HighlightTexture`, `CheckedTexture`, and the named `Icon`).
+3.  **Hide everything else** (specifically anonymous textures that do not match the standard set).
+
+Additionally, we overrode the standard interaction textures (`PushedTexture`, `HighlightTexture`, `CheckedTexture`) with valid Classic interface files (e.g., `Interface\Buttons\UI-Quickslot2`) to ensure consistent visuals without reliance on potentially broken template defaults.
+
+```xml
+<OnLoad>
+    -- ...
+    -- Programmatically hide specific anonymous textures (Triangle Hunting)
+    for _, region in ipairs({self:GetRegions()}) do
+        if region:GetObjectType() == "Texture" then
+            -- Logic to identify and preserve standard textures
+            -- Hide unknown anonymous textures
+        end
+    end
+</OnLoad>
+```
