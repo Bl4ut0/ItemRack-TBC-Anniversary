@@ -1,7 +1,7 @@
-## Interface: 20505
-## Title: ItemRack - Classic
-## Version: 2.5.5
-## Author: Gello - Updated for Classic by Rottenbeer,Roadblock
+## Interface: 20504
+## Title: ItemRack - TBC Anniversary
+## Version: 4.24
+## Author: Gello - Classic by Rottenbeer,Roadblock - TBC Anniversary by Bl4ut0
 ## SavedVariables: ItemRackSettings, ItemRackItems, ItemRackEvents
 ## SavedVariablesPerCharacter: ItemRackUser
 ## OptionalDeps: Masque

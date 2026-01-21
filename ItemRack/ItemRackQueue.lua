@@ -1,8 +1,12 @@
 -- ItemRackQueue.lua
 local _
 
--- Compatibility shim for GetItemCooldown (global in old TBC, C_Container in 2.5.5)
-local GetItemCooldown = _G.GetItemCooldown or (C_Container and C_Container.GetItemCooldown)
+-- Compatibility shims for Item APIs (globals may not exist if deprecation fallbacks disabled)
+-- GetItemCooldown exists in both C_Container and C_Item - prefer C_Container for consistency
+local GetItemCooldown = _G.GetItemCooldown or (C_Container and C_Container.GetItemCooldown) or (C_Item and C_Item.GetItemCooldown)
+local GetItemSpell = _G.GetItemSpell or (C_Item and C_Item.GetItemSpell)
+local GetItemCount = _G.GetItemCount or (C_Item and C_Item.GetItemCount)
+local IsEquippedItem = _G.IsEquippedItem or (C_Item and C_Item.IsEquippedItem)
 
 -- Debug mode - set to true to enable debug prints
 ItemRack.QueueDebug = false

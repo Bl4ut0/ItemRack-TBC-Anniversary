@@ -1,5 +1,7 @@
 -- Compatibility shim for LoadAddOn (moved to C_AddOns in TBC 2.5.5+)
 local LoadAddOn = LoadAddOn or (C_AddOns and C_AddOns.LoadAddOn)
+-- Compatibility shim for GetItemCount (moved to C_Item, may not have global if deprecation fallbacks off)
+local GetItemCount = GetItemCount or (C_Item and C_Item.GetItemCount)
 
 ItemRack.Docking = {} -- temporary table for current docking potential
 
@@ -39,9 +41,11 @@ function ItemRack.InitButtons()
 	local button
 	for i=0,20 do
 		button = _G["ItemRackButton"..i]
-		if i<20 then
+			if i<20 then
 			button:SetAttribute("type","item")
 			button:SetAttribute("slot",i)
+			-- TBC Anniversary: Also set "item" attribute as string for SecureCmdItemParse
+			button:SetAttribute("item", tostring(i))
 		else
 			button:SetAttribute("shift-slot*",ATTRIBUTE_NOOP)
 			button:SetAttribute("alt-slot*",ATTRIBUTE_NOOP)
@@ -127,7 +131,7 @@ function ItemRack.AddButton(id)
 		button:SetPoint("CENTER",UIParent,"CENTER")
 	end
 	ItemRack.NewAnchor = id
-	_G["ItemRackButton"..id.."Icon"]:SetTexture(ItemRack.GetTextureBySlot(id))
+	_G["ItemRackButton"..id.."ItemRackIcon"]:SetTexture(ItemRack.GetTextureBySlot(id))
 	button:Show()
 	ItemRack.UpdateButtonCooldowns()
 	if id==20 then
@@ -364,7 +368,7 @@ end
 function ItemRack.UpdateButtons()
 	for i in pairs(ItemRackUser.Buttons) do
 		if i<20 then
-			_G["ItemRackButton"..i.."Icon"]:SetTexture(ItemRack.GetTextureBySlot(i))
+			_G["ItemRackButton"..i.."ItemRackIcon"]:SetTexture(ItemRack.GetTextureBySlot(i))
 		end
 		--ranged ammo is now infinite, so the below ammo count updater has been commented out
 		if i==0 then --ranged "ammo" slot
@@ -583,10 +587,10 @@ function ItemRack.UpdateButtonLocks()
 			isLocked = IsInventoryItemLocked(i)
 			alreadyLocked = ItemRack.LockedButtons[i]
 			if isLocked and not alreadyLocked then
-				_G["ItemRackButton"..i.."Icon"]:SetDesaturated(true)
+				_G["ItemRackButton"..i.."ItemRackIcon"]:SetDesaturated(true)
 				ItemRack.LockedButtons[i] = 1
 			elseif not isLocked and alreadyLocked then
-				_G["ItemRackButton"..i.."Icon"]:SetDesaturated(false)
+				_G["ItemRackButton"..i.."ItemRackIcon"]:SetDesaturated(false)
 				ItemRack.LockedButtons[i] = nil
 			end
 		end

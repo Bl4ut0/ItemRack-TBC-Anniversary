@@ -23,8 +23,11 @@
 		</Layers>
 	</Frame>
 
-	<CheckButton name="ItemRackButtonsTemplate" movable="true" parent="UIParent" inherits="ActionButtonTemplate,SecureActionButtonTemplate" hidden="true" virtual="true">
-<!--		<Layers>
+	<CheckButton name="ItemRackButtonsTemplate" movable="true" parent="UIParent" inherits="ActionBarButtonTemplate" hidden="true" virtual="true">
+		<Layers>
+			<Layer level="BORDER">
+				<Texture name="$parentItemRackIcon"/>
+			</Layer>
 			<Layer level="OVERLAY">
 				<Texture name="$parentQueue" file="Interface\Cursor\Interact" hidden="true">
 					<Size x="16" y="16"/>
@@ -33,8 +36,8 @@
 					</Anchors>
 				</Texture>
 			</Layer>
-		</Layers> -->
-		<Scripts>
+		</Layers>
+			<Scripts>
 			<PostClick>
 				ItemRack.ButtonPostClick(self,button)
 			</PostClick>
@@ -96,27 +99,7 @@
 	<Frame parent="ItemRackButton19" inherits="ItemRackTimeTemplate"/>
 	<Frame parent="ItemRackButton20" inherits="ItemRackTimeTemplate"/>
 
-	<Frame parent="ItemRackButton0" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton1" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton2" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton3" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton4" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton5" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton6" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton7" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton8" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton9" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton10" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton11" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton12" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton13" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton14" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton15" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton16" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton17" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton18" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton19" inherits="ItemRackQueueTemplate"/>
-	<Frame parent="ItemRackButton20" inherits="ItemRackQueueTemplate"/>
+
 
 	<Button name="ItemRackButtonMenuTemplate" virtual="true">
 		<Size>

@@ -46,6 +46,10 @@ if not AuraUtil or not AuraUtil.FindAuraByName then
 	end
 end
 
+-- Compatibility shims for Item APIs (may not have globals if deprecation fallbacks disabled)
+local GetItemInfo = _G.GetItemInfo or (C_Item and C_Item.GetItemInfo)
+local GetItemCount = _G.GetItemCount or (C_Item and C_Item.GetItemCount)
+
 function ItemRack.IsClassic()
 	-- Classic Era: TOC version 10000-19999 or project ID
 	if wowtoc >= 10000 and wowtoc < 20000 then
@@ -682,7 +686,7 @@ function ItemRack.UpdateCurrentSet()
 		end
 	end
 	if ItemRackButton20 and ItemRackUser.Buttons[20] then
-		ItemRackButton20Icon:SetTexture(texture)
+		ItemRackButton20ItemRackIcon:SetTexture(texture)
 		ItemRackButton20Name:SetText(setname)
 	end
 	ItemRack.Broker.icon = texture
