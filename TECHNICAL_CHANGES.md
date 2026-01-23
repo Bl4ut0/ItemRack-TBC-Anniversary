@@ -169,7 +169,7 @@ end
 |------|---------|
 | `ItemRack/ItemRack.toc` | Version 4.24, Interface 20504, updated author |
 | `ItemRack/ItemRack.lua` | C_AddOns, C_Container, C_Item shims, AuraUtil shim |
-| `ItemRack/ItemRackButtons.lua` | LoadAddOn shim, macro button type |
+| `ItemRack/ItemRackButtons.lua` | LoadAddOn shim |
 | `ItemRack/ItemRackButtons.xml` | ActionBarButtonTemplate inheritance |
 | `ItemRack/ItemRackEquip.lua` | C_Container shims |
 | `ItemRack/ItemRackQueue.lua` | GetItemCooldown shim (C_Container), GetItemSpell/GetItemCount/IsEquippedItem shims |
@@ -194,10 +194,10 @@ Use these commands in-game to verify shims are working:
 
 ### Verifying Button Attributes
 ```lua
-/run local b=ItemRackButton13; print("type:", b:GetAttribute("type"), "macrotext:", b:GetAttribute("macrotext"))
+/run local b=ItemRackButton13; print("type:", b:GetAttribute("type"), "item:", b:GetAttribute("item"))
 ```
 
-Expected output: `type: macro macrotext: /use 13`
+Expected output: `type: item item: 13`
 
 ---
 
