@@ -42,7 +42,7 @@ function ItemRack.InitButtons()
 	for i=0,20 do
 		button = _G["ItemRackButton"..i]
 			if i<20 then
-			button:SetAttribute("type","item")
+			button:SetAttribute("type1","item")
 			button:SetAttribute("slot",i)
 			-- TBC Anniversary: Also set "item" attribute as string for SecureCmdItemParse
 			button:SetAttribute("item", tostring(i))
