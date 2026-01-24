@@ -1,11 +1,12 @@
 ## Interface: 20504
-## Title: ItemRack - TBC Anniversary
-## Version: 4.24
-## Author: Gello - Classic by Rottenbeer,Roadblock - TBC Anniversary by Bl4ut0
+## Title: ItemRack - Anniversary
+## IconTexture: Interface\AddOns\ItemRack\ItemRackIcon
+## Version: 4.26
+## Author: Gello - Classic by Rottenbeer,Roadblock - Anniversary by Bl4ut0
 ## SavedVariables: ItemRackSettings, ItemRackItems, ItemRackEvents
 ## SavedVariablesPerCharacter: ItemRackUser
 ## OptionalDeps: Masque
-## X-Curse-Project-ID: 340903
+## X-Curse-Project-ID: 1441253
 
 # Libraries
 Libs\Libs.xml

@@ -42,6 +42,7 @@ function ItemRack.InitButtons()
 	for i=0,20 do
 		button = _G["ItemRackButton"..i]
 			if i<20 then
+			button:SetAttribute("type",nil)
 			button:SetAttribute("type1","item")
 			button:SetAttribute("slot",i)
 			-- TBC Anniversary: Also set "item" attribute as string for SecureCmdItemParse
@@ -501,12 +502,23 @@ end
 function ItemRack.ButtonPostClick(self,button)
 	self:SetChecked(false)
 	local id = self:GetID()
-	if button=="RightButton" and ItemRackSettings.MenuOnRight=="ON" then
-		if ItemRackMenuFrame:IsVisible() and ItemRack.menuOpen==id then
-			ItemRackMenuFrame:Hide()
-		else
-			ItemRack.DockMenuToButton(id)
-			ItemRack.BuildMenu(id, nil, 2)
+	if button=="RightButton" then
+		local handled = nil
+		if not InCombatLockdown() then
+			local nextItem = ItemRack.GetNextItemInQueue and ItemRack.GetNextItemInQueue(id)
+			-- ItemRack.Print("RightClick Debug: Slot "..id.." NextItem: "..(nextItem or "nil"))
+			if nextItem then
+				ItemRack.EquipItemByID(nextItem,id)
+				handled = 1
+			end
+		end
+		if not handled and ItemRackSettings.MenuOnRight=="ON" then
+			if ItemRackMenuFrame:IsVisible() and ItemRack.menuOpen==id then
+				ItemRackMenuFrame:Hide()
+			else
+				ItemRack.DockMenuToButton(id)
+				ItemRack.BuildMenu(id, nil, 2)
+			end
 		end
 	elseif IsShiftKeyDown() then
 		if id<20 then

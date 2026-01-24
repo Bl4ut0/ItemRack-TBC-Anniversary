@@ -2130,7 +2130,7 @@ function ItemRack.SetSetBindings()
 				button = _G[buttonName] or CreateFrame("Button",buttonName,nil,"SecureActionButtonTemplate")
 
 				button:SetAttribute("type","macro")
-				local macrotext = "/script ItemRack.RunSetBinding(\""..i.."\")\n"
+				local macrotext = ""
 				for slot = 16, 18 do
 					if ItemRackUser.Sets[i].equip[slot] then
 						local name,_,_,_,_,_,_,_,_,_ = GetItemInfo("item:"..ItemRackUser.Sets[i].equip[slot])
@@ -2140,6 +2140,7 @@ function ItemRack.SetSetBindings()
 					end
 				end
 				button:SetAttribute("macrotext",macrotext)
+				button:SetScript("PostClick", function() ItemRack.RunSetBinding(i) end)
 				SetBindingClick(ItemRackUser.Sets[i].key,buttonName)
 			end
 		end

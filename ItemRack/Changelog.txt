@@ -1,3 +1,16 @@
+__ New in 4.26 - By Bl4ut0 __
+* Corrected Right-Click action: Decoupled Right-Click "Auto-Progress" from Menu settings. Right-Clicking a queued slot now swaps to the next item by default.
+* Implemented Queue Looping: Manual Right-Click swapping now wraps around to the start of the queue when reaching the end or a stop marker.
+* Fixed Keybinding System: Resolved issue where keybinds (e.g., "0") would not execute due to security blocks on /script. Keybinds now use secure PostClick handlers.
+* Fixed Keybinding Persistence: Keybinds assigned in options are now saved immediately to server, preventing loss after reload.
+* Cleanup: Deleting a set now correctly unbinds its associated keybind to prevent orphaned bindings.
+
+__ New in 4.25 - By Bl4ut0 __
+* Fixed "Action Blocked" errors by replacing incompatible "ActionButtonTemplate" with custom secure button implementation.
+* Added comprehensive API shims (C_Container, C_AddOns, C_Item) to support the modern TBC Anniversary client architecture.
+* Fixed graphical glitches (Yellow Triangles) in the Options menu by cleaning up anonymous texture layers.
+* Updated TOC for Interface 20504 (TBC Anniversary).
+
 __ New in 4.23 - By Rottenbeer  __
 * Fix TOC for Cata by Adal4
 

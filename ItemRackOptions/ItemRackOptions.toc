@@ -1,6 +1,6 @@
 ## Interface: 20504
 ## Title: ItemRackOptions
-## Version: 4.24
+## Version: 4.26
 ## Notes: Load-On-Demand modules for ItemRack
 ## Dependencies: ItemRack, Blizzard_MacroUI
 ## LoadOnDemand: 1

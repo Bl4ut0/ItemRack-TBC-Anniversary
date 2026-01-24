@@ -526,7 +526,22 @@ end
 
 function ItemRackOpt.DeleteSet()
 	local setname = ItemRackOptSetsName:GetText()
-	ItemRackUser.Sets[setname] = nil
+	if ItemRackUser.Sets[setname] then
+		if not InCombatLockdown() then
+			local buttonName = "ItemRack"..UnitName("player")..GetRealmName()..setname
+			local action = "CLICK "..buttonName..":LeftButton"
+			while GetBindingKey(action) do
+				SetBinding(GetBindingKey(action))
+			end
+			local bindingSet = GetCurrentBindingSet()
+			if bindingSet then
+				SaveBindings(bindingSet)
+			end
+		else
+			ItemRack.Print("Cannot delete set keybindings in combat.")
+		end
+		ItemRackUser.Sets[setname] = nil
+	end
 	ItemRackOpt.PopulateSetList()
 	ItemRack.CleanupEvents()
 	ItemRackOpt.PopulateEventList()
@@ -1030,6 +1045,10 @@ function ItemRackOpt.SetKeyBinding()
 	if not InCombatLockdown() and ItemRackOpt.Binding.keyPressed then
 		ItemRackOpt.UnbindKey()
 		SetBindingClick(ItemRackOpt.Binding.keyPressed,ItemRackOpt.Binding.buttonName)
+		local bindingSet = GetCurrentBindingSet()
+		if bindingSet then
+			SaveBindings(bindingSet)
+		end
 	else
 		ItemRack.Print("Sorry, you can't bind keys while in combat.")
 	end
