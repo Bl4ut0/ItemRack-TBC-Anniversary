@@ -60,6 +60,20 @@ function ItemRack.InitButtons()
 		if ItemRack.MasqueGroups and ItemRack.MasqueGroups[1] then
 			ItemRack.MasqueGroups[1]:AddButton(button)
 		end
+
+		-- Fix for TBC Anniversary: Detach ActionBarButtonTemplate logic
+		-- This prevents ItemRack buttons from inheriting Main Action Bar states (flashing red on auto-attack, action keybinds)
+		button:UnregisterAllEvents()
+		button:SetScript("OnEvent", nil)
+		button:SetScript("OnUpdate", nil)
+		button:SetScript("OnShow", nil)
+		button:SetScript("OnHide", nil)
+		button:SetAttribute("action", nil)
+		button.action = nil
+		if _G[button:GetName().."HotKey"] then
+			_G[button:GetName().."HotKey"]:SetText("")
+		end
+
 	end
 
 	ItemRack.CreateTimer("ButtonsDocking",ItemRack.ButtonsDocking,.2,1) -- (repeat) on while buttons docking

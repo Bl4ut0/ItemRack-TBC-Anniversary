@@ -34,7 +34,7 @@ local loadstring = loadstring or load
 ]]
 
 -- increment this value when default events are changed to deploy them to existing events
-ItemRack.EventsVersion = 18
+ItemRack.EventsVersion = 20
 
 -- default events, loaded when no events exist or ItemRack.EventsVersion is increased
 ItemRack.DefaultEvents = {
@@ -89,6 +89,8 @@ ItemRack.DefaultEvents = {
 	["Rogue Stealth"] = { Class = "ROGUE", Type = "Stance", Unequip = 1, Stance = 1 },
 
 	["Shaman Ghostwolf"] = { Class = "SHAMAN", Type = "Stance", Unequip = 1, Stance = 1 },
+	["Primary Spec"] = { Type = "Specialization", Spec = 1, Unequip = 1 },
+	["Secondary Spec"] = { Type = "Specialization", Spec = 2, Unequip = 1 },
 
 	["Swimming"] = {
 		["Trigger"] = "MIRROR_TIMER_START",
@@ -264,6 +266,10 @@ function ItemRack.RegisterEvents()
 			if not frame:IsEventRegistered("ZONE_CHANGED_INDOORS") then
 				frame:RegisterEvent("ZONE_CHANGED_INDOORS")
 			end
+		elseif eventType=="Specialization" then
+			if not frame:IsEventRegistered("ACTIVE_TALENT_GROUP_CHANGED") then
+				frame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+			end
 		elseif eventType=="Script" then
 			if not frame:IsEventRegistered(events[eventName].Trigger) then
 				frame:RegisterEvent(events[eventName].Trigger)
@@ -275,6 +281,7 @@ function ItemRack.RegisterEvents()
 	ItemRack.ProcessStanceEvent()
 	ItemRack.ProcessZoneEvent()
 	ItemRack.ProcessBuffEvent()
+	ItemRack.ProcessSpecializationEvent()
 end
 
 function ItemRack.ToggleEvents(self)
@@ -310,6 +317,8 @@ function ItemRack.ProcessingFrameOnEvent(self,event,...)
 			startZone = 1
 		elseif event == "ZONE_CHANGED_INDOORS" and eventType == "Zone" and select(2, IsInInstance()) == "raid" then -- if player change subzone in raid instance, toggle set change, else not.
 			startZone = 1
+		elseif event == "ACTIVE_TALENT_GROUP_CHANGED" and eventType == "Specialization" then
+			ItemRack.ProcessSpecializationEvent()
 		elseif eventType=="Script" and events[eventName].Trigger==event then
 			local method = loadstring(events[eventName].Script)
 			pcall(method, ...)
@@ -389,6 +398,33 @@ function ItemRack.ProcessZoneEvent()
 			if (events[eventName].Zones[currentZone] or events[eventName].Zones[currentSubZone]) and not ItemRack.IsSetEquipped(setname) then
 				setToEquip = setname
 			elseif not (events[eventName].Zones[currentZone] or events[eventName].Zones[currentSubZone]) and events[eventName].Unequip and ItemRack.IsSetEquipped(setname) then
+				setToUnequip = setname
+			end
+		end
+	end
+	if setToUnequip then
+		ItemRack.UnequipSet(setToUnequip)
+	end
+	if setToEquip then
+		ItemRack.EquipSet(setToEquip)
+	end
+end
+
+function ItemRack.ProcessSpecializationEvent()
+	local enabled = ItemRackUser.Events.Enabled
+	local events = ItemRackEvents
+	
+	if not GetActiveTalentGroup then return end -- legacy client check
+	local currentSpec = GetActiveTalentGroup()
+	
+	local setToEquip, setToUnequip, setname
+	
+	for eventName in pairs(enabled) do
+		if events[eventName].Type=="Specialization" and events[eventName].Spec then
+			setname = ItemRackUser.Events.Set[eventName]
+			if events[eventName].Spec == currentSpec and not ItemRack.IsSetEquipped(setname) then
+				setToEquip = setname
+			elseif events[eventName].Spec ~= currentSpec and events[eventName].Unequip and ItemRack.IsSetEquipped(setname) then
 				setToUnequip = setname
 			end
 		end

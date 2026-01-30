@@ -1,3 +1,7 @@
+__ New in 4.27 - By Bl4ut0 __
+- Fixed Issue with ItemRack Buttons inheriting ActionButton traits (Keybinds, Red Flash on Auto Attack)
+- Fixed Stacked UI elements "Select a slot" and "Press a key" overlapping 
+
 __ New in 4.26 - By Bl4ut0 __
 * Corrected Right-Click action: Decoupled Right-Click "Auto-Progress" from Menu settings. Right-Clicking a queued slot now swaps to the next item by default.
 * Implemented Queue Looping: Manual Right-Click swapping now wraps around to the start of the queue when reaching the end or a stop marker.

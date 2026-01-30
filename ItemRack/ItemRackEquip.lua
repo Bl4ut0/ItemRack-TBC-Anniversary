@@ -353,6 +353,17 @@ function ItemRack.EndSetSwap(setname)
 		if not string.match(setname,"^~") then --do not list internal sets, prefixed with ~
 			ItemRackUser.CurrentSet = setname
 			ItemRack.UpdateCurrentSet()
+			
+			-- Dual Spec Support: Auto-Swap Spec if Set is bound
+			if ItemRackUser.Sets[setname].AssociatedSpec and GetActiveTalentGroup and GetNumTalentGroups()>1 then
+				local currentSpec = GetActiveTalentGroup()
+				local neededSpec = ItemRackUser.Sets[setname].AssociatedSpec
+				if currentSpec ~= neededSpec then
+					ItemRack.Print("Set "..setname.." requires Spec "..neededSpec..". Switching talents...")
+					SetActiveTalentGroup(neededSpec)
+				end
+			end
+
 		elseif ItemRackUser.Sets[setname].oldset then
 			-- if this is a special set that stored a setname, set current to that setname
 			ItemRackUser.CurrentSet = ItemRackUser.Sets[setname].oldset

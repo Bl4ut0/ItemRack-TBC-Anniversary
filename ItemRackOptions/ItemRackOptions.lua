@@ -12,6 +12,20 @@ ItemRackOpt = {
 	currentMarquee = 1,
 }
 
+function ItemRackOpt.GetSpecName(group)
+	local maxPoints, maxName = 0, "None"
+	for i=1,3 do
+		local name, icon, points = GetTalentTabInfo(i, nil, nil, group)
+		local p = tonumber(points) or 0
+		if p > maxPoints then
+			maxPoints = p
+			maxName = name
+		end
+	end
+	if maxPoints == 0 then return group == 1 and "Primary" or "Secondary" end
+	return maxName
+end
+
 ItemRack.CheckButtonLabels = {
 	["ItemRackOptItemStatsPriorityText"] = "Priority",
 	["ItemRackOptItemStatsKeepEquippedText"] = "Pause Queue",
@@ -26,6 +40,11 @@ ItemRack.CheckButtonLabels = {
 	["ItemRackOptEventEditStanceUnequipText"] = "Unequip on leaving stance",
 	["ItemRackOptEventEditZoneUnequipText"] = "Unequip on leaving zone",
 	["ItemRackOptEventEditStanceNotInPVPText"] = "Except in PVP instances",
+	["ItemRackOptSpec1Text"] = "Primary Spec",
+	["ItemRackOptSpec2Text"] = "Secondary Spec",
+	["ItemRackOptEventEditSpec1Text"] = "Primary Spec",
+	["ItemRackOptEventEditSpec2Text"] = "Secondary Spec",
+	["ItemRackOptEventEditSpecializationUnequipText"] = "Unequip when leaving spec",
 }
 
 ItemRack.SetnameBlacklist = {
@@ -418,6 +437,19 @@ function ItemRackOpt.SetsIconOnClick(self)
 	ItemRackOpt.SetsIconScrollFrameUpdate()
 end
 
+function ItemRackOpt.ToggleSpec(self,specID)
+	if self:GetChecked() then
+		if specID==1 then
+			ItemRackOptSpec2:SetChecked(false)
+		else
+			ItemRackOptSpec1:SetChecked(false)
+		end
+	end
+	-- Update the saved set immediately so the user doesn't have to hit "Save" to see the check persist?
+	-- Actually ItemRack usually requires "Save" to persist changes to a set.
+	-- But let's ensure ValidateSetButtons doesn't wipe it.
+end
+
 function ItemRackOpt.SaveSet()
 	ItemRackOptSetsName:ClearFocus()
 	local setname = ItemRackOptSetsName:GetText()
@@ -432,6 +464,15 @@ function ItemRackOpt.SaveSet()
 			set.equip[i] = ItemRackOpt.Inv[i].id
 		end
 	end
+	
+	-- Save Associated Spec
+	set.AssociatedSpec = nil
+	if ItemRackOptSpec1:GetChecked() then
+		set.AssociatedSpec = 1
+	elseif ItemRackOptSpec2:GetChecked() then
+		set.AssociatedSpec = 2
+	end
+
 	-- set.equip[0] = nil
 	-- set.equip[18] = nil
 	ItemRackOpt.ReconcileSetBindings()
@@ -441,6 +482,7 @@ function ItemRackOpt.SaveSet()
 end
 
 function ItemRackOpt.ValidateSetButtons()
+	local setname = ItemRackOptSetsName:GetText()
 	ItemRackOptSetsSaveButton:Disable()
 	ItemRackOptSetsBindButton:Disable()
 	ItemRackOptSetsDeleteButton:Disable()
@@ -451,9 +493,47 @@ function ItemRackOpt.ValidateSetButtons()
 	ItemRackOpt.TriStateCheckSetState(ItemRackOptShowCloak,nil)
 	ItemRackOptShowHelm:Disable()
 	ItemRackOptShowCloak:Disable()
+	
+	-- Validation for Spec Buttons
+	ItemRackOptSpec1:Disable()
+	ItemRackOptSpec2:Disable()
+	ItemRackOptSpec1Text:SetTextColor(.5,.5,.5,1)
+	ItemRackOptSpec2Text:SetTextColor(.5,.5,.5,1)
+	ItemRackOptSpec1:SetChecked(false)
+	ItemRackOptSpec2:SetChecked(false)
+	ItemRackOptSpec1:Hide()
+	ItemRackOptSpec2:Hide()
+	
+	ItemRackOptSetsHideCheckButton:ClearAllPoints()
+	ItemRackOptSetsHideCheckButton:SetPoint("TOPLEFT",ItemRackOptShowCloak,"BOTTOMLEFT",0,-2)
 
-	local setname = ItemRackOptSetsName:GetText()
+	-- Always show and update Spec 1
+	ItemRackOptSpec1:Show()
+	ItemRackOptSpec1Text:SetText(ItemRackOpt.GetSpecName(1))
+	
+	if GetNumTalentGroups and GetNumTalentGroups()>1 then
+		ItemRackOptSpec2:Show()
+		ItemRackOptSpec2Text:SetText(ItemRackOpt.GetSpecName(2))
+		ItemRackOptSetsHideCheckButton:ClearAllPoints()
+		ItemRackOptSetsHideCheckButton:SetPoint("TOPLEFT",ItemRackOptSpec2,"BOTTOMLEFT",0,-2)
+	else
+		ItemRackOptSpec2:Hide()
+		ItemRackOptSetsHideCheckButton:ClearAllPoints()
+		ItemRackOptSetsHideCheckButton:SetPoint("TOPLEFT",ItemRackOptSpec1,"BOTTOMLEFT",0,-2)
+	end
+
+	-- Enable if name entered
 	if string.len(setname)>0 and not ItemRack.SetnameBlacklist[setname] then
+		ItemRackOptSpec1:Enable()
+		ItemRackOptSpec1:EnableMouse(true)
+		ItemRackOptSpec1Text:SetTextColor(1,1,1,1)
+		
+		if GetNumTalentGroups and GetNumTalentGroups()>1 then
+			ItemRackOptSpec2:Enable()
+			ItemRackOptSpec2:EnableMouse(true)
+			ItemRackOptSpec2Text:SetTextColor(1,1,1,1)
+		end
+		
 		for i=0,19 do
 			if ItemRackOpt.Inv[i].selected then
 				ItemRackOptSetsSaveButton:Enable()
@@ -474,6 +554,11 @@ function ItemRackOpt.ValidateSetButtons()
 		ItemRackOptShowCloak:Enable()
 
 		ItemRackOptSetsCurrentSetIcon:SetTexture(ItemRackUser.Sets[setname].icon)
+		
+		-- Load saved state if set exists
+		local assocSpec = ItemRackUser.Sets[setname].AssociatedSpec
+		ItemRackOptSpec1:SetChecked(assocSpec == 1)
+		ItemRackOptSpec2:SetChecked(assocSpec == 2)
 	end
 end
 
@@ -706,6 +791,7 @@ end
 --[[ Options list ]]
 
 function ItemRackOpt.ListScrollFrameUpdate()
+	if not ItemRackOpt.OptInfo then return end
 	local offset = FauxScrollFrame_GetOffset(ItemRackOptListScrollFrame)
 	FauxScrollFrame_Update(ItemRackOptListScrollFrame, #(ItemRackOpt.OptInfo),11,24)
 
@@ -962,6 +1048,12 @@ end
 function ItemRackOpt.BindFrameOnShow()
 	if not ItemRackOpt.Binding then return end
 	ItemRackOpt.HideCurrentSubFrame()
+	
+	-- Force hide SubFrame6 if it remains visible (stacking fix)
+	if ItemRackOptSubFrame6 and ItemRackOptSubFrame6:IsVisible() then
+		ItemRackOptSubFrame6:Hide()
+	end
+
 	ItemRackOpt.Binding.currentKey=GetBindingKey("CLICK "..ItemRackOpt.Binding.buttonName..":LeftButton") or "Not bound"
 	ItemRackOptBindFrameBindee:SetText(ItemRackOpt.Binding.name)
 	ItemRackOptBindFrameCurrently:SetText("Currently: "..ItemRackOpt.Binding.currentKey)
@@ -1102,7 +1194,9 @@ end
 function ItemRackOpt.SlotBindFrameOnHide()
 	ItemRackOpt.MakeEscable("ItemRackOptSubFrame6","remove")
 	ItemRackOpt.MakeEscable("ItemRackOptFrame","add")
-	ItemRackOpt.ShowPrevSubFrame()
+	if not ItemRackOptBindFrame:IsVisible() then
+		ItemRackOpt.ShowPrevSubFrame()
+	end
 	ItemRackOpt.StopMarquee()
 end
 
@@ -1536,7 +1630,16 @@ function ItemRackOpt.EventListScrollFrameUpdate()
 		item = _G["ItemRackOptEventList"..i]
 		idx = offset + i
 		if idx<=#(list) then
-			_G["ItemRackOptEventList"..i.."Name"]:SetText(list[idx][1])
+			local eventName = list[idx][1]
+			local eventType = list[idx][2]
+			local displayText = eventName
+			if eventType=="Specialization" then
+				local specIndex = ItemRackEvents[eventName] and ItemRackEvents[eventName].Spec
+				if specIndex then
+					displayText = ItemRackOpt.GetSpecName(specIndex)
+				end
+			end
+			_G["ItemRackOptEventList"..i.."Name"]:SetText(displayText)
 			icon = _G["ItemRackOptEventList"..i.."Icon"]
 			if list[idx][2]=="Script" then
 				texture = "Interface\\AddOns\\ItemRackOptions\\ItemRackScriptIcon"
@@ -1600,6 +1703,8 @@ function ItemRackOpt.EventListOnEnter(self,child)
 		for i in pairs(event.Zones) do
 			desc = desc.."\n"..i
 		end
+	elseif eventType=="Specialization" then
+		desc = desc.."activating "..(ItemRackOpt.GetSpecName(event.Spec))
 	else
 		desc = "|cFFBBBBBBScript event triggered on "..event.Trigger
 		local comment = string.match(event.Script,"--%[%[(.+)%]%]")
@@ -1698,6 +1803,9 @@ function ItemRackOpt.EventEditClearFrame()
 	ItemRackOptEventEditZoneUnequip:SetChecked(false)
 	ItemRackOptEventEditScriptTrigger:SetText("")
 	ItemRackOptEventEditScriptEditBox:SetText("")
+	ItemRackOptEventEditSpec1:SetChecked(false)
+	ItemRackOptEventEditSpec2:SetChecked(false)
+	ItemRackOptEventEditSpecializationUnequip:SetChecked(false)
 end
 
 function ItemRackOpt.EventEditPopulateFrame()
@@ -1728,6 +1836,11 @@ function ItemRackOpt.EventEditPopulateFrame()
 		ItemRackOptEventEditScriptTrigger:SetCursorPosition(0)
 		ItemRackOptEventEditScriptEditBox:SetText(event.Script or "")
 		ItemRackOptEventEditScriptEditBox:SetCursorPosition(0)
+		if event.Spec then
+			if event.Spec == 1 then ItemRackOptEventEditSpec1:SetChecked(true) end
+			if event.Spec == 2 then ItemRackOptEventEditSpec2:SetChecked(true) end
+		end
+		ItemRackOptEventEditSpecializationUnequip:SetChecked(event.Unequip)
 	else
 		ItemRackOptEventEditNameEdit:SetFocus()
 	end
@@ -1739,12 +1852,26 @@ function ItemRackOpt.EventEditDisplayType()
 	local eventType = ItemRackOptEventEditTypeDropText:GetText() or ""
 	ItemRackOptEventEditBuffFrame:Hide()
 	ItemRackOptEventEditStanceFrame:Hide()
+	ItemRackOptEventEditStanceFrame:Hide()
 	ItemRackOptEventEditZoneFrame:Hide()
 	ItemRackOptEventEditScriptFrame:Hide()
+	ItemRackOptEventEditSpecializationFrame:Hide()
 	local eventFrame = _G["ItemRackOptEventEdit"..eventType.."Frame"]
 	if eventFrame then
 		eventFrame:Show()
 	end
+	
+	if eventType == "Specialization" then
+		_G["ItemRackOptEventEditSpec1Text"]:SetText(ItemRackOpt.GetSpecName(1))
+		_G["ItemRackOptEventEditSpec2Text"]:SetText(ItemRackOpt.GetSpecName(2))
+
+		if GetNumTalentGroups and GetNumTalentGroups() > 1 then
+			ItemRackOptEventEditSpec2:Show()
+		else
+			ItemRackOptEventEditSpec2:Hide()
+		end
+	end
+
 	ItemRackOpt.EventEditValidateButtons()
 end
 
@@ -1801,7 +1928,7 @@ function ItemRackOpt.EventEditValidateButtons()
 		safe = nil
 	end
 	test = ItemRackOptEventEditTypeDropText:GetText()
-	if test~="Buff" and test~="Stance" and test~="Zone" and test~="Script" then
+	if test~="Buff" and test~="Stance" and test~="Zone" and test~="Script" and test~="Specialization" then
 		safe = nil
 	end
 	local eventType = ItemRackOptEventEditTypeDropText:GetText()
@@ -1827,6 +1954,10 @@ function ItemRackOpt.EventEditValidateButtons()
 		if strlen(ItemRackOptEventEditScriptTrigger:GetText())<1 then
 			safe = nil
 		elseif strlen(test)<1 then
+			safe = nil
+		end
+	elseif eventType=="Specialization" then
+		if not ItemRackOptEventEditSpec1:GetChecked() and not ItemRackOptEventEditSpec2:GetChecked() then
 			safe = nil
 		end
 	end
@@ -1881,6 +2012,11 @@ function ItemRackOpt.EventEditSave(override)
 		event.Unequip = ItemRackOptEventEditZoneUnequip:GetChecked()
 		event.Zones = {}
 		ItemRackOpt.ConvertZoneListToTable(ItemRackOptEventEditZoneEditBox:GetText(),event.Zones)
+	elseif event.Type=="Specialization" then
+		event.Unequip = ItemRackOptEventEditSpecializationUnequip:GetChecked()
+		if ItemRackOptEventEditSpec1:GetChecked() then event.Spec = 1
+		elseif ItemRackOptEventEditSpec2:GetChecked() then event.Spec = 2
+		end
 	elseif event.Type=="Script" then
 		event.Trigger = ItemRackOptEventEditScriptTrigger:GetText()
 		event.Script = ItemRackOptEventEditScriptEditBox:GetText()

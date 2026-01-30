@@ -1756,7 +1756,7 @@
 						<Anchors>
 							<Anchor point="TOPRIGHT" relativeTo="ItemRackOptSetsIconFrame" relativePoint="BOTTOMRIGHT">
 								<Offset>
-									<AbsDimension x="-4" y="-6"/>
+									<AbsDimension x="-2" y="-11"/>
 								</Offset>
 							</Anchor>
 						</Anchors>
@@ -1781,42 +1781,94 @@
 					</Button>
 
 					
+					<!-- 1. Helm (Top of Left Column, Negative Margin) -->
 					<CheckButton name="ItemRackOptShowHelm" inherits="ItemRackTristateTemplate">
 						<Anchors>
 							<Anchor point="TOPLEFT" relativeTo="ItemRackOptSetsIconFrame" relativePoint="BOTTOMLEFT">
 								<Offset>
-									<AbsDimension x="50" y="-4"/>
+									<AbsDimension x="-5" y="2"/>
 								</Offset>
 							</Anchor>
 						</Anchors>
 					</CheckButton>
+
+					<!-- 2. Cloak (Touching below Helm) -->
 					<CheckButton name="ItemRackOptShowCloak" inherits="ItemRackTristateTemplate">
 						<Anchors>
 							<Anchor point="TOPLEFT" relativeTo="ItemRackOptShowHelm" relativePoint="BOTTOMLEFT">
 								<Offset>
-									<AbsDimension x="0" y="4"/>
+									<AbsDimension x="0" y="-2"/>
 								</Offset>
 							</Anchor>
 						</Anchors>
 					</CheckButton>
 
-					<CheckButton name="ItemRackOptSetsCurrentSet" inherits="ActionButtonTemplate">
-						<Anchors>
-							<Anchor point="TOPLEFT" relativeTo="ItemRackOptSetsIconFrame" relativePoint="BOTTOMLEFT">
-								<Offset>
-									<AbsDimension x="8" y="-8"/>
-								</Offset>
-							</Anchor>
-						</Anchors>
-					</CheckButton>
-
-					<CheckButton name="ItemRackOptSetsHideCheckButton" inherits="ItemRackOptSimpleCheckButton">
+					<!-- 3. Spec 1 (Touching below Cloak) -->
+					<CheckButton name="ItemRackOptSpec1" inherits="ItemRackOptSimpleCheckButton">
 						<Size>
-							<AbsDimension x="20" y="20"/>
+							<AbsDimension x="18" y="18"/>
 						</Size>
 						<Anchors>
-							<Anchor point="TOPLEFT" relativeTo="ItemRackOptSetsCurrentSet" relativePoint="BOTTOMLEFT">
-								<Offset x="-4" y="-5"/>
+							<Anchor point="TOPLEFT" relativeTo="ItemRackOptShowCloak" relativePoint="BOTTOMLEFT">
+								<Offset>
+									<AbsDimension x="0" y="-2"/>
+								</Offset>
+							</Anchor>
+						</Anchors>
+						<Scripts>
+							<OnClick>
+								PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+								ItemRackOpt.ToggleSpec(self,1)
+							</OnClick>
+							<OnEnter>
+								ItemRack.OnTooltip(self,"Primary Spec","Use this set for your primary specialization.")
+							</OnEnter>
+							<OnLeave>
+								GameTooltip:Hide()
+							</OnLeave>
+						</Scripts>
+						<NormalFont style="GameFontHighlightExtraSmall"/>
+						<HighlightFont style="GameFontHighlightExtraSmall"/>
+						<DisabledFont style="GameFontDisableSmall"/>
+					</CheckButton>
+
+					<!-- 4. Spec 2 (Touching below Spec 1) -->
+					<CheckButton name="ItemRackOptSpec2" inherits="ItemRackOptSimpleCheckButton">
+						<Size>
+							<AbsDimension x="18" y="18"/>
+						</Size>
+						<Anchors>
+							<Anchor point="TOPLEFT" relativeTo="ItemRackOptSpec1" relativePoint="BOTTOMLEFT">
+								<Offset>
+									<AbsDimension x="0" y="-2"/>
+								</Offset>
+							</Anchor>
+						</Anchors>
+						<Scripts>
+							<OnClick>
+								PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+								ItemRackOpt.ToggleSpec(self,2)
+							</OnClick>
+							<OnEnter>
+								ItemRack.OnTooltip(self,"Secondary Spec","Use this set for your secondary specialization.")
+							</OnEnter>
+							<OnLeave>
+								GameTooltip:Hide()
+							</OnLeave>
+						</Scripts>
+						<NormalFont style="GameFontHighlightExtraSmall"/>
+						<HighlightFont style="GameFontHighlightExtraSmall"/>
+						<DisabledFont style="GameFontDisableSmall"/>
+					</CheckButton>
+
+					<!-- 5. Hide (Touching below Spec 2) -->
+					<CheckButton name="ItemRackOptSetsHideCheckButton" inherits="ItemRackOptSimpleCheckButton">
+						<Size>
+							<AbsDimension x="18" y="18"/>
+						</Size>
+						<Anchors>
+							<Anchor point="TOPLEFT" relativeTo="ItemRackOptSpec2" relativePoint="BOTTOMLEFT">
+								<Offset x="0" y="-2"/>
 							</Anchor>
 						</Anchors>
 						<Scripts>
@@ -1831,6 +1883,17 @@
 								GameTooltip:Hide()
 							</OnLeave>
 						</Scripts>
+					</CheckButton>
+
+					<!-- Icon (Anchored More Right) -->
+					<CheckButton name="ItemRackOptSetsCurrentSet" inherits="ActionButtonTemplate">
+						<Anchors>
+							<Anchor point="BOTTOMLEFT" relativeTo="ItemRackOptSetsDeleteButton" relativePoint="TOPLEFT">
+								<Offset>
+									<AbsDimension x="12" y="4"/>
+								</Offset>
+							</Anchor>
+						</Anchors>
 					</CheckButton>
 
 				</Frames>
@@ -2629,7 +2692,7 @@
 								<Offset x="-11" y="0"/>
 							</Anchor>
 							<Anchor point="BOTTOMRIGHT" relativeTo="ItemRackOptEventEditTypeDrop" relativePoint="BOTTOMRIGHT">
-								<Offset x="9" y="-86"/>
+								<Offset x="9" y="-104"/>
 							</Anchor>
 						</Anchors>
 						<Layers>
@@ -2683,9 +2746,14 @@
 									<Anchor point="TOPLEFT" relativeTo="ItemRackOptEventEditPickTypeStance" relativePoint="BOTTOMLEFT"/>
 								</Anchors>
 							</Button>
-							<Button name="ItemRackOptEventEditPickTypeScript" inherits="ItemRackOptEventEditPickTypeTemplate" text="Script">
+							<Button name="ItemRackOptEventEditPickTypeSpecialization" inherits="ItemRackOptEventEditPickTypeTemplate" text="Specialization">
 								<Anchors>
 									<Anchor point="TOPLEFT" relativeTo="ItemRackOptEventEditPickTypeZone" relativePoint="BOTTOMLEFT"/>
+								</Anchors>
+							</Button>
+							<Button name="ItemRackOptEventEditPickTypeScript" inherits="ItemRackOptEventEditPickTypeTemplate" text="Script">
+								<Anchors>
+									<Anchor point="TOPLEFT" relativeTo="ItemRackOptEventEditPickTypeSpecialization" relativePoint="BOTTOMLEFT"/>
 								</Anchors>
 							</Button>
 						</Frames>
@@ -2966,6 +3034,66 @@
 										<Offset x="-4" y="-118"/>
 									</Anchor>
 								</Anchors>
+							</CheckButton>
+						</Frames>
+					</Frame>
+					
+					<Frame name="ItemRackOptEventEditSpecializationFrame" hidden="true">
+						<Anchors>
+							<Anchor point="TOPLEFT">
+								<Offset x="0" y="-92"/>
+							</Anchor>
+							<Anchor point="BOTTOMRIGHT">
+								<Offset x="0" y="28"/>
+							</Anchor>
+						</Anchors>
+						<Frames>
+							<CheckButton name="ItemRackOptEventEditSpec1" inherits="ItemRackOptSimpleCheckButton">
+								<Size>
+									<AbsDimension x="26" y="26"/>
+								</Size>
+								<Anchors>
+									<Anchor point="TOPLEFT" relativeTo="ItemRackOptEventEditTypeLabel" relativePoint="BOTTOMLEFT">
+										<Offset x="10" y="-36"/>
+									</Anchor>
+								</Anchors>
+								<Scripts>
+									<OnClick>
+										ItemRackOpt.EventEditValidateButtons()
+									</OnClick>
+								</Scripts>
+								<NormalFont style="GameFontHighlightSmall"/>
+								<HighlightFont style="GameFontHighlightSmall"/>
+								<DisabledFont style="GameFontDisableSmall"/>
+							</CheckButton>
+							<CheckButton name="ItemRackOptEventEditSpec2" inherits="ItemRackOptSimpleCheckButton">
+								<Size>
+									<AbsDimension x="26" y="26"/>
+								</Size>
+								<Anchors>
+									<Anchor point="TOPLEFT" relativeTo="ItemRackOptEventEditSpec1" relativePoint="BOTTOMLEFT"/>
+								</Anchors>
+								<Scripts>
+									<OnClick>
+										ItemRackOpt.EventEditValidateButtons()
+									</OnClick>
+								</Scripts>
+								<NormalFont style="GameFontHighlightSmall"/>
+								<HighlightFont style="GameFontHighlightSmall"/>
+								<DisabledFont style="GameFontDisableSmall"/>
+							</CheckButton>
+							<CheckButton name="ItemRackOptEventEditSpecializationUnequip" inherits="ItemRackOptSimpleCheckButton">
+								<Size>
+									<AbsDimension x="26" y="26"/>
+								</Size>
+								<Anchors>
+									<Anchor point="TOPLEFT" relativeTo="ItemRackOptEventEditSpec2" relativePoint="BOTTOMLEFT">
+										<Offset x="0" y="-12"/>
+									</Anchor>
+								</Anchors>
+								<NormalFont style="GameFontHighlightSmall"/>
+								<HighlightFont style="GameFontHighlightSmall"/>
+								<DisabledFont style="GameFontDisableSmall"/>
 							</CheckButton>
 						</Frames>
 					</Frame>
