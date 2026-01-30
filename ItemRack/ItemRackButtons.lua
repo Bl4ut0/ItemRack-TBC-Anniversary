@@ -39,20 +39,33 @@ function ItemRack.ButtonOnLoad(self)
 	end
 
 	-- Hide unwanted ActionButton overlays (Yellow/Orange Triangles, Flash, etc.)
-	-- "Kill" the texture objects by hiding them and disabling their Show method.
-	-- This prevents external code (like ActionButton_Update) from re-showing them.
-	local function Kill(frame)
-		if frame then
-			frame:Hide()
-			frame:SetAlpha(0)
-			frame.Show = function() end
+	-- Hide unwanted ActionButton overlays (Yellow/Orange Triangles, Flash, etc.)
+	-- This includes anonymous textures created by ActionButtonTemplate that don't have friendly names.
+	-- We iterate through all regions and hide anything that isn't a standard state texture or our custom icon.
+	for _, region in ipairs({self:GetRegions()}) do
+		if region:GetObjectType() == "Texture" then
+			local isStandard = false
+			local name = region:GetName()
+
+			-- Keep standard button states
+			if region == self.NormalTexture or (self.GetNormalTexture and region == self:GetNormalTexture()) then isStandard = true end
+			if region == self.PushedTexture or (self.GetPushedTexture and region == self:GetPushedTexture()) then isStandard = true end
+			if region == self.HighlightTexture or (self.GetHighlightTexture and region == self:GetHighlightTexture()) then isStandard = true end
+			if region == self.CheckedTexture or (self.GetCheckedTexture and region == self:GetCheckedTexture()) then isStandard = true end
+			
+			-- Keep ItemRack's specific textures (Icon, Queue overlay)
+			if name and (name:find("ItemRackIcon") or name:find("Queue")) then 
+				isStandard = true 
+			end
+
+			-- Hide everything else (SpellHighlight, NewAction, various anonymous overlays)
+			if not isStandard then
+				region:Hide()
+				region:SetAlpha(0)
+				region.Show = function() end -- Disable Show()
+			end
 		end
 	end
-
-	Kill(self.NewActionTexture)
-	Kill(self.SpellHighlightTexture)
-	Kill(self.Flash)
-	Kill(self.QuickKeybindHighlightTexture)
 end
 
 function ItemRack.InitButtons()
