@@ -366,6 +366,13 @@ end
 function ItemRack.OnEnterWorld(self,event,...)
 	local isLogin,isReload = ...
 	if isLogin or isReload then
+		-- Force a set update shortly after loading to ensure minimap icon/current set is correct
+		-- This fixes the issue where the set appears as "Custom" until interaction
+		C_Timer.After(2, function() 
+			ItemRack.UpdateButtons() 
+			ItemRack.UpdateCurrentSet()
+		end)
+
 		C_Timer.After(15,function()
 			ItemRack.SetSetBindings()
 		end)
