@@ -2,15 +2,15 @@ __ New in 4.27 - By Bl4ut0 __
 - Added Adaptive Multi-Spec Support:
   - UI now adapts to show "Secondary Spec" option only if Dual Spec is learned.
   - Spec checkboxes are dynamically named based on your highest point talent tree (e.g. "Holy", "Arms") for easier identification.
+  - Spec sets now auto-switch gear when you change talent specializations.
+- Improved Keybind Scheme for Slot Buttons:
+  - Left-Click: Use the item (trinkets, on-use effects)
+  - Right-Click: Cycle to the next item in the queue (manual swap)
+  - Alt+Right-Click: Open the item selection flyout menu
+  - Alt+Left-Click: Toggle Auto-Queue on/off for that slot
 - Fixed Issue with ItemRack Buttons inheriting ActionButton traits (Keybinds, Red Flash on Auto Attack)
-- Fixed Stacked UI elements "Select a slot" and "Press a key" overlapping 
-
-__ New in 4.27 - By Bl4ut0 __
-- Added Adaptive Multi-Spec Support:
-  - UI now adapts to show "Secondary Spec" option only if Dual Spec is learned.
-  - Spec checkboxes are dynamically named based on your highest point talent tree (e.g. "Holy", "Arms") for easier identification.
-- Fixed Issue with ItemRack Buttons inheriting ActionButton traits (Keybinds, Red Flash on Auto Attack) - Includes hotfix for persistence on reload.
-- Fixed Stacked UI elements "Select a slot" and "Press a key" overlapping 
+- Fixed Stacked UI elements "Select a slot" and "Press a key" overlapping
+- Fixed Focus Preservation: Options window no longer jumps to current set after saving
 
 __ New in 4.26 - By Bl4ut0 __
 * Corrected Right-Click action: Decoupled Right-Click "Auto-Progress" from Menu settings. Right-Clicking a queued slot now swaps to the next item by default.

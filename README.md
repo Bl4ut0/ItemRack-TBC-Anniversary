@@ -25,13 +25,48 @@ This addon is based on the original **ItemRack Classic** maintained by Rottenbee
 4. Restart WoW or type `/reload` if already in-game
 5. ItemRack should appear as equipment slot buttons on your character panel
 
-## Features
+## 🎮 Features & Usage
 
-- **Equipment slot buttons** - Quick access to swap gear
-- **Gear sets** - Save and equip complete equipment configurations
-- **Auto-queue system** - Automatically swap trinkets and other items based on cooldowns
-- **Event-based swapping** - Swap gear based on in-game events
-- **Masque support** - Compatible with button skinning addons
+ItemRack allows you to manage your gear with extreme precision through sets, automated queues, and event-based triggers.
+
+### 🚀 Quick Access & Slot Buttons
+- **Open Options:** Type `/itemrack opt` or **Right-Click** the minimap button.
+- **Slot Buttons:** **Alt-Click** any item slot on your Character Sheet to create an on-screen "Quick Access" button for that slot.
+- **Use Item:** **Left-Click** a slot button to use the item (trinkets, on-use effects).
+- **Cycle Queue:** **Right-Click** a slot button to immediately swap to the next item in that slot's queue.
+- **Open Slot Menu:** Hover over a slot button to open the item selection flyout menu.
+- **Open Queue Options:** **Alt+Right-Click** a slot button to open the Queue configuration for that slot.
+- **Auto-Queue Toggle:** **Alt+Left-Click** an on-screen slot button to toggle the Auto-Queue system for that specific slot on/off.
+
+### ⚔️ Specialization Automation (Dual Spec)
+ItemRack now supports seamless gear-spec integration:
+1. Open the **Sets** tab in Options.
+2. Select or create a gear set.
+3. Check the **Primary Spec** or **Secondary Spec** box to link the set to your talent tree (e.g., "Holy", "Arms").
+4. ItemRack will automatically switch your gear when you change specializations.
+   - *Note:* A 0.5s stability timer prevents race conditions during the switch.
+
+### 📋 Managing Gear Sets
+- **Saving Sets:** Select the items you want, choose an icon, enter a name, and click **Save**.
+- **Specialization Text:** Checkboxes now dynamically show your talent tree name if points are spent, making it easy to identify which set belongs to which build.
+- **Focus Preservation:** Saving or equipping sets no longer resets your UI scroll position—you stay right where you were editing.
+
+### 🔄 Auto-Queue System
+The Auto-Queue system ensures you always have a "ready" item equipped:
+1. Click the **Queue** button (lightning bolt) in Options for a specific slot.
+2. Rank your items from top to bottom (Priority).
+3. When an equipped item goes on cooldown, ItemRack will automatically swap it for the highest priority item that is ready.
+4. **Pause Queue:** You can check "Pause Queue" on specific items to prevent them from being swapped out while in use.
+
+### ⚡ Events & Automation
+Events allow for complex automation based on game state:
+1. Go to the **Config** tab and ensure **Enable Events** is checked.
+2. Use the **Events** tab to link specific gear sets to triggers like:
+   - **Drinking/Eating:** Swap to spirit gear.
+   - **Mounting:** Swap to riding gear.
+   - **Zone Changes:** Swap gear when entering a specific raid or city.
+   - **Combat State:** Switch weapons or gear sets when entering/leaving combat.
+3. **Event Tracking:** Use the "Events" listener button on the config page to monitor which triggers are firing in real-time for debugging.
 
 ## TBC Anniversary Compatibility
 

@@ -576,14 +576,32 @@ function ItemRack.ButtonPostClick(self,button)
 	local id = self:GetID()
 	if button=="RightButton" then
 		local handled = nil
+		
+		-- Alt+Right-click opens the Queue Options panel for this slot
+		if IsAltKeyDown() then
+			if id<20 then
+				LoadAddOn("ItemRackOptions")
+				ItemRackOptFrame:Show()
+				ItemRackOpt.TabOnClick(self,4)
+				ItemRackOpt.SetupQueue(id)
+			else
+				-- For slot 20 (set button), open Sets tab instead
+				LoadAddOn("ItemRackOptions")
+				ItemRackOptFrame:Show()
+				ItemRackOpt.TabOnClick(self,3)
+			end
+			return
+		end
+		
+		-- Plain right-click advances the queue
 		if not InCombatLockdown() then
-			local nextItem = ItemRack.GetNextItemInQueue and ItemRack.GetNextItemInQueue(id)
-			-- ItemRack.Print("RightClick Debug: Slot "..id.." NextItem: "..(nextItem or "nil"))
-			if nextItem then
-				ItemRack.EquipItemByID(nextItem,id)
+			-- Use the simpler ManualQueueAdvance function that directly finds and equips items
+			if ItemRack.ManualQueueAdvance and ItemRack.ManualQueueAdvance(id) then
 				handled = 1
 			end
 		end
+		
+		-- Fallback: If MenuOnRight is ON and nothing was handled, show menu anyway
 		if not handled and ItemRackSettings.MenuOnRight=="ON" then
 			if ItemRackMenuFrame:IsVisible() and ItemRack.menuOpen==id then
 				ItemRackMenuFrame:Hide()

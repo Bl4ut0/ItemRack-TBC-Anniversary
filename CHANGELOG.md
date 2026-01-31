@@ -9,6 +9,12 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 - **Unequip Priority**: Optimized the unequip-then-equip flow during spec transitions to avoid slot conflicts.
 - **Redundancy Filter**: Prevents unnecessary equip calls if the target set is already active, cleaning up chat/logs.
 
+### Keybind Improvements
+- **Right-Click Queue Cycling**: Fixed and improved manual queue cycling. Right-clicking a slot button now correctly swaps to the next item in that slot's queue using a simplified bag-search approach that bypasses ID matching issues.
+- **Alt+Right-Click Queue Options**: Alt+Right-clicking a slot button now opens the Queue configuration panel for that slot.
+- **Left-Click Item Use**: Left-clicking a slot button uses the equipped item (trinkets, on-use effects).
+- **Alt+Left-Click Queue Toggle**: Alt+Left-clicking toggles the Auto-Queue system on/off for that slot.
+
 ### UI & Options Stability
 - **Focus Preservation**: Fixed a bug where saving a set or equipping gear would cause the Options window to jump to the currently equipped set. The UI now maintains the user's current editing context.
 - **Spec Checkbox Persistence**: Introduced `SpecDirty` tracking to ensure Primary/Secondary spec associations are saved reliably and loaded correctly in the Sets list. Spec checkboxes are now dynamically labeled with your talent tree name (e.g., "Holy", "Arms").
