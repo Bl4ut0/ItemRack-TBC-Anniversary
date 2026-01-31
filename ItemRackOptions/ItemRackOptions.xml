@@ -1804,7 +1804,7 @@
 					</CheckButton>
 
 					<!-- 3. Spec 1 (Touching below Cloak) -->
-					<CheckButton name="ItemRackOptSpec1" inherits="ItemRackOptSimpleCheckButton">
+					<CheckButton name="ItemRackOptSpec1" inherits="UICheckButtonTemplate">
 						<Size>
 							<AbsDimension x="18" y="18"/>
 						</Size>
@@ -1833,7 +1833,7 @@
 					</CheckButton>
 
 					<!-- 4. Spec 2 (Touching below Spec 1) -->
-					<CheckButton name="ItemRackOptSpec2" inherits="ItemRackOptSimpleCheckButton">
+					<CheckButton name="ItemRackOptSpec2" inherits="UICheckButtonTemplate">
 						<Size>
 							<AbsDimension x="18" y="18"/>
 						</Size>
