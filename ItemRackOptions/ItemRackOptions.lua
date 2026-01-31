@@ -18,13 +18,28 @@ function ItemRackOpt.GetSpecName(group)
 	local activeGroup = GetActiveTalentGroup and GetActiveTalentGroup()
 	
 	for i=1,3 do
-		-- Try standard call first (works in recent Wrath/Cata)
-		local name, icon, points = GetTalentTabInfo(i, false, false, group)
+		-- Handle different API return styles between old and modern Classic clients
+		local arg1, arg2, arg3, arg4, arg5, arg6, arg7 = GetTalentTabInfo(i, false, false, group)
 		
-		-- Fallback: If points are 0 or nil, and we are querying the active group (or no group API support), try generic call
+		local name, points
+		-- Modern/Shimmed API: (specId, name, description, icon, pointsSpent, ...)
+		if type(arg1) == "number" then
+			name = arg2
+			points = arg5
+		-- Old API: (name, icon, pointsSpent, ...)
+		else
+			name = arg1
+			points = arg3
+		end
+
+		-- Fallback: If still zero/none and we are querying active group, try without group index
 		if (not points or points == 0) and (activeGroup and group == activeGroup) then
-			-- If the 'group' arg is breaking it, this no-arg call usually gets the active spec info
-			name, icon, points = GetTalentTabInfo(i)
+			local f1, f2, f3, f4, f5 = GetTalentTabInfo(i)
+			if type(f1) == "number" then
+				name, points = f2, f5 -- Note: if the shim applies to single-arg call too
+			else
+				name, points = f1, f3
+			end
 		end
 
 		local p = tonumber(points) or 0

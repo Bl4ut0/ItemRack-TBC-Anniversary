@@ -11,7 +11,7 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 
 ### UI & Options Stability
 - **Focus Preservation**: Fixed a bug where saving a set or equipping gear would cause the Options window to jump to the currently equipped set. The UI now maintains the user's current editing context.
-- **Spec Checkbox Persistence**: Introduced `SpecDirty` tracking to ensure Primary/Secondary spec associations are saved reliably and loaded correctly in the Sets list.
+- **Spec Checkbox Persistence**: Introduced `SpecDirty` tracking to ensure Primary/Secondary spec associations are saved reliably and loaded correctly in the Sets list. Spec checkboxes are now dynamically labeled with your talent tree name (e.g., "Holy", "Arms").
 - **UI Spacing**: Adjusted dual-spec checkbox layout with a 4px overlap to ensure all functional buttons fit within the interface frame.
 
 ### Visual & Display Fixes
