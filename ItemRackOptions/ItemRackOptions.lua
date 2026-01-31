@@ -457,7 +457,7 @@ function ItemRackOpt.ToggleSpec(self,specID)
 			ItemRackOptSpec1:SetChecked(false)
 		end
 	end
-	ItemRackOpt.ValidateSetButtons()
+	-- We don't call ValidateSetButtons() here because it would reset the checkboxes from the saved table
 	ItemRackOptSetsSaveButton:Enable()
 end
 
@@ -542,12 +542,12 @@ function ItemRackOpt.ValidateSetButtons()
 	ItemRackOptSpec1:ClearAllPoints()
 	ItemRackOptSpec2:ClearAllPoints()
 
-	-- Re-anchor ShowCloak to ShowHelm with tighter spacing (-4) to match the new compact layout
+	-- Re-anchor ShowCloak to ShowHelm with tighter spacing (basically touching)
 	ItemRackOptShowCloak:ClearAllPoints()
-	ItemRackOptShowCloak:SetPoint("TOPLEFT",ItemRackOptShowHelm,"BOTTOMLEFT",0,0)
+	ItemRackOptShowCloak:SetPoint("TOPLEFT",ItemRackOptShowHelm,"BOTTOMLEFT",0,-2)
 
-	-- Explicitly anchor Spec1 below ShowCloak with tighter spacing (-4)
-	ItemRackOptSpec1:SetPoint("TOPLEFT",ItemRackOptShowCloak,"BOTTOMLEFT",0,0)
+	-- Explicitly anchor Spec1 below ShowCloak with tighter spacing
+	ItemRackOptSpec1:SetPoint("TOPLEFT",ItemRackOptShowCloak,"BOTTOMLEFT",0,-4)
 
 	-- Always show and update Spec 1
 	ItemRackOptSpec1:Show()
@@ -563,14 +563,14 @@ function ItemRackOpt.ValidateSetButtons()
 	
 	if numGroups > 1 then
 		ItemRackOptSpec2:Show()
-		ItemRackOptSpec2:SetPoint("TOPLEFT",ItemRackOptSpec1,"BOTTOMLEFT",0,0)
+		ItemRackOptSpec2:SetPoint("TOPLEFT",ItemRackOptSpec1,"BOTTOMLEFT",0,-4)
 		ItemRackOptSpec2Text:SetText(ItemRackOpt.GetSpecName(2))
 
 		-- Tighter spacing when dual spec is active to prevent overflow
-		ItemRackOptSetsHideCheckButton:SetPoint("TOPLEFT",ItemRackOptSpec2,"BOTTOMLEFT",0,0)
+		ItemRackOptSetsHideCheckButton:SetPoint("TOPLEFT",ItemRackOptSpec2,"BOTTOMLEFT",0,-4)
 	else
 		ItemRackOptSpec2:Hide()
-		ItemRackOptSetsHideCheckButton:SetPoint("TOPLEFT",ItemRackOptSpec1,"BOTTOMLEFT",0,0)
+		ItemRackOptSetsHideCheckButton:SetPoint("TOPLEFT",ItemRackOptSpec1,"BOTTOMLEFT",0,-4)
 	end
 
 	-- Enable if name entered
@@ -607,10 +607,12 @@ function ItemRackOpt.ValidateSetButtons()
 
 		ItemRackOptSetsCurrentSetIcon:SetTexture(ItemRackUser.Sets[setname].icon)
 		
-		-- Load saved state if set exists
-		local assocSpec = ItemRackUser.Sets[setname].AssociatedSpec
-		ItemRackOptSpec1:SetChecked(assocSpec == 1)
-		ItemRackOptSpec2:SetChecked(assocSpec == 2)
+		-- Only load saved state if we aren't already editing (to prevent overriding clicks)
+		if not ItemRackOptSetsSaveButton:IsEnabled() then
+			local assocSpec = ItemRackUser.Sets[setname].AssociatedSpec
+			ItemRackOptSpec1:SetChecked(assocSpec == 1)
+			ItemRackOptSpec2:SetChecked(assocSpec == 2)
+		end
 	end
 end
 
