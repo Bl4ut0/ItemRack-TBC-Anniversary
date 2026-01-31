@@ -448,6 +448,8 @@ function ItemRackOpt.SetsIconOnClick(self)
 end
 
 function ItemRackOpt.ToggleSpec(self,specID)
+	-- Only uncheck the other box if this one is being checked
+	-- This allows both to be unchecked for spec-independent sets
 	if self:GetChecked() then
 		if specID==1 then
 			ItemRackOptSpec2:SetChecked(false)
