@@ -447,15 +447,18 @@ function ItemRack.ProcessSpecializationEvent()
 		if events[eventName].Type=="Specialization" and events[eventName].Spec then
 			setname = ItemRackUser.Events.Set[eventName]
 			ItemRack.Print("[DEBUG] Event "..eventName.." Spec="..events[eventName].Spec.." Set="..tostring(setname))
-			if events[eventName].Spec == currentSpec and not ItemRack.IsSetEquipped(setname) then
+			-- Always equip the set for the current spec
+			if events[eventName].Spec == currentSpec then
 				setToEquip = setname
 				ItemRack.Print("[DEBUG] Will equip: "..setname)
+			-- Unequip sets for other specs if they're equipped
 			elseif events[eventName].Spec ~= currentSpec and events[eventName].Unequip and ItemRack.IsSetEquipped(setname) then
 				setToUnequip = setname
 				ItemRack.Print("[DEBUG] Will unequip: "..setname)
 			end
 		end
 	end
+	-- Unequip first, then equip (to avoid conflicts)
 	if setToUnequip then
 		ItemRack.Print("[DEBUG] Unequipping: "..setToUnequip)
 		ItemRack.UnequipSet(setToUnequip)
