@@ -1,5 +1,5 @@
-## Interface: 20504
-## Title: ItemRackOptions
+## Interface: 20505
+## Title: ItemRackOptions - Anniversary
 ## IconTexture: Interface\AddOns\ItemRack\ItemRackIcon
 ## Version: 4.27
 ## Notes: Load-On-Demand modules for ItemRack
