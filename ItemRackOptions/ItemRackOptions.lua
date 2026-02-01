@@ -48,8 +48,16 @@ function ItemRackOpt.GetSpecName(group)
 			maxName = name
 		end
 	end
-	if maxPoints == 0 then return group == 1 and "Primary" or "Secondary" end
+	if maxPoints == 0 then return group == 1 and "Primary Spec" or "Secondary Spec" end
 	return maxName
+end
+
+function ItemRackOpt.OnEvent(self, event, ...)
+	if event == "PLAYER_TALENT_UPDATE" or event == "ACTIVE_TALENT_GROUP_CHANGED" then
+		if ItemRackOptFrame:IsVisible() then
+			ItemRackOpt.ValidateSetButtons()
+		end
+	end
 end
 
 ItemRack.CheckButtonLabels = {
@@ -104,6 +112,10 @@ function ItemRackOpt.InvOnLeave(self)
 end
 
 function ItemRackOpt.OnLoad(self)
+	self:RegisterEvent("PLAYER_TALENT_UPDATE")
+	self:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+	self:SetScript("OnEvent", ItemRackOpt.OnEvent)
+
 	table.insert(UISpecialFrames,"ItemRackOptFrame")
 	Mixin(ItemRackOptFrame, BackdropTemplateMixin)
 	ItemRackOptFrame:SetBackdrop({
@@ -1367,6 +1379,37 @@ end
 
 function ItemRackOpt.PopulateSortList(slot)
 	local sortList = ItemRack.GetQueues()[slot]
+	
+	-- First, clean up any existing duplicates in the saved queue
+	-- (scan backwards to safely remove while iterating)
+	if sortList then
+		local seen = {}
+		local stopMarkerSeen = false
+		local i = 1
+		while i <= #sortList do
+			local entry = sortList[i]
+			if entry == 0 then
+				-- The "stop queue here" marker
+				if stopMarkerSeen then
+					-- Duplicate stop marker, remove it
+					table.remove(sortList, i)
+				else
+					stopMarkerSeen = true
+					i = i + 1
+				end
+			else
+				local baseID = ItemRack.GetIRString(entry, true) -- get base item ID
+				if seen[baseID] then
+					-- Duplicate item found, remove it
+					table.remove(sortList, i)
+				else
+					seen[baseID] = true
+					i = i + 1
+				end
+			end
+		end
+	end
+	
 	ItemRack.DockWindows("TOPLEFT",ItemRackOptInv1,"TOPRIGHT")
 	ItemRack.BuildMenu(slot,1) -- make a dummy menu to fetch all wearable items for that slot
 	ItemRackMenuFrame:Hide()
@@ -1379,8 +1422,16 @@ end
 
 function ItemRackOpt.AddToSortList(sortList,id)
 	local found
+	-- Use base ID comparison to prevent duplicates when full ID strings differ
+	-- (e.g., same item with different player level encoded, or minor ID format differences)
 	for i=1,#(sortList) do
-		found = found or sortList[i]==id
+		if sortList[i] == 0 and id == 0 then
+			found = true
+			break
+		elseif sortList[i] ~= 0 and id ~= 0 and (sortList[i] == id or ItemRack.SameID(sortList[i], id)) then
+			found = true
+			break
+		end
 	end
 	if not found then
 		table.insert(sortList,id)

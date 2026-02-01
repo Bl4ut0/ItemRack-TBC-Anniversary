@@ -1,3 +1,20 @@
+__ New in 4.27.1 - By Bl4ut0 __
+- Fixed Spec Swap Bug:
+  - Ensured "Custom" label correctly updates to the set name after a specialization change.
+  - Improved UI synchronization with a 2-second login delay and internal timers.
+- Queue System Improvements:
+  - Fixed item duplication in the queue due to minor string ID mismatches.
+  - Resolved multiple "Stop Queue Here" markers appearing in the list.
+  - Automatic cleanup of existing duplicates/markers upon opening the queue menu.
+- UI & Interaction Refinements:
+  - Smart Menu Docking: Left-side slot menus now spawn to the left to prevent overlap.
+  - Repositioned minimap tooltip to avoid obstructing menus.
+  - Improved Right-Click queue cycling with robust bag search.
+  - Added Alt+Right-Click to open the Queue configuration panel directly.
+- Display Fixes:
+  - Refined stack/charge visibility on buttons.
+  - Fixed empty Ranged/Ammo slot showing "0".
+
 __ New in 4.27 - By Bl4ut0 __
 - Added Adaptive Multi-Spec Support:
   - UI now adapts to show "Secondary Spec" option only if Dual Spec is learned.

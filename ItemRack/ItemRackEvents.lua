@@ -455,6 +455,10 @@ function ItemRack.ProcessSpecializationEvent()
 		if not ItemRack.IsSetEquipped(setToEquip) then
 			ItemRack.Print("Spec changed! Equipping set: "..setToEquip)
 			ItemRack.EquipSet(setToEquip)
+		else
+			-- If already equipped, still update the UI to ensure the correct set name is shown
+			-- This prevents the label from getting stuck as "Custom" after a spec change.
+			ItemRack.UpdateCurrentSet()
 		end
 	end
 end

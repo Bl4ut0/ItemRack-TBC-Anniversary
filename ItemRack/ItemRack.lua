@@ -743,7 +743,7 @@ ItemRack.iSPatternBaseIDFromIR = "^(%-?%d+)" --this must *only* be used on ItemR
 ItemRack.iSPatternBaseIDFromRegular = "item:(%-?%d+)" --this must *only* be used regular itemLinks/itemStrings, and will return the first field (the itemID), allowing us to do loose item matching
 ItemRack.iSPatternEnhancementsFromIR = "^(%-?%d+):(%-?%d*):(%-?%d*):(%-?%d*):(%-?%d*)" --this must *only* be used on ItemRack-style IDs, and will return itemID, enchantID, gem1, gem2, gem3
 function ItemRack.GetIRString(inputString,baseid,regular)
-	return string.match(inputString or "", (baseid and (regular and ItemRack.iSPatternBaseIDFromRegular or ItemRack.iSPatternBaseIDFromIR) or ItemRack.iSPatternRegularToIR)) or 0
+	return string.match(tostring(inputString or ""), (baseid and (regular and ItemRack.iSPatternBaseIDFromRegular or ItemRack.iSPatternBaseIDFromIR) or ItemRack.iSPatternRegularToIR)) or 0
 end
 
 -- itemrack itemstring updater.
@@ -1936,7 +1936,14 @@ function ItemRack.DockMenuToCharacterSheet(self)
 			if slot==14 and ItemRackSettings.TrinketMenuMode=="ON" then
 				self = CharacterTrinket0Slot
 			end
-			ItemRack.DockWindows("TOPLEFT",self,"TOPRIGHT","HORIZONTAL")
+			-- Left side slots: 1 (Head), 2 (Neck), 3 (Shoulder), 15 (Back), 5 (Chest), 4 (Shirt), 19 (Tabard), 9 (Wrist)
+			-- Dock these to the LEFT (TOPRIGHT of menu to TOPLEFT of button)
+			if slot==1 or slot==2 or slot==3 or slot==15 or slot==5 or slot==4 or slot==19 or slot==9 then
+				ItemRack.DockWindows("TOPRIGHT",self,"TOPLEFT","HORIZONTAL")
+			else
+				-- Right side slots dock to the RIGHT (TOPLEFT of menu to TOPRIGHT of button)
+				ItemRack.DockWindows("TOPLEFT",self,"TOPRIGHT","HORIZONTAL")
+			end
 		end
 		ItemRack.BuildMenu(slot, nil, 3)
 	end
@@ -1986,13 +1993,21 @@ function ItemRack.MinimapOnClick(self,button)
 			end
 			ItemRack.BuildMenu(20, nil, 4)
 		end
-	else
+	elseif (button=="RightButton") then -- Explicitly handle Right Click for options if no modifier
 		ItemRack.ToggleOptions(self)
 	end
 end
 
 function ItemRack.MinimapOnEnter(tooltip)
 	if ItemRackSettings.MinimapTooltip~="ON" then return end
+	
+	-- Re-anchor tooltip to avoid covering the menu/frame
+	-- We use GetMouseFocus() to find the minimap button frames since LDB doesn't pass the frame
+	local owner = GetMouseFocus and GetMouseFocus() or (GetMouseFoci and GetMouseFoci()[1])
+	if owner and owner:GetName() and string.find(owner:GetName(), "ItemRack") then 
+		tooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
+	end
+
 	tooltip:AddLine("ItemRack")
 	tooltip:AddLine("Left click: Select a set",.8,.8,.8,1)
 	tooltip:AddLine("Right click: Open options",.8,.8,.8,1)

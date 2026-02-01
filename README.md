@@ -29,6 +29,8 @@ This addon is based on the original **ItemRack Classic** maintained by Rottenbee
 
 ItemRack allows you to manage your gear with extreme precision through sets, automated queues, and event-based triggers.
 
+**[📖 View Complete Control Reference](CONTROLS.md)** - Detailed guide to all mouse clicks, keybinds, and commands.
+
 ### 🚀 Quick Access & Slot Buttons
 - **Open Options:** Type `/itemrack opt` or **Right-Click** the minimap button.
 - **Slot Buttons:** **Alt-Click** any item slot on your Character Sheet to create an on-screen "Quick Access" button for that slot.

@@ -2,7 +2,19 @@
 
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
-## [4.27] - 2026-01-31
+
+## [4.27.1] - 2026-01-31
+### Queue System Fixes
+- **Queue Duplicates**: Fixed an issue where items would duplicate in the queue list due to minor string ID mismatching. Now uses robust base-ID matching.
+- **Stop Marker Fix**: Resolved a bug that caused multiple "Stop Queue Here" (red circle) markers to appear in the list.
+- **Auto-Cleanup**: Opening the queue menu now automatically detects and removes any existing duplicates or extra markers from saved data.
+
+### UI & Layout Improvements
+- **Smart Menu Docking**: Character sheet flyout menus for left-side slots (Head, Neck, Back, Chest, Shirt, Tabard, Wrist, Shoulder) now spawn to the **left** instead of the right, preventing overlap with tooltips or the character model.
+- **Minimap Tooltip Anchor**: Repositioned the minimap button tooltip to the bottom-left of the button to ensure it doesn't obstruct the dropdown menu interactions.
+- **Documentation**: Added a complete [CONTROLS.md](CONTROLS.md) reference guide accessible from the README.
+
+
 ### Core Refinements & Spec Switching
 - **Specialization Automation Fix**: Implemented a 0.5s stability timer (`SpecChangeTimer`) for talent switches to prevent gear-swap race conditions.
 - **Improved Event Handling**: Added `LastLastSpec` state tracking to prevent spec-based gear swaps from interfering with temporary events like **Drinking**, **Mounting**, or **Stance** changes.

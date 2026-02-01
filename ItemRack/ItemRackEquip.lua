@@ -352,7 +352,7 @@ function ItemRack.EndSetSwap(setname)
 	if setname then
 		if not string.match(setname,"^~") then --do not list internal sets, prefixed with ~
 			ItemRackUser.CurrentSet = setname
-			ItemRack.UpdateCurrentSet()
+			C_Timer.After(0.5, ItemRack.UpdateCurrentSet)
 			
 			-- Dual Spec Support: Auto-Swap Spec if Set is bound
 			local set = ItemRackUser.Sets[setname]
@@ -430,11 +430,31 @@ function ItemRack.IsSetEquipped(setname,exact)
 	if setname and ItemRackUser.Sets[setname] then
 		local set = ItemRackUser.Sets[setname].equip
 		local id
+		local same = ItemRack.SameID
+		
+		-- Special handling for Trinkets and Rings to allow swapped slots
+		local check11_12 = (set[11] and set[12])
+		local check13_14 = (set[13] and set[14])
+		
 		for i in pairs(set) do
 			id = ItemRack.GetID(i)
-			if (exact and set[i]~=id) or (not exact and not ItemRack.SameID(set[i],ItemRack.GetID(i))) then
-				return false
+			local match = false
+			
+			if (exact and set[i]==id) or (not exact and same(set[i],id)) then
+				match = true
+			elseif not exact then
+				-- Try cross-slot check for Rings (11/12)
+				if (i==11 or i==12) and check11_12 then
+					local otherID = ItemRack.GetID(i==11 and 12 or 11)
+					if same(set[i], otherID) then match = true end
+				-- Try cross-slot check for Trinkets (13/14)
+				elseif (i==13 or i==14) and check13_14 then
+					local otherID = ItemRack.GetID(i==13 and 14 or 13)
+					if same(set[i], otherID) then match = true end
+				end
 			end
+			
+			if not match then return false end
 		end
 		return true
 	end
