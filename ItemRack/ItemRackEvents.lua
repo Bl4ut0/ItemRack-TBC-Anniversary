@@ -455,10 +455,79 @@ function ItemRack.ProcessSpecializationEvent()
 		if not ItemRack.IsSetEquipped(setToEquip) then
 			ItemRack.Print("Spec changed! Equipping set: "..setToEquip)
 			ItemRack.EquipSet(setToEquip)
+			
+			-- Dual-Wield Awareness: Schedule a delayed re-check for weapon slots
+			-- Some specs grant dual-wield (e.g., Enhancement Shaman, Fury Warrior)
+			-- The offhand may fail to equip if dual-wield isn't recognized immediately
+			-- Uses EquipItemByID directly (not temporary sets) to avoid queue issues
+			ItemRack.ScheduleDualWieldRetry(setToEquip)
 		else
 			-- If already equipped, still update the UI to ensure the correct set name is shown
 			-- This prevents the label from getting stuck as "Custom" after a spec change.
 			ItemRack.UpdateCurrentSet()
+		end
+	end
+end
+
+-- Dual-Wield Retry: Re-attempt weapon equip after spec change if offhand wasn't equipped
+-- Uses EquipItemByID directly instead of temporary sets to avoid queue conflicts
+function ItemRack.ScheduleDualWieldRetry(setname)
+	if not setname or not ItemRackUser.Sets[setname] then return end
+	
+	local set = ItemRackUser.Sets[setname].equip
+	-- Only proceed if the set has an offhand weapon defined
+	if not set or not set[17] or set[17] == 0 then return end
+	
+	-- Capture the current spec at schedule time for later verification
+	local getSpec = GetActiveTalentGroup or (C_Talent and C_Talent.GetActiveTalentGroup)
+	local scheduledSpec = getSpec and getSpec() or nil
+	
+	-- Schedule a delayed check to retry the offhand after dual-wield is recognized
+	-- Single attempt only - no retry loop to avoid pestering the user
+	C_Timer.After(0.75, function()
+		ItemRack.RetryDualWieldWeapons(setname, scheduledSpec)
+	end)
+end
+
+function ItemRack.RetryDualWieldWeapons(setname, expectedSpec)
+	-- Re-validate set still exists (could have been deleted)
+	if not setname or not ItemRackUser.Sets[setname] then return end
+	
+	-- Verify we're still on the expected spec (user might have walked away or switched again)
+	local getSpec = GetActiveTalentGroup or (C_Talent and C_Talent.GetActiveTalentGroup)
+	local currentSpec = getSpec and getSpec() or nil
+	if expectedSpec and currentSpec and currentSpec ~= expectedSpec then
+		-- User switched specs again, abort silently
+		return
+	end
+	
+	-- Check if the player can now dual-wield
+	local canDualWield = CanDualWield and CanDualWield()
+	if not canDualWield then 
+		-- Spec doesn't support dual-wield, exit gracefully
+		return 
+	end
+	
+	local set = ItemRackUser.Sets[setname].equip
+	if not set then return end
+	
+	local currentOffhand = ItemRack.GetID(17)
+	local intendedOffhand = set[17]
+	
+	-- If offhand is defined but not correctly equipped, retry using EquipItemByID
+	-- This doesn't use temporary sets, so it won't pollute the SetsWaiting queue
+	if intendedOffhand and intendedOffhand ~= 0 and not ItemRack.SameID(currentOffhand, intendedOffhand) then
+		ItemRack.Print("Dual-wield detected, retrying offhand weapon...")
+		
+		-- Use EquipItemByID which handles combat queue properly
+		-- and doesn't create temporary sets
+		ItemRack.EquipItemByID(intendedOffhand, 17)
+		
+		-- Also retry mainhand if needed
+		local currentMainhand = ItemRack.GetID(16)
+		local intendedMainhand = set[16]
+		if intendedMainhand and intendedMainhand ~= 0 and not ItemRack.SameID(currentMainhand, intendedMainhand) then
+			ItemRack.EquipItemByID(intendedMainhand, 16)
 		end
 	end
 end

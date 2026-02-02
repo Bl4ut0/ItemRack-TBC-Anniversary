@@ -593,12 +593,11 @@ function ItemRack.ButtonPostClick(self,button)
 			return
 		end
 		
-		-- Plain right-click advances the queue
-		if not InCombatLockdown() then
-			-- Use the simpler ManualQueueAdvance function that directly finds and equips items
-			if ItemRack.ManualQueueAdvance and ItemRack.ManualQueueAdvance(id) then
-				handled = 1
-			end
+		
+		-- Plain right-click advances the queue (handles combat queue internally)
+		-- Use the simpler ManualQueueAdvance function that directly finds and equips items
+		if ItemRack.ManualQueueAdvance and ItemRack.ManualQueueAdvance(id) then
+			handled = 1
 		end
 		
 		-- Fallback: If MenuOnRight is ON and nothing was handled, show menu anyway

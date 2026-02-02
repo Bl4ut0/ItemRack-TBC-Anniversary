@@ -116,6 +116,16 @@ function ItemRack.ProcessSetsWaiting()
 	local setwaiting = ItemRack.SetsWaiting[1][1]
 	local whichequip = ItemRack.SetsWaiting[1][2]
 	table.remove(ItemRack.SetsWaiting,1)
+	
+	-- Safety: Skip sets that no longer exist (prevents getting stuck)
+	if not ItemRackUser.Sets[setwaiting] then
+		-- Set was deleted, skip it and try the next one
+		if #ItemRack.SetsWaiting > 0 then
+			ItemRack.ProcessSetsWaiting()
+		end
+		return
+	end
+	
 	whichequip(setwaiting)
 end
 
@@ -159,13 +169,19 @@ function ItemRack.EquipSet(setname)
 	end
 	local inv,bag,slot
 	local couldntFind
+	local inCombat = UnitAffectingCombat("player")
+	local isInternalSet = setname and string.sub(setname, 1, 1) == "~" -- Internal sets like ~Unequip, ~CombatQueue, ~DualWieldRetry
+	
 	for i in pairs(set.equip) do
 		if ItemRack.GetID(i)~=set.equip[i] then -- if intended item is not worn (exact match)
 			inv,bag,slot = ItemRack.FindItem(set.equip[i])
 			if not inv and not bag then
 				-- if not found at all, then start/add to list of items not found
-				couldntFind = couldntFind or "Could not find: "
-				couldntFind = couldntFind.."["..tostring(ItemRack.GetInfoByID(set.equip[i])).."] "
+				-- Suppress these messages during combat or for internal sets (they're noise)
+				if not inCombat and not isInternalSet then
+					couldntFind = couldntFind or "Could not find: "
+					couldntFind = couldntFind.."["..tostring(ItemRack.GetInfoByID(set.equip[i])).."] "
+				end
 			elseif inv~=i then -- and finding intended item doesn't point to worn
 				swap[i] = set.equip[i] -- then note this item for a swap
 			end

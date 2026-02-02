@@ -3,7 +3,23 @@
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
 
-## [4.27.1] - 2026-01-31
+## [4.27.2] - 2026-02-01
+### Dual-Wield Spec Awareness
+- **Offhand Weapon Retry**: Added logic to detect when a spec change grants dual-wield capability (e.g., Enhancement Shaman, Fury Warrior). If the offhand weapon fails to equip during the initial set swap, ItemRack will automatically retry the weapon slots after a short delay.
+- **Safe Implementation**: Uses `EquipItemByID` directly instead of temporary sets, avoiding queue conflicts that could break the addon.
+
+### Stability Fixes
+- **SetsWaiting Safety**: Added protection against deleted sets in the waiting queue. If a set in the queue no longer exists, it is now safely skipped instead of breaking subsequent swaps.
+- **Simplified Combat Detection**: Streamlined the combat state check in `EquipSet` to avoid potential timing issues.
+
+### Combat Queue Consistency
+- **Manual Queue Cycling**: Right-clicking a slot button to cycle through the queue now properly uses the combat queue if you're in combat. Previously, this action would silently fail during combat.
+- **Unified Combat Handling**: All gear-switching systems now consistently use `AddToCombatQueue()` when the player is in combat, dead, or casting. Items queued this way will automatically equip when combat ends.
+- **Event Restoration During Combat**: Suppressed noisy "Could not find" error messages when events like Drinking end during combat. These messages were not actionable while fighting and cluttered the chat.
+
+---
+
+## [4.27.1] - 
 ### Queue System Fixes
 - **Queue Duplicates**: Fixed an issue where items would duplicate in the queue list due to minor string ID mismatching. Now uses robust base-ID matching.
 - **Stop Marker Fix**: Resolved a bug that caused multiple "Stop Queue Here" (red circle) markers to appear in the list.
@@ -14,7 +30,7 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 - **Minimap Tooltip Anchor**: Repositioned the minimap button tooltip to the bottom-left of the button to ensure it doesn't obstruct the dropdown menu interactions.
 - **Documentation**: Added a complete [CONTROLS.md](CONTROLS.md) reference guide accessible from the README.
 
-
+## [4.27] - Dual Spec Support
 ### Core Refinements & Spec Switching
 - **Specialization Automation Fix**: Implemented a 0.5s stability timer (`SpecChangeTimer`) for talent switches to prevent gear-swap race conditions.
 - **Improved Event Handling**: Added `LastLastSpec` state tracking to prevent spec-based gear swaps from interfering with temporary events like **Drinking**, **Mounting**, or **Stance** changes.
