@@ -375,13 +375,25 @@ function ItemRack.ProcessStanceEvent()
 			if not skip then
 				stance = ItemRack.GetStanceNumber(events[eventName].Stance)
 				setname = ItemRackUser.Events.Set[eventName]
-				if stance==currentStance and not ItemRack.IsSetEquipped(setname) then
-					-- if this event is for this stance, then we'll want to equip this one
-					setToEquip = ItemRackUser.Events.Set[eventName]
-				end
-				if stance~=currentStance and events[eventName].Unequip and ItemRack.IsSetEquipped(setname) then
-					-- if this event is for last stance, then we'll want to unequip it
-					setToUnequip = ItemRackUser.Events.Set[eventName]
+				
+				-- Use .Active to track stance state, ensuring cleaner transitions
+				if stance==currentStance then
+					if not events[eventName].Active then
+						if not ItemRack.IsSetEquipped(setname) then
+							setToEquip = setname
+						end
+						events[eventName].Active = true
+					end
+				elseif stance~=currentStance then
+					if events[eventName].Active then
+						if events[eventName].Unequip then
+							setToUnequip = setname
+						end
+						events[eventName].Active = nil
+					elseif events[eventName].Unequip and ItemRack.IsSetEquipped(setname) then
+						-- Fallback for consistency
+						setToUnequip = setname
+					end
 				end
 			end
 		end
@@ -483,8 +495,9 @@ function ItemRack.ScheduleDualWieldRetry(setname)
 	local scheduledSpec = getSpec and getSpec() or nil
 	
 	-- Schedule a delayed check to retry the offhand after dual-wield is recognized
+	-- Must wait longer than the 5-second spec change cast to ensure dual-wield is granted
 	-- Single attempt only - no retry loop to avoid pestering the user
-	C_Timer.After(0.75, function()
+	C_Timer.After(5.5, function()
 		ItemRack.RetryDualWieldWeapons(setname, scheduledSpec)
 	end)
 end
@@ -579,10 +592,28 @@ function ItemRack.ProcessBuffEvent()
 				end
 				setname = ItemRackUser.Events.Set[eventName]
 				isSetEquipped = ItemRack.IsSetEquipped(setname)
-				if buff and not isSetEquipped then
-					ItemRack.EquipSet(setname)
-				elseif not buff and isSetEquipped and events[eventName].Unequip then
-					ItemRack.UnequipSet(setname)
+				
+				-- Use .Active to track if we've already handled this event
+				-- This prevents spamming EquipSet if IsSetEquipped returns false (e.g. due to API bugs or manual swaps)
+				-- And ensures UnequipSet triggers even if the set is only partially equipped
+				if buff then
+					if not events[eventName].Active then
+						if not isSetEquipped then
+							ItemRack.EquipSet(setname)
+						end
+						events[eventName].Active = true
+					end
+				elseif not buff then
+					if events[eventName].Active then
+						if events[eventName].Unequip then
+							ItemRack.UnequipSet(setname)
+						end
+						events[eventName].Active = nil
+					elseif isSetEquipped and events[eventName].Unequip then
+						-- Fallback: If we didn't track it as active but the set IS equipped, unequip it
+						-- This handles cases like reloading UI while mounted
+						ItemRack.UnequipSet(setname)
+					end
 				end
 			end
 		end

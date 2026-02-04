@@ -2,6 +2,28 @@
 
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
+## [4.27.4] - 2026-02-03
+### 🚀 New in v4.27.4
+
+#### ⚡ Event System Overhaul
+- **Buff Event State Tracking**: Fixed an issue where temporary events (Mounting, Drinking) could get "stuck" or spam gear swaps. Added distinct `.Active` state tracking to ensure events properly unequip their gear when ending.
+- **Nested Event Handling**: Implemented "stack splicing" logic to handle complex event transitions (e.g., Drinking ending while Mounted). The system now correctly restores the original gear state instead of reverting to an intermediate temporary set.
+- **Stance Reliability**: Extended the `.Active` state tracking to Stance events (Shapesifting, Ghost Wolf), ensuring they cleanly revert gear even if the equipment API reports mismatches.
+
+#### 🎨 UI & Visual Fixes
+- **UI Label Stability**: The current set label/icon now correctly persists during active events (like "Zoomies") instead of reverting to "Custom" when `IsSetEquipped` fails falsely due to API inconsistencies.
+
+## [4.27.3] - 2026-02-02
+### Dual-Wield Timing Fix
+- **Extended Retry Delay**: Increased the dual-wield weapon retry delay from 0.75 seconds to 5.5 seconds. The previous delay was too short to account for the 5-second spec change cast, causing the offhand weapon retry to trigger before dual-wield capability was granted.
+
+### UI Options
+- **Menu Docking Control**: Added two new options under "Character sheet menus" for controlling popout menu direction:
+  - **Left slots: menu on right** — Flips left-side slots (Head, Neck, Shoulder, Back, Chest, Shirt, Tabard, Wrist) to show menus on the RIGHT
+  - **Right slots: menu on left** — Flips right-side slots (Hands, Waist, Legs, Feet, Rings, Trinkets) to show menus on the LEFT
+  - Bottom weapon slots (MainHand, OffHand, Ranged) always dock vertically and are unaffected
+
+---
 
 ## [4.27.2] - 2026-02-01
 ### Dual-Wield Spec Awareness

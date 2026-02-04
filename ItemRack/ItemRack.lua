@@ -194,6 +194,8 @@ ItemRackSettings = {
 	EquipOnSetPick = "OFF", -- whether to equip a set when picked in the set tab of options
 	MinimapTooltip = "ON", -- whether to display the minimap button tooltip to explain clicks
 	CharacterSheetMenus = "ON", -- whether to display slot menus on mouseover of the character sheet
+	LeftSlotsGoRight = "OFF", -- whether left-side character slots dock their menus to the RIGHT instead of left
+	RightSlotsGoLeft = "OFF", -- whether right-side character slots dock their menus to the LEFT instead of right
 	DisableAltClick = "OFF", -- whether to disable Alt+click from toggling auto queue (to allow self cast through)
 }
 
@@ -686,6 +688,9 @@ function ItemRack.InitCore()
 	ItemRackSettings.CharacterSheetMenus = ItemRackSettings.CharacterSheetMenus or "ON" -- 2.22
 	ItemRackSettings.DisableAltClick = ItemRackSettings.DisableAltClick or "OFF" -- 2.23
 	ItemRackSettings.HidePetBattle = ItemRackSettings.HidePetBattle or "ON" -- 2.87
+	ItemRackSettings.LeftSlotsGoRight = ItemRackSettings.LeftSlotsGoRight or "OFF" -- 4.27.3
+	ItemRackSettings.RightSlotsGoLeft = ItemRackSettings.RightSlotsGoLeft or "OFF" -- 4.27.3
+	ItemRackSettings.CharacterSheetMenusLeft = nil -- removed in 4.27.3, replaced with per-side toggles
 end
 
 function ItemRack.Print(msg)
@@ -699,6 +704,18 @@ function ItemRack.UpdateCurrentSet()
 	local setname = ItemRackUser.CurrentSet or _G.CUSTOM
 	if setname and setname ~= _G.CUSTOM then
 		local equipped = ItemRack.IsSetEquipped(setname)
+		
+		-- If the set is linked to an active event (e.g. Zoomies, Drinking), trust it even if IsSetEquipped fails.
+		-- This works around API glitches where IsSetEquipped returns false despite the gear being worn.
+		if not equipped and ItemRackEvents then
+			for eventName, eventData in pairs(ItemRackEvents) do
+				if eventData.Active and ItemRackUser.Events.Set[eventName] == setname then
+					equipped = true
+					break
+				end
+			end
+		end
+
 		if equipped then
 			texture = ItemRack.GetTextureBySlot(20)
 		else
@@ -1931,18 +1948,27 @@ function ItemRack.DockMenuToCharacterSheet(self)
 	end
 	if slot then
 		if slot==0 or (slot>=16 and slot<=18) then
+			-- Bottom/weapon slots: always dock vertically
 			ItemRack.DockWindows("TOPLEFT",self,"BOTTOMLEFT","VERTICAL")
 		else
 			if slot==14 and ItemRackSettings.TrinketMenuMode=="ON" then
 				self = CharacterTrinket0Slot
 			end
 			-- Left side slots: 1 (Head), 2 (Neck), 3 (Shoulder), 15 (Back), 5 (Chest), 4 (Shirt), 19 (Tabard), 9 (Wrist)
-			-- Dock these to the LEFT (TOPRIGHT of menu to TOPLEFT of button)
 			if slot==1 or slot==2 or slot==3 or slot==15 or slot==5 or slot==4 or slot==19 or slot==9 then
-				ItemRack.DockWindows("TOPRIGHT",self,"TOPLEFT","HORIZONTAL")
+				-- Left-side slots: default LEFT, but can be flipped to RIGHT
+				if ItemRackSettings.LeftSlotsGoRight=="ON" then
+					ItemRack.DockWindows("TOPLEFT",self,"TOPRIGHT","HORIZONTAL")
+				else
+					ItemRack.DockWindows("TOPRIGHT",self,"TOPLEFT","HORIZONTAL")
+				end
 			else
-				-- Right side slots dock to the RIGHT (TOPLEFT of menu to TOPRIGHT of button)
-				ItemRack.DockWindows("TOPLEFT",self,"TOPRIGHT","HORIZONTAL")
+				-- Right-side slots: default RIGHT, but can be flipped to LEFT
+				if ItemRackSettings.RightSlotsGoLeft=="ON" then
+					ItemRack.DockWindows("TOPRIGHT",self,"TOPLEFT","HORIZONTAL")
+				else
+					ItemRack.DockWindows("TOPLEFT",self,"TOPRIGHT","HORIZONTAL")
+				end
 			end
 		end
 		ItemRack.BuildMenu(slot, nil, 3)

@@ -193,6 +193,8 @@ function ItemRackOpt.OnLoad(self)
 		{type="check",optset=ItemRackSettings,variable="ShowHotKeys",label="Show key bindings",tooltip="Display key bindings on buttons"},
 		{type="check",optset=ItemRackSettings,variable="EquipOnSetPick",label="Equip in options",tooltip="Check this to equip sets and items when selecting items in options or from the dropdown in the Sets tab."},
 		{type="check",optset=ItemRackSettings,variable="CharacterSheetMenus",label="Character sheet menus",tooltip="While this is checked, mouseover of slots on the character sheet will pop out a menu of items that can go in that slot."},
+		{type="check",optset=ItemRackSettings,variable="LeftSlotsGoRight",depend="CharacterSheetMenus",label="Left slots: menu on right",tooltip="Make left-side character slot menus (Head, Neck, Shoulder, etc.) appear on the RIGHT instead of the left."},
+		{type="check",optset=ItemRackSettings,variable="RightSlotsGoLeft",depend="CharacterSheetMenus",label="Right slots: menu on left",tooltip="Make right-side character slot menus (Hands, Legs, Trinkets, etc.) appear on the LEFT instead of the right."},
 		{type="check",optset=ItemRackSettings,variable="DisableAltClick",label="Disable Alt+Click",tooltip="Alt+Click on buttons dragged from the character sheet toggles auto queue for that slot.  Check this to disable that behavior. (ie to use Alt+click to self cast instead.)",combatlock=1},
 		{type="label",label=""},
 		{type="button",button=ItemRackOptKeyBindings,label="Slot Key Bindings",tooltip="Set key bindings to use slots.",combatlock=1},

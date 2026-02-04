@@ -482,6 +482,19 @@ function ItemRack.UnequipSet(setname)
 			ItemRack.AddSetToSetsWaiting(setname,ItemRack.UnequipSet)
 			return
 		end
+		
+		-- Stack Splicing Logic:
+		-- Check if another set (e.g. "Zoomies") is currently holding this set (e.g. "Drank") as its 'oldset'.
+		-- If so, we are unequipping a set that is "buried" in the stack (Drinking stopped while Mounted).
+		-- We must splice it out: update parent's oldset, restore items, but DO NOT update CurrentSet.
+		local parentSet = nil
+		for sName, sData in pairs(ItemRackUser.Sets) do
+			if sData.oldset == setname and sData.key ~= setname then -- ensure not self-referential
+				parentSet = sName
+				break 
+			end
+		end
+
 		local old = ItemRackUser.Sets[setname].old
 		local unequip = ItemRackUser.Sets["~Unequip"].equip
 		for i in pairs(unequip) do
@@ -489,9 +502,20 @@ function ItemRack.UnequipSet(setname)
 		end
 		for i in pairs(old) do
 			unequip[i] = old[i]
-			-- old[i] = nil
 		end
-		ItemRackUser.Sets["~Unequip"].oldset = ItemRackUser.Sets[setname].oldset
+		
+		if parentSet then
+			-- We are buried. Patch the chain.
+			-- Parent ("Zoomies") should now point to Our Previous ("Normal") instead of Us ("Drank")
+			ItemRackUser.Sets[parentSet].oldset = ItemRackUser.Sets[setname].oldset
+			
+			-- Prepare ~Unequip to restore items, but set oldset to nil so EndSetSwap doesn't change CurrentSet
+			ItemRackUser.Sets["~Unequip"].oldset = nil
+		else
+			-- Normal unequip (Top of stack)
+			ItemRackUser.Sets["~Unequip"].oldset = ItemRackUser.Sets[setname].oldset
+		end
+		
 		ItemRack.EquipSet("~Unequip")
 	end
 end
