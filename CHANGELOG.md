@@ -2,6 +2,14 @@
 
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
+## [4.39.4] - 2026-05-06
+### Diagnostic Improvements
+- **Expanded Combat Taint Tracing**: Significantly upgraded the internal diagnostic framework to help users troubleshoot "Action Blocked" combat errors.
+  - Added new `Combat` and `UI` trace layers to track `InCombatLockdown()` state precisely during combat transitions and when opening/clicking ItemRack's dynamic popout menus.
+  - Increased the internal `ItemRack.LogBuffer` capacity from 500 to 5,000 lines to ensure combat traces aren't lost during long arena matches or battlegrounds.
+  - **Silent Tracing**: Typing `/itemrack debug` now activates all trace layers silently in the background without spamming the chat window. If you wish to view traces in real-time, use the new `/itemrack debug chat` command.
+  - Expanded `/itemrack dump` output to include runtime combat state, active menu visibility, combat queue contents, and current quick-access button configurations.
+
 ## [4.39.3] - 2026-05-05
 ### Bug Fixes
 - **Ghost Overrides for Events**: Fixed an edge case in `ItemRackEvents.lua` where transient or disabled Zone events could leave their `ManualOverride` flag stuck on. This "ghost override" previously suppressed gear restorations (like dismounting or dropping a stance) permanently, even when the player was not actively using a zone set. (PR #14)

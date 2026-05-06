@@ -82,6 +82,9 @@ All 20 ItemRack equipment slots can be bound directly via the native WoW interfa
 | Command | Effect |
 |---------|--------|
 | `/itemrack opt` or `/itemrack options` | Opens the Options window |
+| `/itemrack debug` | Toggles the diagnostic logging framework (Silent mode by default) |
+| `/itemrack debug chat` | Toggles printing the diagnostic traces to the main chat window |
+| `/itemrack dump` | Retrieves the session Event logs & active SV data into a copyable UI |
 | `/itemrack equip <set name>` | Equips the specified set |
 | `/itemrack toggle <set name>` | Toggles the specified set on/off |
 | `/itemrack toggle <set1>, <set2>` | Toggles between two sets |
