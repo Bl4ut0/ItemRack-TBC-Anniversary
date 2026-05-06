@@ -52,8 +52,12 @@ ItemRack.DebugChat = false -- whether to print debug messages to the chat frame
 function ItemRack.Debug(tag, ...)
 	if not ItemRack.DebugAll and not ItemRack.DebugTags[tag] then return end
 	if ItemRack.DebugChat then
-		local prefix = "|cff00ff00[IR-" .. tag .. "]|r"
-		print(prefix, ...)
+		local text = "|cff00ff00[IR-" .. tag .. "]|r"
+		for i=1, select("#", ...) do
+			local val = select(i, ...)
+			text = text .. " " .. tostring(val)
+		end
+		ItemRack.Print(text)
 	end
 	if ItemRack.DebugAll or ItemRack.DebugTags[tag] then
 		if not ItemRack.LogBuffer then ItemRack.LogBuffer = {} end
@@ -3242,6 +3246,16 @@ function ItemRack.SlashHandler(arg1)
 		local subcmd = string.match(arg1, "^debug%s+(.+)")
 		if subcmd == "chat" then
 			ItemRack.DebugChat = not ItemRack.DebugChat
+			if ItemRack.DebugChat and not ItemRack.DebugAll then
+				ItemRack.DebugAll = true
+				ItemRack.DebugTags.Events = true
+				ItemRack.DebugTags.Equip = true
+				ItemRack.DebugTags.Queue = true
+				ItemRack.DebugTags.CombatQueue = true
+				ItemRack.DebugTags.API = true
+				ItemRack.DebugTags.UI = true
+				ItemRack.DebugTags.Combat = true
+			end
 			ItemRack.Print("Diagnostic debug printing to chat is now "..(ItemRack.DebugChat and "ON" or "OFF"))
 		else
 			ItemRack.DebugAll = not ItemRack.DebugAll
