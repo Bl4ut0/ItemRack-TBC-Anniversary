@@ -45,13 +45,16 @@ ItemRack.Version = GetAddOnMetadata(addonName, "Version")
 -- Enable:  /script ItemRack.DebugTags.Queue = true
 -- Disable: /script ItemRack.DebugTags.Queue = false
 -- Enable all: /script ItemRack.DebugAll = true
-ItemRack.DebugTags = {} -- per-tag toggles, e.g. { Queue = true, Events = true }
+ItemRack.DebugTags = {} -- per-tag toggles, e.g. { Queue = true, Events = true, UI = true, Combat = true }
 ItemRack.DebugAll = false -- master override to enable all tags
+ItemRack.DebugChat = false -- whether to print debug messages to the chat frame
 
 function ItemRack.Debug(tag, ...)
 	if not ItemRack.DebugAll and not ItemRack.DebugTags[tag] then return end
-	local prefix = "|cff00ff00[IR-" .. tag .. "]|r"
-	print(prefix, ...)
+	if ItemRack.DebugChat then
+		local prefix = "|cff00ff00[IR-" .. tag .. "]|r"
+		print(prefix, ...)
+	end
 	if ItemRack.DebugAll or ItemRack.DebugTags[tag] then
 		if not ItemRack.LogBuffer then ItemRack.LogBuffer = {} end
 		local text = "[IR-" .. tag .. "]"
@@ -60,7 +63,7 @@ function ItemRack.Debug(tag, ...)
 			text = text .. " " .. tostring(val)
 		end
 		table.insert(ItemRack.LogBuffer, date("[%H:%M:%S] ") .. text)
-		if #ItemRack.LogBuffer > 500 then table.remove(ItemRack.LogBuffer, 1) end
+		if #ItemRack.LogBuffer > 5000 then table.remove(ItemRack.LogBuffer, 1) end
 	end
 end
 
@@ -632,6 +635,7 @@ end
 
 function ItemRack.OnLeavingCombatOrDeath()
 	ItemRack.inCombat = InCombatLockdown()
+	ItemRack.Debug("Combat", "OnLeavingCombatOrDeath: InCombatLockdown="..tostring(InCombatLockdown()))
 	if ItemRack.NowCasting then
 		return
 	end
@@ -729,6 +733,7 @@ end
 
 function ItemRack.OnEnteringCombat()
 	ItemRack.inCombat = 1
+	ItemRack.Debug("Combat", "OnEnteringCombat: InCombatLockdown="..tostring(InCombatLockdown()))
 	if ItemRackOptFrame and ItemRackOptFrame:IsVisible() then
 		ItemRackOpt.ListScrollFrameUpdate()
 		ItemRackOptSetsBindButton:Disable()
@@ -1557,6 +1562,8 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 		menuInclude = ItemRack.menuInclude
 	end
 
+	ItemRack.Debug("UI", "BuildMenu called. id:", id, "InCombat:", InCombatLockdown(), "menuOpen:", ItemRack.menuOpen)
+
 	local useSound = GetCVar("Sound_EnableSFX")
 	local overrideSound = false
 	if ItemRackSettings.DisableActionBarSound == "ON" and useSound == "1" then
@@ -1946,6 +1953,7 @@ end
 function ItemRack.MenuOnClick(self,button)
 	self:SetChecked(false)
 	local item = ItemRack.Menu[self:GetID()]
+	ItemRack.Debug("UI", "MenuOnClick:", self:GetName(), "button:", button, "item:", item, "InCombat:", InCombatLockdown(), "menuOpen:", ItemRack.menuOpen)
 	ItemRack.ClearLockList()
 	if IsAltKeyDown() and ItemRackSettings.AllowHidden == "ON" and item ~= "MENU" then
 		ItemRack.ToggleHidden(item)
@@ -3230,22 +3238,32 @@ function ItemRack.SlashHandler(arg1)
 	elseif arg1=="unlock" then
 		ItemRackUser.Locked="OFF"
 		ItemRack.ReflectLock()
-	elseif arg1=="debug" then
-		ItemRack.DebugAll = not ItemRack.DebugAll
-		if ItemRack.DebugAll then
-			ItemRack.DebugTags.Events = true
-			ItemRack.DebugTags.Equip = true
-			ItemRack.DebugTags.Queue = true
-			ItemRack.DebugTags.CombatQueue = true
-			ItemRack.DebugTags.API = true
-			ItemRack.Print("Diagnostic debugging ENABLED for all layers.")
+	elseif arg1 and string.match(arg1, "^debug") then
+		local subcmd = string.match(arg1, "^debug%s+(.+)")
+		if subcmd == "chat" then
+			ItemRack.DebugChat = not ItemRack.DebugChat
+			ItemRack.Print("Diagnostic debug printing to chat is now "..(ItemRack.DebugChat and "ON" or "OFF"))
 		else
-			ItemRack.DebugTags.Events = false
-			ItemRack.DebugTags.Equip = false
-			ItemRack.DebugTags.Queue = false
-			ItemRack.DebugTags.CombatQueue = false
-			ItemRack.DebugTags.API = false
-			ItemRack.Print("Diagnostic debugging DISABLED.")
+			ItemRack.DebugAll = not ItemRack.DebugAll
+			if ItemRack.DebugAll then
+				ItemRack.DebugTags.Events = true
+				ItemRack.DebugTags.Equip = true
+				ItemRack.DebugTags.Queue = true
+				ItemRack.DebugTags.CombatQueue = true
+				ItemRack.DebugTags.API = true
+				ItemRack.DebugTags.UI = true
+				ItemRack.DebugTags.Combat = true
+				ItemRack.Print("Diagnostic debugging ENABLED for all layers (Silent Mode). Use '/itemrack debug chat' to see traces in chat.")
+			else
+				ItemRack.DebugTags.Events = false
+				ItemRack.DebugTags.Equip = false
+				ItemRack.DebugTags.Queue = false
+				ItemRack.DebugTags.CombatQueue = false
+				ItemRack.DebugTags.API = false
+				ItemRack.DebugTags.UI = false
+				ItemRack.DebugTags.Combat = false
+				ItemRack.Print("Diagnostic debugging DISABLED.")
+			end
 		end
 	elseif arg1=="dump" then
 		if not ItemRack.LogBuffer then ItemRack.LogBuffer = {} end
@@ -3311,7 +3329,15 @@ function ItemRack.SlashHandler(arg1)
 		end
 		
 		local dumpText = "=== ITEMRACK LOG BUFFER ===\n" .. table.concat(ItemRack.LogBuffer, "\n")
-		dumpText = dumpText .. "\n\n=== SAVED VARIABLES DUMP ===\n"
+		dumpText = dumpText .. "\n\n=== RUNTIME STATE DUMP ===\n"
+		dumpText = dumpText .. "InCombatLockdown() = " .. tostring(InCombatLockdown()) .. "\n"
+		dumpText = dumpText .. "ItemRack.menuOpen = " .. tostring(ItemRack.menuOpen) .. "\n"
+		dumpText = dumpText .. "ItemRackMenuFrame:IsVisible() = " .. tostring(ItemRackMenuFrame and ItemRackMenuFrame:IsVisible()) .. "\n"
+		dumpText = dumpText .. "ItemRack.CombatQueue = " .. ItemRackLogFrame.Serialize(ItemRack.CombatQueue) .. "\n"
+		
+		dumpText = dumpText .. "\n=== SAVED VARIABLES DUMP ===\n"
+		dumpText = dumpText .. "ItemRackUser.Locked = " .. tostring(ItemRackUser.Locked) .. "\n"
+		dumpText = dumpText .. "ItemRackUser.Buttons = " .. ItemRackLogFrame.Serialize(ItemRackUser.Buttons) .. "\n"
 		dumpText = dumpText .. "ItemRackUser.CurrentSet = " .. tostring(ItemRackUser.CurrentSet) .. "\n"
 		dumpText = dumpText .. "ItemRackUser.SetSwapping = " .. tostring(ItemRack.SetSwapping) .. "\n"
 		dumpText = dumpText .. "ItemRackUser.EventStack = " .. ItemRackLogFrame.Serialize(ItemRackUser.EventStack) .. "\n"
