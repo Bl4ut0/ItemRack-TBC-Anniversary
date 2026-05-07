@@ -1567,10 +1567,6 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 	end
 
 	ItemRack.Debug("UI", "BuildMenu called. id:", id, "InCombat:", InCombatLockdown(), "menuOpen:", ItemRack.menuOpen)
-	if InCombatLockdown() then
-		ItemRack.Debug("UI", "BuildMenu aborted: Cannot dynamically alter secure menus during combat.")
-		return
-	end
 
 	local useSound = GetCVar("Sound_EnableSFX")
 	local overrideSound = false

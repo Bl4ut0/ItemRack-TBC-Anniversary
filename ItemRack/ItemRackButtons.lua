@@ -391,10 +391,6 @@ function ItemRack.newCharacterModelFrame_OnMouseUp(self, button)
 end
 
 function ItemRack.AddButton(id)
-	if InCombatLockdown() then
-		ItemRack.Print("Sorry, you can't add or remove buttons during combat.")
-		return
-	end
 	ItemRackUser.Buttons[id] = {}
 	local button = _G["ItemRackButton"..id]
 	button:ClearAllPoints()
