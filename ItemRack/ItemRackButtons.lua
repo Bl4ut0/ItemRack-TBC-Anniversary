@@ -698,7 +698,7 @@ function ItemRack.OnEnterButton(self)
 	end
 	local button = self:GetID()
 	ItemRack.DockMenuToButton(button)
-	ItemRack.BuildMenu(button)
+	ItemRack.BuildMenu(button, nil, 2)
 end
 
 --[[ Menu Docking ]]

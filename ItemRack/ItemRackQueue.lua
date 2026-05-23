@@ -117,6 +117,7 @@ end
 -- Helper: Find next valid item in queue for a slot
 function ItemRack.GetNextItemInQueue(slot)
 	if not slot or IsInventoryItemLocked(slot) then return end
+	if slot == 17 and ItemRack.IsOffhandBlocked() then return end
 
 	local list = ItemRack.GetQueues()[slot]
 	if not list then return end
@@ -179,6 +180,10 @@ end
 function ItemRack.ManualQueueAdvance(slot)
 	if not slot or IsInventoryItemLocked(slot) then
 		ItemRack.Debug("Queue", "ManualAdvance: slot locked or invalid")
+		return
+	end
+	if slot == 17 and ItemRack.IsOffhandBlocked() then
+		ItemRack.Debug("Queue", "ManualAdvance: offhand slot is blocked by 2H weapon")
 		return
 	end
 	
@@ -255,8 +260,8 @@ function ItemRack.ManualQueueAdvance(slot)
 end
 
 function ItemRack.ProcessAutoQueue(slot)
-	
 	if not slot or IsInventoryItemLocked(slot) then return end
+	if slot == 17 and ItemRack.IsOffhandBlocked() then return end
 
 	local start,duration,enable = GetInventoryItemCooldown("player",slot)
 	local timeLeft = math.max(start + duration - GetTime(),0)
@@ -510,4 +515,25 @@ function ItemRack.SetQueue(slot,newQueue)
 		ItemRack.GetQueuesEnabled()[slot] = true
 	end
 	ItemRack.UpdateCombatQueue()
+end
+
+function ItemRack.IsOffhandBlocked()
+	local mhID = ItemRack.GetID(16)
+	if mhID and mhID ~= 0 then
+		local _, _, equipSlot = ItemRack.GetInfoByID(mhID)
+		if equipSlot == "INVTYPE_2HWEAPON" then
+			if ItemRack.HasTitansGrip then
+				local mhLink = GetInventoryItemLink("player", 16)
+				local subtype = mhLink and select(7, GetItemInfo(mhLink))
+				if subtype and ItemRack.NoTitansGrip[subtype] then
+					return true
+				else
+					return false
+				end
+			else
+				return true
+			end
+		end
+	end
+	return false
 end

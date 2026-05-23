@@ -434,6 +434,162 @@ StaticPopupDialogs["ITEMRACK_MISSING_LSI"] = {
 	preferredIndex = 3,
 }
 
+function ItemRack.AuditSavedVariables(printToChat)
+	local prefix = "[Audit] "
+	local issuesFound = 0
+	local fixedCount = 0
+	local details = {}
+
+	local function LogIssue(msg, fixed)
+		issuesFound = issuesFound + 1
+		if fixed then fixedCount = fixedCount + 1 end
+		local text = msg .. (fixed and " (AUTO-FIXED)" or " (Requires Manual Fix)")
+		table.insert(details, text)
+		ItemRack.Debug("API", prefix .. text)
+		if printToChat then
+			ItemRack.Print("|cffffa500" .. prefix .. "|r" .. text)
+		end
+	end
+
+	-- 1. Check CurrentSet
+	if ItemRackUser.CurrentSet and not ItemRackUser.Sets[ItemRackUser.CurrentSet] then
+		LogIssue("CurrentSet '" .. tostring(ItemRackUser.CurrentSet) .. "' does not exist. Resetting.", true)
+		ItemRackUser.CurrentSet = nil
+	end
+
+	-- 2. Audit Sets
+	for setName, setData in pairs(ItemRackUser.Sets) do
+		-- Self-referential oldset
+		if setData.oldset == setName then
+			LogIssue("Set '" .. setName .. "' has self-referential oldset. Cleared.", true)
+			setData.oldset = nil
+		end
+		-- Orphaned oldset
+		if setData.oldset and not ItemRackUser.Sets[setData.oldset] then
+			LogIssue("Set '" .. setName .. "' references non-existent oldset '" .. setData.oldset .. "'. Cleared.", true)
+			setData.oldset = nil
+		end
+		-- Circular references (A -> B -> A, etc.)
+		if setData.oldset then
+			local path = { [setName] = true }
+			local current = setData.oldset
+			local loopDetected = false
+			while current do
+				if path[current] then
+					loopDetected = true
+					break
+				end
+				path[current] = true
+				current = ItemRackUser.Sets[current] and ItemRackUser.Sets[current].oldset
+			end
+			if loopDetected then
+				LogIssue("Circular oldset reference detected in set chain starting at '" .. setName .. "'. Broken.", true)
+				setData.oldset = nil
+			end
+		end
+	end
+
+	-- 3. Audit Event Stack
+	if ItemRackUser.EventStack then
+		local uniqueStack = {}
+		local seen = {}
+		for _, eventName in ipairs(ItemRackUser.EventStack) do
+			if not seen[eventName] then
+				-- Check if event exists and is active
+				local eventData = ItemRackUser.Events and ItemRackUser.Events.Set and ItemRackUser.Events.Set[eventName]
+				if eventData then
+					table.insert(uniqueStack, eventName)
+					seen[eventName] = true
+				else
+					LogIssue("EventStack contained non-existent event '" .. tostring(eventName) .. "'. Removed.", true)
+				end
+			else
+				LogIssue("EventStack contained duplicate event '" .. tostring(eventName) .. "'. Pruned.", true)
+			end
+		end
+		ItemRackUser.EventStack = uniqueStack
+	end
+
+	-- 4. Audit Queues & QueuesEnabled
+	if ItemRackUser.Queues then
+		for slot in pairs(ItemRackUser.Queues) do
+			local numSlot = tonumber(slot)
+			if not numSlot or numSlot < 0 or numSlot > 19 then
+				LogIssue("Queues contained invalid slot reference '" .. tostring(slot) .. "'. Cleared.", true)
+				ItemRackUser.Queues[slot] = nil
+			end
+		end
+	end
+	if ItemRackUser.QueuesEnabled then
+		for slot in pairs(ItemRackUser.QueuesEnabled) do
+			local numSlot = tonumber(slot)
+			if not numSlot or numSlot < 0 or numSlot > 19 then
+				LogIssue("QueuesEnabled contained invalid slot reference '" .. tostring(slot) .. "'. Cleared.", true)
+				ItemRackUser.QueuesEnabled[slot] = nil
+			end
+		end
+	end
+
+	-- 5. Audit Buttons
+	if ItemRackUser.Buttons then
+		for slot in pairs(ItemRackUser.Buttons) do
+			local numSlot = tonumber(slot)
+			if not numSlot or numSlot < 0 or numSlot > 20 then
+				LogIssue("Buttons list contained invalid slot reference '" .. tostring(slot) .. "'. Cleared.", true)
+				ItemRackUser.Buttons[slot] = nil
+			end
+		end
+	end
+
+	-- 6. Audit & Sync ItemRackSettings
+	if ItemRack.DefaultSettings then
+		-- Merge missing defaults
+		for k, v in pairs(ItemRack.DefaultSettings) do
+			if ItemRackSettings[k] == nil then
+				LogIssue("ItemRackSettings was missing default setting '" .. tostring(k) .. "'. Restored default.", true)
+				ItemRackSettings[k] = v
+			end
+		end
+		-- Prune obsolete settings
+		for k in pairs(ItemRackSettings) do
+			if ItemRack.DefaultSettings[k] == nil then
+				LogIssue("ItemRackSettings contained obsolete setting '" .. tostring(k) .. "'. Pruned.", true)
+				ItemRackSettings[k] = nil
+			end
+		end
+	end
+
+	-- 7. Audit custom events scripts syntax
+	if ItemRackEvents then
+		for eventName, eventData in pairs(ItemRackEvents) do
+			if eventData.Enabled and eventData.Script then
+				local method, err = loadstring("local event,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10 = ...;" .. eventData.Script)
+				if not method then
+					LogIssue("Event '" .. tostring(eventName) .. "' has syntax error in script: " .. tostring(err), false)
+				end
+			end
+		end
+	end
+
+	-- 8. Persist results
+	local auditData = {
+		Timestamp = date("%Y-%m-%d %H:%M:%S"),
+		IssuesFound = issuesFound,
+		FixedCount = fixedCount,
+		Details = details
+	}
+	ItemRackUser.LastAudit = auditData
+	if issuesFound > 0 then
+		ItemRackUser.LastRepair = auditData
+	end
+
+	if issuesFound > 0 and not printToChat then
+		ItemRack.Print("Automatically repaired " .. issuesFound .. " configuration issue(s). Details saved in ItemRackUser.LastRepair.")
+	elseif printToChat then
+		ItemRack.Print("Audit completed. Issues found: " .. issuesFound .. ", Auto-fixed: " .. fixedCount)
+	end
+end
+
 function ItemRack.OnPlayerLogin()
 	-- Normally some of these methods cannot be called in combat without causing errors, but since we run these IMMEDIATELY
 	-- on PLAYER_LOGIN event we get a grace period where it allows us to run secure code in combat.
@@ -443,6 +599,9 @@ function ItemRack.OnPlayerLogin()
 	ItemRack.InitCore()
 	ItemRack.InitButtons()
 	ItemRack.InitEvents()
+	
+	-- Audit SavedVariables on startup
+	ItemRack.AuditSavedVariables(false)
 	
 	-- Check LibSoundIndex presence
 	C_Timer.After(3, function()
@@ -1561,9 +1720,11 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 	if id then
 		ItemRack.menuOpen = id
 		ItemRack.menuInclude = menuInclude
+		ItemRack.menuMasqueGroup = masqueGroup
 	else
 		id = ItemRack.menuOpen
 		menuInclude = ItemRack.menuInclude
+		masqueGroup = ItemRack.menuMasqueGroup
 	end
 
 	ItemRack.Debug("UI", "BuildMenu called. id:", id, "InCombat:", InCombatLockdown(), "menuOpen:", ItemRack.menuOpen)
@@ -2195,8 +2356,8 @@ function ItemRack.EquipItemByID(id,slot,isAutoQueue)
 							end
 							PickupInventoryItem(17)
 							PickupContainerItem(bfree,sfree)
-							PickupInventoryItem(slot)
 							PickupContainerItem(b,s)
+							PickupInventoryItem(slot)
 						else
 							ItemRack.Print("Not enough room to perform swap.")
 						end
@@ -3257,6 +3418,42 @@ function ItemRack.SlashHandler(arg1)
 				ItemRack.DebugTags.Combat = true
 			end
 			ItemRack.Print("Diagnostic debug printing to chat is now "..(ItemRack.DebugChat and "ON" or "OFF"))
+		elseif subcmd == "clear" then
+			ItemRack.LogBuffer = {}
+			ItemRack.Print("Diagnostic log buffer cleared.")
+		elseif subcmd == "status" then
+			local active = {}
+			for tag, val in pairs(ItemRack.DebugTags) do
+				if val then table.insert(active, "|cff00ff00" .. tag .. "|r") end
+			end
+			ItemRack.Print("Debug Status: MasterAll=" .. (ItemRack.DebugAll and "|cff00ff00ON|r" or "|cffff0000OFF|r") .. ", Chat=" .. (ItemRack.DebugChat and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
+			ItemRack.Print("Active tags: " .. (#active > 0 and table.concat(active, ", ") or "None"))
+		elseif subcmd == "audit" then
+			ItemRack.AuditSavedVariables(true)
+		elseif subcmd == "help" then
+			ItemRack.Print("ItemRack Debug Subcommands:")
+			ItemRack.Print("  /itemrack debug : Toggles all debugging (Silent Mode)")
+			ItemRack.Print("  /itemrack debug chat : Toggles printing logs directly to chat")
+			ItemRack.Print("  /itemrack debug clear : Clears the 5000-line diagnostic log buffer")
+			ItemRack.Print("  /itemrack debug status : Shows current status of all debug tags")
+			ItemRack.Print("  /itemrack debug audit : Scans and repairs SavedVariables issues")
+			ItemRack.Print("  /itemrack debug <tag> : Toggles specific tag (Available: events, equip, queue, combatqueue, api, ui, combat)")
+		elseif subcmd then
+			-- Toggle specific tag (case insensitive match against known tags)
+			local foundTag
+			local inputTag = string.lower(subcmd)
+			for tag in pairs(ItemRack.DebugTags) do
+				if string.lower(tag) == inputTag then
+					foundTag = tag
+					break
+				end
+			end
+			if not foundTag then
+				-- Dynamically register/format new tags if needed
+				foundTag = subcmd:gsub("^%l", string.upper)
+			end
+			ItemRack.DebugTags[foundTag] = not ItemRack.DebugTags[foundTag]
+			ItemRack.Print("Diagnostic tag [|cff00ff00" .. foundTag .. "|r] is now " .. (ItemRack.DebugTags[foundTag] and "|cff00ff00ENABLED|r" or "|cffff0000DISABLED|r"))
 		else
 			ItemRack.DebugAll = not ItemRack.DebugAll
 			if ItemRack.DebugAll then
@@ -3362,6 +3559,8 @@ function ItemRack.SlashHandler(arg1)
 		if ItemRackUser.CurrentSet and ItemRackUser.Sets[ItemRackUser.CurrentSet] then
 			dumpText = dumpText .. "ItemRackUser.Sets['" .. ItemRackUser.CurrentSet .. "'] = " .. ItemRackLogFrame.Serialize(ItemRackUser.Sets[ItemRackUser.CurrentSet]) .. "\n"
 		end
+		dumpText = dumpText .. "ItemRackUser.LastAudit = " .. ItemRackLogFrame.Serialize(ItemRackUser.LastAudit) .. "\n"
+		dumpText = dumpText .. "ItemRackUser.LastRepair = " .. ItemRackLogFrame.Serialize(ItemRackUser.LastRepair) .. "\n"
 		
 		ItemRackLogFrame:Show()
 		ItemRackLogEditBox:SetText(dumpText)
@@ -3621,4 +3820,9 @@ function ItemRack.GetQueuesEnabled(setname)
 	else
 		return ItemRackUser.QueuesEnabled
 	end
+end
+
+ItemRack.DefaultSettings = {}
+for k, v in pairs(ItemRackSettings) do
+	ItemRack.DefaultSettings[k] = v
 end

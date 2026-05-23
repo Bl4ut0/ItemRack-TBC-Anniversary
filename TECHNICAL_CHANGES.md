@@ -80,6 +80,53 @@ In the TBC engine, talent switching often fires events before the client is read
 
 ---
 
+## Event Stack & Restoration Fixes
+**File:** `ItemRackEvents.lua`
+
+### Problem
+When the player logged in or reloaded their UI, the state of active events and their stance/gear restoration memory (`.old` and `oldset`) was wiped out. Consequently, if a player was mounted when logging out, dismounting after logging back in would fail to restore their previous gear set.
+
+### Solution
+1. **Preservation of Restoration Memory**: We modified `ItemRackEvents.lua` to prevent wiping the `.old` and `oldset` tables during initial event setup.
+2. **Re-populating the EventStack**: On initialization, the code now scans for active events and automatically re-populates the character's `ItemRackUser.EventStack`, ensuring the gear restoration chain remains perfectly intact across logins and reloads.
+
+---
+
+## Two-Handed Weapon & Offhand Queue Handlers
+**File:** `ItemRackEquip.lua`, `ItemRackQueue.lua`
+
+### Problem
+1. **Cursor Lock on 2H swap**: Equipping a two-handed weapon while holding a one-handed weapon and a shield would sometimes cause the offhand item to get stuck on the cursor and lock the UI because the WoW client's item-picking API was triggered concurrently for slot 16 and slot 17.
+2. **Infinite Queue Loops**: The auto-queue system would continue trying to process the offhand slot (17) even when a two-handed weapon was active in the main hand slot (16), causing queue stalls.
+
+### Solution
+1. **Swap Re-ordering**: Modified `ItemRackEquip.lua` to prioritize equipping the two-handed weapon in slot 16 first. This forces the client to automatically unequip and place the offhand weapon/shield into the bags before any slot 17 operations occur, eliminating cursor conflicts.
+2. **Cursor Safety Fallback**: Added a post-equip cursor check. If an item is still stuck on the cursor after a swap, it is safely deposited into the first available container slot.
+3. **Offhand Block Guard**: Implemented `ItemRack.IsOffhandBlocked()` check inside the queue processor to suspend offhand auto-queues and block manual queue advances for slot 17 when a 2H weapon is held.
+
+---
+
+## SavedVariables Auditor & Setting Sync
+**File:** `ItemRack.lua`
+
+### Problem
+Over time, database schemas can become corrupt or filled with obsolete keys. Specifically:
+- Sets could form circular restoration paths (`A -> B -> A`), causing infinite gear-swapping loops.
+- Obsolete settings from old addon versions (e.g. `CharacterSheetMenusLeft`) remained in the user's SavedVariables file forever.
+- Disabled or missing events would linger in `ItemRackUser.EventStack`.
+
+### Solution
+1. **Auto-Repair Auditor**: Created `/itemrack debug audit` which checks for:
+   - Self-referential and orphaned `oldset` references.
+   - Circular set loops (breaks the loop chain).
+   - Duplicate or missing events in the active `EventStack`.
+   - Out-of-bounds/invalid slot IDs in `Queues`, `QueuesEnabled`, and `Buttons`.
+2. **Auto-Sync Settings**: Clones the default `ItemRackSettings` table at load-time and matches the player's saved settings against it. Any missing settings are automatically restored, and any obsolete keys are pruned.
+3. **Diagnostics & Reporting**: Runs silently on startup, printing a one-line warning to the user if any corruption was auto-fixed, and saves the full diagnostic run report to `ItemRackUser.LastAudit`.
+4. **Compile Safety**: The auditor and event loop compile custom scripts using `loadstring` within a safe sandbox. Syntax or runtime script errors are captured and logged to the `Events` debug tag rather than throwing Lua errors.
+
+---
+
 ## API Namespace Migrations
 
 ### C_AddOns Namespace

@@ -2,17 +2,25 @@
 
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
-## [4.39.4] - 2026-05-06
-### Diagnostic Improvements
+## [4.39.3] - 2026-05-23
+### Diagnostic & Auditor Improvements
+- **SavedVariables Auditor & Auto-Repairer**: Added a comprehensive database scanner (`/itemrack debug audit`) to detect and fix corruptions in sets (circular `oldset` paths, orphaned references), event stacks (duplicates, missing event names), and queues.
+- **Obsolete Settings Pruning**: The auditor automatically merges missing defaults and prunes obsolete keys in `ItemRackSettings` using a load-time clone of the default settings table.
+- **Audit Persistence**: Auto-fixed startup issues are notified to the user via a one-line chat alert and detailed reports are saved to `ItemRackUser.LastAudit` in the WTF database.
+- **Enhanced Debug Subcommands**: Extended the `/itemrack debug` command to support `/itemrack debug help`, `/itemrack debug status`, `/itemrack debug clear`, `/itemrack debug audit`, and tag-specific toggles (`events`, `equip`, `queue`, `combatqueue`, `api`, `ui`, `combat`).
+- **Dynamic Event Compile Error Safety**: Custom scripted event compilations are now wrapped securely. Compilation and runtime errors no longer crash the main event thread and are logged to the `Events` debug tag.
 - **Expanded Combat Taint Tracing**: Significantly upgraded the internal diagnostic framework to help users troubleshoot "Action Blocked" combat errors.
   - Added new `Combat` and `UI` trace layers to track `InCombatLockdown()` state precisely during combat transitions and when opening/clicking ItemRack's dynamic popout menus.
   - Increased the internal `ItemRack.LogBuffer` capacity from 500 to 5,000 lines to ensure combat traces aren't lost during long arena matches or battlegrounds.
   - **Silent Tracing**: Typing `/itemrack debug` now activates all trace layers silently in the background without spamming the chat window. If you wish to view traces in real-time, use the new `/itemrack debug chat` command.
   - Expanded `/itemrack dump` output to include runtime combat state, active menu visibility, combat queue contents, and current quick-access button configurations.
 
-## [4.39.3] - 2026-05-05
 ### Bug Fixes
 - **Ghost Overrides for Events**: Fixed an edge case in `ItemRackEvents.lua` where transient or disabled Zone events could leave their `ManualOverride` flag stuck on. This "ghost override" previously suppressed gear restorations (like dismounting or dropping a stance) permanently, even when the player was not actively using a zone set. (PR #14)
+- **Event Stance and Restoration Persistence**: Fixed a bug in `ItemRackEvents.lua` where stance and gear restoration data (`.old` and `oldset`) was wiped on startup, breaking stance restoration on login or reload. Re-populates the event restoration stack automatically from active events on load.
+- **Two-Handed Weapon Equipping & Cursor Lock**: Placed 2H weapon swapping at the top of the swap order so the client automatically bags the displaced offhand/shield. Added a cursor cleanup safety check to ensure any leftover item on the cursor is placed into an empty container slot.
+- **Offhand Queue Guarding**: Guarded auto-queues and manual queue advances to prevent offhand slot processing or locking if a two-handed weapon is equipped.
+- **UnequipSet Nil Table Guard**: Guarded the `.old` table iteration inside `UnequipSet` to prevent a Lua error when unequipping a set that has a nil/empty history table (which can happen after database auditing cleans up empty tables).
 
 ### Improvements
 - **Missing Ornate Gem IDs**: Added six missing TBC PvP Honor gems to the unique-gem tracking list: Bold Ornate Ruby (28362), Runed Ornate Ruby (28118), Inscribed Ornate Topaz (28363), Potent Ornate Topaz (28123), Smooth Ornate Dawnstone (28119), and Gleaming Ornate Dawnstone (28120). These gems are now correctly detected when ordering set swaps, ensuring items socketed with them are unequipped first to avoid unique-gem conflicts.

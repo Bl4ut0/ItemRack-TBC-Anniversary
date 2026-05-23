@@ -309,13 +309,13 @@ function ItemRack.InitEvents()
 	-- (Arena.oldset = "Arena"), and stale circular chains
 	-- (9% -> 6% 1H -> 6% 2H -> 9%).
 	-- ======================================================================
+	-- CLEANUP: Clean up self-referential loops or invalid oldset entries on login/reload.
+	-- We preserve the rest of .old and .oldset so that events active across reload/login
+	-- (e.g. Mounted, Stance, Zone) can correctly restore gear upon dismounting or shifting.
 	for setname, setData in pairs(ItemRackUser.Sets) do
-		if setData.old then
-			for k in pairs(setData.old) do
-				setData.old[k] = nil
-			end
+		if setData.oldset == setname or (setData.oldset and not ItemRackUser.Sets[setData.oldset]) then
+			setData.oldset = nil
 		end
-		setData.oldset = nil
 	end
 
 	-- Prime all events to prevent redundant swaps on login/reload
@@ -367,6 +367,17 @@ function ItemRack.InitEvents()
 				local setname = ItemRackUser.Events.Set[eventName]
 				if setname and ItemRack.IsSetEquipped(setname) then
 					eventData.Active = true
+					-- Re-populate EventStack with active event on startup
+					local alreadyStacked = false
+					for _, name in ipairs(ItemRackUser.EventStack) do
+						if name == eventName then
+							alreadyStacked = true
+							break
+						end
+					end
+					if not alreadyStacked then
+						table.insert(ItemRackUser.EventStack, eventName)
+					end
 				end
 			end
 		end
@@ -654,8 +665,15 @@ function ItemRack.ProcessingFrameOnEvent(self,event,...)
 			if event == "COMBAT_LOG_EVENT_UNFILTERED" then
 				a1,a2,a3,a4,a5,a6,a7,a8,a9,a10 = CombatLogGetCurrentEventInfo()
 			end
-			local method = loadstring("local event,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10 = ...;local EquipEventSet = function(setname, disableSound) return ItemRack.ScriptEventEquip(event, setname, disableSound) end;local UnequipEventSet = function(disableSound) return ItemRack.ScriptEventUnequip(event, disableSound) end;local EquipSet = function(setname, disableSound) return EquipEventSet(setname, disableSound) end;local UnequipSet = function(setname, disableSound) local activeSet = ItemRack.GetEventSet(event) if setname and (not activeSet or setname ~= activeSet) then return ItemRack.UnequipSet(setname, disableSound) end return UnequipEventSet(disableSound) end;" .. events[eventName].Script)
-			pcall(method,event,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10)
+			local method, compileErr = loadstring("local event,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10 = ...;local EquipEventSet = function(setname, disableSound) return ItemRack.ScriptEventEquip(event, setname, disableSound) end;local UnequipEventSet = function(disableSound) return ItemRack.ScriptEventUnequip(event, disableSound) end;local EquipSet = function(setname, disableSound) return EquipEventSet(setname, disableSound) end;local UnequipSet = function(setname, disableSound) local activeSet = ItemRack.GetEventSet(event) if setname and (not activeSet or setname ~= activeSet) then return ItemRack.UnequipSet(setname, disableSound) end return UnequipEventSet(disableSound) end;" .. events[eventName].Script)
+			if not method then
+				ItemRack.Debug("Events", "Error compiling script for event '" .. tostring(eventName) .. "': " .. tostring(compileErr))
+			else
+				local ok, runErr = pcall(method,event,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10)
+				if not ok then
+					ItemRack.Debug("Events", "Error running script for event '" .. tostring(eventName) .. "': " .. tostring(runErr))
+				end
+			end
 		end
 	end
 	if startStance then

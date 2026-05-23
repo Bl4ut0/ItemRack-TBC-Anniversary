@@ -185,6 +185,7 @@ function ItemRack.EquipSet(setname, disableSound)
 		return
 	end
 	if ItemRack.AnythingLocked() then
+		ItemRack.Debug("Equip", "EquipSet deferred set:", setname, "- locked item:", ItemRack.GetLockedReason())
 		-- a swap is in progress, add this set to the wait list and leave
 		ItemRack.AddSetToSetsWaiting(setname,ItemRack.EquipSet, disableSound)
 		return
@@ -240,7 +241,8 @@ function ItemRack.EquipSet(setname, disableSound)
 	-- previously equipped so that UnequipSet can restore it later.
 	-- Without this, events like "stop moving" or "leave zone" find an empty
 	-- set.old table and silently fail to restore any gear.
-	if set.old and not isInternalSet then
+	if not isInternalSet then
+		set.old = set.old or {}
 		if ItemRackUser.CurrentSet == setname and next(set.old) then
 			-- Set is already actively tracking History. Do not overwrite.
 			ItemRack.Debug("Equip", "Skipping set.old snapshot. Set is already CurrentSet and has history.")
@@ -380,6 +382,25 @@ function ItemRack.AnythingLocked()
 	end
 end
 
+function ItemRack.GetLockedReason()
+	if CursorHasItem() then
+		return "CursorHasItem"
+	end
+	for i=1,19 do
+		if IsInventoryItemLocked(i) then
+			return "InventorySlot("..i..")"
+		end
+	end
+	for i=0,4 do
+		for j=1,GetContainerNumSlots(i) do
+			if select(3,GetContainerItemInfo(i,j)) then
+				return "ContainerSlot("..i..","..j..")"
+			end
+		end
+	end
+	return "None"
+end
+
 function ItemRack.LockChangedDuringSetSwap()
 	if not ItemRack.AnythingLocked() then
 		local setname = ItemRack.SetSwapping
@@ -494,6 +515,10 @@ function ItemRack.IterateSwapList(setname, disableSound)
 						if not ItemRack.AbortSwap then
 							ItemRack.Debug("Equip", "IterateSwapList swapping 2H weapon from bag", bag, "slot", slot, "to slot 16")
 							ItemRack.MoveItem(bag,slot,16,nil)
+							if not ItemRack.AbortSwap and CursorHasItem() then
+								ItemRack.Debug("Equip", "IterateSwapList putting displaced 1H weapon on cursor into bag", bag, "slot", slot)
+								PickupContainerItem(bag, slot)
+							end
 						end
 						if not ItemRack.AbortSwap then
 							swap[k] = nil
@@ -730,6 +755,7 @@ function ItemRack.UnequipSet(setname, disableSound)
 	if setname and ItemRackUser.Sets[setname] then
 		ItemRack.Debug("Equip", "UnequipSet called for:", setname, "- CurrentSet is:", ItemRackUser.CurrentSet)
 		if ItemRack.AnythingLocked() then
+			ItemRack.Debug("Equip", "UnequipSet deferred set:", setname, "- locked item:", ItemRack.GetLockedReason())
 			ItemRack.AddSetToSetsWaiting(setname,ItemRack.UnequipSet, disableSound)
 			return
 		end
@@ -751,9 +777,11 @@ function ItemRack.UnequipSet(setname, disableSound)
 		for i in pairs(unequip) do
 			unequip[i] = nil
 		end
-		for i in pairs(old) do
-			if type(i) == "number" then
-				unequip[i] = old[i]
+		if old then
+			for i in pairs(old) do
+				if type(i) == "number" then
+					unequip[i] = old[i]
+				end
 			end
 		end
 		
@@ -830,8 +858,10 @@ function ItemRack.UnequipSet(setname, disableSound)
 			ItemRack.Debug("Equip", "shouldRestore is FALSE (CurrentSet doesn't match and not buried). Wiping .old data for setname:", setname)
 			-- Restore was suppressed (manual override). Clean up stale old/oldset
 			-- on the popped set so it doesn't linger in SavedVariables.
-			for k in pairs(old) do
-				old[k] = nil
+			if old then
+				for k in pairs(old) do
+					old[k] = nil
+				end
 			end
 			ItemRackUser.Sets[setname].oldset = nil
 		end
