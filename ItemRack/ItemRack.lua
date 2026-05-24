@@ -623,6 +623,13 @@ function ItemRack.OnPlayerLogout()
 end
 
 function ItemRack.RunAllEvents(reason)
+	local getSlots = C_Container and C_Container.GetContainerNumSlots or _G.GetContainerNumSlots
+	local numSlots = getSlots and getSlots(0)
+	if not numSlots or numSlots == 0 then
+		ItemRack.Debug("Events", "RunAllEvents aborted (bag data not ready), rescheduling...")
+		ItemRack.ScheduleEventRecheck(reason .. " (retry)", 0.5)
+		return
+	end
 	ItemRack.Debug("Events", "RunAllEvents triggered by:", reason)
 	if ItemRack.ProcessZoneEvent then ItemRack.ProcessZoneEvent(reason) end
 	if ItemRack.ProcessBuffEvent then ItemRack.ProcessBuffEvent() end

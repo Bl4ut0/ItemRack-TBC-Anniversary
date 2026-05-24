@@ -622,6 +622,12 @@ end
 --[[ Event processing ]]
 
 function ItemRack.ProcessingFrameOnEvent(self,event,...)
+	local getSlots = C_Container and C_Container.GetContainerNumSlots or _G.GetContainerNumSlots
+	local numSlots = getSlots and getSlots(0)
+	if not numSlots or numSlots == 0 then
+		return
+	end
+
 	local enabled = ItemRackUser.Events.Enabled
 	local events = ItemRackEvents
 	local startBuff, startZone, startStance, eventType
@@ -1088,6 +1094,12 @@ end
 --here we observe mounted status and raise an event should it change. UNIT_AURA event seems unreliable for this
 local _lastStateMounted = IsMounted() and not UnitOnTaxi("player")
 function ItemRack.CheckForMountedEvents()
+	local getSlots = C_Container and C_Container.GetContainerNumSlots or _G.GetContainerNumSlots
+	local numSlots = getSlots and getSlots(0)
+	if not numSlots or numSlots == 0 then
+		return
+	end
+
 	if UnitIsDeadOrGhost("player") then
 		return
 	end
