@@ -3,6 +3,7 @@
 .gitignore export-ignore
 .vscode/ export-ignore
 .agent/ export-ignore
+.github/ export-ignore
 .rules/ export-ignore
 .versions/ export-ignore
 CHANGELOG.md export-ignore
