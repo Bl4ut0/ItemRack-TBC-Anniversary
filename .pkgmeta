@@ -1,0 +1,22 @@
+# CurseForge Packaging Metadata
+# Specifies how CurseForge auto-packaging should compile the release zip.
+
+# Ignore all non-addon directories and repository metadata
+ignore:
+  - .agent
+  - .git
+  - .gitattributes
+  - .github
+  - .gitignore
+  - .rules
+  - .versions
+  - .vscode
+  - Images
+  - CHANGELOG.md
+  - CONTROLS.md
+  - CURSEFORGE_DESCRIPTION.md
+  - DEAD_ENDS.md
+  - README.md
+  - RELEASE_NOTES.md
+  - TECHNICAL_CHANGES.md
+  - TEMP_NOTES.md
