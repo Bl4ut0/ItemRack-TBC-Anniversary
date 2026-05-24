@@ -629,9 +629,30 @@ function ItemRack.OnPlayerLogout()
 	-- via SetSetBindings() on each login/reload.
 end
 
+function ItemRack.RunAllEvents(reason)
+	ItemRack.Debug("Events", "RunAllEvents triggered by:", reason)
+	if ItemRack.ProcessZoneEvent then ItemRack.ProcessZoneEvent(reason) end
+	if ItemRack.ProcessBuffEvent then ItemRack.ProcessBuffEvent() end
+	if ItemRack.ProcessStanceEvent then ItemRack.ProcessStanceEvent() end
+	if ItemRack.ProcessSpecializationEvent then ItemRack.ProcessSpecializationEvent() end
+end
+
+function ItemRack.ScheduleEventRecheck(reason, delay)
+	delay = delay or 0.5
+	ItemRack.Debug("Events", "Scheduling event recheck for reason:", reason, "in", delay, "seconds")
+	C_Timer.After(delay, function()
+		ItemRack.RunAllEvents(reason)
+	end)
+end
+
 function ItemRack.OnEnterWorld(self,event,...)
 	local isLogin,isReload = ...
 	ItemRack.UpdateArenaVisibilityState()
+
+	-- Schedule settled rechecks after entering world/instance
+	ItemRack.ScheduleEventRecheck("PLAYER_ENTERING_WORLD (0.5s)", 0.5)
+	ItemRack.ScheduleEventRecheck("PLAYER_ENTERING_WORLD (1.5s)", 1.5)
+
 	if isLogin or isReload then
 		-- Force a set update shortly after loading to ensure minimap icon/current set is correct
 		-- This fixes the issue where the set appears as "Custom" until interaction
@@ -684,6 +705,7 @@ end
 
 function ItemRack.OnZoneChanged()
 	ItemRack.UpdateArenaVisibilityState()
+	ItemRack.ScheduleEventRecheck("ZONE_CHANGED", 0.5)
 end
 
 local loader = CreateFrame("Frame",nil, self, BackdropTemplateMixin and "BackdropTemplate") -- need a new temp frame here, ItemRackFrame is not created yet
@@ -735,8 +757,8 @@ function ItemRack.OnCastingStop(self,event,unit,castID)
 			ItemRack.ProcessCombatQueue()
 
 			-- Re-evaluate event-based sets (buffs, stances, zone, spec) now that casting has stopped
-			if ItemRack.ProcessBuffEvent then
-				ItemRack.ProcessBuffEvent()
+			if ItemRack.RunAllEvents then
+				ItemRack.RunAllEvents("OnCastingStop")
 			end
 
 			-- Start the delayed timer to handle race conditions where combat/casting status blips
@@ -821,8 +843,8 @@ function ItemRack.OnLeavingCombatOrDeath()
 	
 	-- Re-evaluate event-based sets (buffs, stances, zone, spec) now that combat has stopped
 	-- This handles "On Movement" sets that might need to swap based on current speed
-	if ItemRack.ProcessBuffEvent then
-		ItemRack.ProcessBuffEvent()
+	if ItemRack.RunAllEvents then
+		ItemRack.RunAllEvents("OnLeavingCombatOrDeath")
 	end
 
 	ItemRack.ProcessCombatQueue()

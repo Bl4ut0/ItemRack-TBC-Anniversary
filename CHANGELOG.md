@@ -2,7 +2,17 @@
 
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
-## [4.39.4-beta1] - 2026-05-24
+## [Development]
+### Event Swapping & Instance Transitions
+- **Centralized Event Recheck Scheduler**: Added `ItemRack.ScheduleEventRecheck` and `ItemRack.RunAllEvents` to safely schedule and run event-based evaluations. Schedules automatic settled checks at `0.5s` and `1.5s` upon entering the world/instances (`PLAYER_ENTERING_WORLD`), and on zone changes (`ZONE_CHANGED_NEW_AREA`).
+- **Unified Event Release Triggers**: Refactored combat and casting stop events (`OnLeavingCombatOrDeath` and `OnCastingStop`) to run rechecks on all event categories (stances, spec, zones, buffs) instead of only buffs.
+- **Signature-Aware Zone Transitions**: Implemented multi-field zone signatures (incorporating instance type, zone text, subzone text, and unique instance ID) to cleanly differentiate between distinct dungeons of the same type.
+- **Improved Manual Override Protection**: Refactored override scoping in `ProcessZoneEvent`. Manual gear swaps are strictly protected within the same zone signature but automatically cleared upon zoning into a different zone/instance signature, allowing zone set auto-equip to resume.
+- **Exclusion Unwinding**: Rewrote buff and stance exclusion checks (`NotInPVP`/`NotInPVE`). When an event is active but its exclusion becomes true, the event is immediately unwound/popped from the stack rather than skipped, preventing zombie sets from sticking on the event stack.
+- **Deterministic Zone Swaps**: Replaced scalar pending zone actions with alphabetical sorting lists (`eventsToUnequip` and `eventsToEquip`), ensuring all unequips finish before equips are processed in a stable, deterministic order.
+- **Mount Set Resolution Fix**: Corrected set lookup in `ProcessZoneEvent` for mount events by resolving the set name through the active event data structure instead of using the raw event name.
+- **Defensive Programming Nil-Guards**: Added nil guards around enabled event lookups across all event processors to avoid Lua errors with corrupt profile data.
+
 ### Diagnostic & Logging Improvements
 - **Casting & Channeling Debug Traces**: Added detailed debug logging to `OnCastingStart` and `OnCastingStop` to track when swaps are blocked and released by player casting/channeling states.
 - **Combat Queue Defer Debugging**: Added debug logging when an `EquipSet` is deferred to the combat queue, indicating the deferral reason (combat, casting, or death) along with the queued slot numbers and item IDs.

@@ -286,6 +286,7 @@ function ItemRack.InitEvents()
 		eventData.Active = nil
 		eventData.LastZoneMatched = nil
 		eventData.ManualOverride = nil
+		eventData.LastZoneSignature = nil
 	end
 
 	-- ======================================================================
@@ -408,39 +409,44 @@ function ItemRack.RegisterEvents()
 	for _ in pairs(enabled) do enabledCount = enabledCount + 1 end
 	local eventType
 	for eventName in pairs(enabled) do
-		eventType = events[eventName].Type
-		if eventType=="Buff" then
-			if not frame:IsEventRegistered("UNIT_AURA") then
-				frame:RegisterEvent("UNIT_AURA")
-			end
-			if events[eventName].OnMovement then
-				if not frame:IsEventRegistered("PLAYER_STARTED_MOVING") then
-					frame:RegisterEvent("PLAYER_STARTED_MOVING")
-					frame:RegisterEvent("PLAYER_STOPPED_MOVING")
+		local eventData = events[eventName]
+		if eventData then
+			eventType = eventData.Type
+			if eventType=="Buff" then
+				if not frame:IsEventRegistered("UNIT_AURA") then
+					frame:RegisterEvent("UNIT_AURA")
+				end
+				if eventData.OnMovement then
+					if not frame:IsEventRegistered("PLAYER_STARTED_MOVING") then
+						frame:RegisterEvent("PLAYER_STARTED_MOVING")
+						frame:RegisterEvent("PLAYER_STOPPED_MOVING")
+					end
+				end
+			elseif eventType=="Stance" then
+				if not frame:IsEventRegistered("UPDATE_SHAPESHIFT_FORM") then
+					frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+				end
+			elseif eventType=="Zone" then
+				if not frame:IsEventRegistered("ZONE_CHANGED_NEW_AREA") then
+					frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+				end
+				if not frame:IsEventRegistered("ZONE_CHANGED_INDOORS") then
+					frame:RegisterEvent("ZONE_CHANGED_INDOORS")
+				end
+			elseif eventType=="Specialization" then
+				if not frame:IsEventRegistered("ACTIVE_TALENT_GROUP_CHANGED") then
+					frame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+				end
+				if not frame:IsEventRegistered("PLAYER_TALENT_UPDATE") then
+					frame:RegisterEvent("PLAYER_TALENT_UPDATE")
+				end
+			elseif eventType=="Script" then
+				if not frame:IsEventRegistered(eventData.Trigger) then
+					frame:RegisterEvent(eventData.Trigger)
 				end
 			end
-		elseif eventType=="Stance" then
-			if not frame:IsEventRegistered("UPDATE_SHAPESHIFT_FORM") then
-				frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
-			end
-		elseif eventType=="Zone" then
-			if not frame:IsEventRegistered("ZONE_CHANGED_NEW_AREA") then
-				frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
-			end
-			if not frame:IsEventRegistered("ZONE_CHANGED_INDOORS") then
-				frame:RegisterEvent("ZONE_CHANGED_INDOORS")
-			end
-		elseif eventType=="Specialization" then
-			if not frame:IsEventRegistered("ACTIVE_TALENT_GROUP_CHANGED") then
-				frame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
-			end
-			if not frame:IsEventRegistered("PLAYER_TALENT_UPDATE") then
-				frame:RegisterEvent("PLAYER_TALENT_UPDATE")
-			end
-		elseif eventType=="Script" then
-			if not frame:IsEventRegistered(events[eventName].Trigger) then
-				frame:RegisterEvent(events[eventName].Trigger)
-			end
+		else
+			ItemRack.Debug("Events", "Enabled event missing from ItemRackEvents:", eventName)
 		end
 	end
 	ItemRack.StartTimer("CheckForMountedEvents")
@@ -631,47 +637,50 @@ function ItemRack.ProcessingFrameOnEvent(self,event,...)
 	end
 
 	for eventName in pairs(enabled) do
-		eventType = events[eventName].Type
-		if event=="UNIT_AURA" and eventType=="Buff" and arg1=="player" then
-			startBuff = 1
-		elseif event=="UPDATE_SHAPESHIFT_FORM" and eventType=="Stance" then
-			startStance = 1
-		elseif event=="ZONE_CHANGED_NEW_AREA" and eventType=="Zone" then -- if player move to a new area, toggle set change.
-			startZone = 1
-			ItemRack.LastZoneChangeTime = GetTime() -- Track zone transitions for OnMovement suppression
-		elseif event == "ZONE_CHANGED_INDOORS" and eventType == "Zone" and select(2, IsInInstance()) == "raid" then -- if player change subzone in raid instance, toggle set change, else not.
-			startZone = 1
-			ItemRack.LastZoneChangeTime = GetTime()
-		elseif event == "ACTIVE_TALENT_GROUP_CHANGED" and eventType == "Specialization" then
-			ItemRack.StartTimer("SpecChangeTimer")
-		elseif eventType=="Script" and events[eventName].Trigger==event then
-			local a1,a2,a3,a4,a5,a6,a7,a8,a9,a10 = ...
-			-- Compatibility for UNIT_SPELLCAST_* changes in 1.15.0+ / 10.0+
-			-- If arg2 is a castGUID (starts with "Cast-") and arg3 is a spellID, resolve name to arg2
-			if event:match("^UNIT_SPELLCAST_") and type(a2)=="string" and a2:match("^Cast%-") then
-				local spellID = a3
-				if spellID then
-					local name, subtext = GetSpellInfo(spellID)
-					if name then
-						if subtext and subtext ~= "" then
-							a2 = name .. "(" .. subtext .. ")"
-						else
-							a2 = name
+		local eventData = events[eventName]
+		if eventData then
+			eventType = eventData.Type
+			if event=="UNIT_AURA" and eventType=="Buff" and arg1=="player" then
+				startBuff = 1
+			elseif event=="UPDATE_SHAPESHIFT_FORM" and eventType=="Stance" then
+				startStance = 1
+			elseif event=="ZONE_CHANGED_NEW_AREA" and eventType=="Zone" then -- if player move to a new area, toggle set change.
+				startZone = 1
+				ItemRack.LastZoneChangeTime = GetTime() -- Track zone transitions for OnMovement suppression
+			elseif event == "ZONE_CHANGED_INDOORS" and eventType == "Zone" and select(2, IsInInstance()) == "raid" then -- if player change subzone in raid instance, toggle set change, else not.
+				startZone = 1
+				ItemRack.LastZoneChangeTime = GetTime()
+			elseif event == "ACTIVE_TALENT_GROUP_CHANGED" and eventType == "Specialization" then
+				ItemRack.StartTimer("SpecChangeTimer")
+			elseif eventType=="Script" and eventData.Trigger==event then
+				local a1,a2,a3,a4,a5,a6,a7,a8,a9,a10 = ...
+				-- Compatibility for UNIT_SPELLCAST_* changes in 1.15.0+ / 10.0+
+				-- If arg2 is a castGUID (starts with "Cast-") and arg3 is a spellID, resolve name to arg2
+				if event:match("^UNIT_SPELLCAST_") and type(a2)=="string" and a2:match("^Cast%-") then
+					local spellID = a3
+					if spellID then
+						local name, subtext = GetSpellInfo(spellID)
+						if name then
+							if subtext and subtext ~= "" then
+								a2 = name .. "(" .. subtext .. ")"
+							else
+								a2 = name
+							end
 						end
 					end
 				end
-			end
-			-- Compatibility for COMBAT_LOG_EVENT_UNFILTERED changes in 8.0+ / 1.13+
-			if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-				a1,a2,a3,a4,a5,a6,a7,a8,a9,a10 = CombatLogGetCurrentEventInfo()
-			end
-			local method, compileErr = loadstring("local event,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10 = ...;local EquipEventSet = function(setname, disableSound) return ItemRack.ScriptEventEquip(event, setname, disableSound) end;local UnequipEventSet = function(disableSound) return ItemRack.ScriptEventUnequip(event, disableSound) end;local EquipSet = function(setname, disableSound) return EquipEventSet(setname, disableSound) end;local UnequipSet = function(setname, disableSound) local activeSet = ItemRack.GetEventSet(event) if setname and (not activeSet or setname ~= activeSet) then return ItemRack.UnequipSet(setname, disableSound) end return UnequipEventSet(disableSound) end;" .. events[eventName].Script)
-			if not method then
-				ItemRack.Debug("Events", "Error compiling script for event '" .. tostring(eventName) .. "': " .. tostring(compileErr))
-			else
-				local ok, runErr = pcall(method,event,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10)
-				if not ok then
-					ItemRack.Debug("Events", "Error running script for event '" .. tostring(eventName) .. "': " .. tostring(runErr))
+				-- Compatibility for COMBAT_LOG_EVENT_UNFILTERED changes in 8.0+ / 1.13+
+				if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+					a1,a2,a3,a4,a5,a6,a7,a8,a9,a10 = CombatLogGetCurrentEventInfo()
+				end
+				local method, compileErr = loadstring("local event,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10 = ...;local EquipEventSet = function(setname, disableSound) return ItemRack.ScriptEventEquip(event, setname, disableSound) end;local UnequipEventSet = function(disableSound) return ItemRack.ScriptEventUnequip(event, disableSound) end;local EquipSet = function(setname, disableSound) return EquipEventSet(setname, disableSound) end;local UnequipSet = function(setname, disableSound) local activeSet = ItemRack.GetEventSet(event) if setname and (not activeSet or setname ~= activeSet) then return ItemRack.UnequipSet(setname, disableSound) end return UnequipEventSet(disableSound) end;" .. eventData.Script)
+				if not method then
+					ItemRack.Debug("Events", "Error compiling script for event '" .. tostring(eventName) .. "': " .. tostring(compileErr))
+				else
+					local ok, runErr = pcall(method,event,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10)
+					if not ok then
+						ItemRack.Debug("Events", "Error running script for event '" .. tostring(eventName) .. "': " .. tostring(runErr))
+					end
 				end
 			end
 		end
@@ -705,38 +714,47 @@ function ItemRack.ProcessStanceEvent()
 	local events = ItemRackEvents
 
 	local currentStance = GetShapeshiftForm()
-	local stance, eventToEquip, eventToUnequip, setname, skip
+	local stance, eventToEquip, eventToUnequip, setname
 
 	for eventName in pairs(enabled) do
-		if events[eventName].Type=="Stance" then
-			skip = nil
-			if events[eventName].NotInPVP then
+		local eventData = events[eventName]
+		if eventData and eventData.Type=="Stance" then
+			local excluded = false
+			if eventData.NotInPVP then
 				local _,instanceType = IsInInstance()
 				if instanceType=="arena" or instanceType=="pvp" then
-					skip = 1
+					excluded = true
 				end
 			end
-			if not skip then
-				stance = ItemRack.GetStanceNumber(events[eventName].Stance)
+			
+			if excluded then
+				if eventData.Active then
+					if eventData.Unequip then
+						eventToUnequip = eventName
+					end
+					eventData.Active = nil
+				end
+			else
+				stance = ItemRack.GetStanceNumber(eventData.Stance)
 				setname = ItemRackUser.Events.Set[eventName]
 				
 				-- Use .Active to track stance state, ensuring cleaner transitions
 				if stance==currentStance then
-					if not events[eventName].Active then
+					if not eventData.Active then
 						if not ItemRack.IsSetEquipped(setname) then
 							eventToEquip = eventName
-							events[eventName].Active = true
+							eventData.Active = true
 						else
-							events[eventName].Active = true
+							eventData.Active = true
 						end
 					end
 				elseif stance~=currentStance then
-					if events[eventName].Active then
-						if events[eventName].Unequip then
+					if eventData.Active then
+						if eventData.Unequip then
 							eventToUnequip = eventName
 						end
-						events[eventName].Active = nil
-					elseif events[eventName].Unequip and ItemRack.IsSetEquipped(setname) then
+						eventData.Active = nil
+					elseif eventData.Unequip and ItemRack.IsSetEquipped(setname) then
 						-- Fallback for consistency: only trigger if the user didn't manually equip this set
 						if ItemRackUser.CurrentSet ~= setname then
 							eventToUnequip = eventName
@@ -754,113 +772,188 @@ function ItemRack.ProcessStanceEvent()
 	end
 end
 
-function ItemRack.ProcessZoneEvent()
+function ItemRack.ProcessZoneEvent(reason)
 	local enabled = ItemRackUser.Events.Enabled
 	local events = ItemRackEvents
 
 	local currentZone = GetRealZoneText()
 	local currentSubZone = GetSubZoneText()
-	local eventToEquip, eventToUnequip, setname
 	local _, instanceType = IsInInstance()
 	local isMounted = IsMounted() and not UnitOnTaxi("player")
-	
+	local _, _, _, _, _, _, _, instanceID = GetInstanceInfo()
+
+	local zoneSignature = table.concat({
+		tostring(instanceType or "none"),
+		tostring(currentZone or ""),
+		tostring(currentSubZone or ""),
+		tostring(instanceID or "")
+	}, "\031")
+
+	if ItemRack.DebugAll or ItemRack.DebugTags.Events then
+		ItemRack.Debug("Events", "ProcessZoneEvent called. Reason:", reason or "timer", "Zone:", currentZone, "SubZone:", currentSubZone, "InstanceType:", instanceType, "InstanceID:", instanceID, "Signature:", zoneSignature)
+	end
+
+	local eventsToUnequip = {}
+	local eventsToEquip = {}
+
 	for eventName in pairs(enabled) do
-		if events[eventName].Type=="Zone" then
-			setname = ItemRackUser.Events.Set[eventName]
+		local eventData = events[eventName]
+		if eventData and eventData.Type=="Zone" then
+			local setname = ItemRackUser.Events.Set[eventName]
 			local matchedZone = nil
-			if events[eventName].Zones[currentZone] then matchedZone = currentZone
-			elseif events[eventName].Zones[currentSubZone] then matchedZone = currentSubZone
-			elseif events[eventName].Zones[instanceType] then matchedZone = instanceType
-			elseif events[eventName].Zones[instanceType:gsub("^%l", string.upper)] then matchedZone = instanceType:gsub("^%l", string.upper)
+			if eventData.Zones then
+				if eventData.Zones[currentZone] then matchedZone = currentZone
+				elseif eventData.Zones[currentSubZone] then matchedZone = currentSubZone
+				elseif eventData.Zones[instanceType] then matchedZone = instanceType
+				elseif eventData.Zones[instanceType:gsub("^%l", string.upper)] then matchedZone = instanceType:gsub("^%l", string.upper)
+				end
 			end
 			
 			if matchedZone then
-				if not events[eventName].Active or events[eventName].LastZoneMatched ~= matchedZone then
-					if not ItemRack.IsSetEquipped(setname) then
-						-- Manual Override: if the event is already active but the set
-						-- isn't equipped, the user manually swapped gear. Respect it.
-						if events[eventName].Active then
-							events[eventName].ManualOverride = true
-							ItemRack.Debug("Events", "ProcessZoneEvent: ManualOverride set for "..(eventName or "nil").." - user manually changed gear")
-						else
-							-- First entry into this zone - equip normally
-							local keepMount = true
-							
-							-- If we're currently mounted and in our mount event.
-							local activeMountEvent = nil
-							for _, activeEventName in ipairs(ItemRackUser.EventStack) do
-								local eventData = events[activeEventName]
-								if eventData and eventData.Anymount then
-									activeMountEvent = activeEventName
-									break
-								end
-							end
+				local currentSignature = eventData.LastZoneSignature
+				local signatureChanged = not currentSignature or currentSignature ~= zoneSignature
 
-							if activeMountEvent and isMounted and events[activeMountEvent] and events[activeMountEvent].Active then
-								if not ItemRack.IsSetEquipped(ItemRackUser.Events.Set[activeMountEvent]) then
+				if not eventData.Active or signatureChanged then
+					if signatureChanged and eventData.Active then
+						-- Transitioned to a new zone/instance signature: clear manual override
+						eventData.ManualOverride = nil
+						
+						-- Clear active mount if needed
+						local keepMount = true
+						local activeMountEvent = nil
+						for _, activeEventName in ipairs(ItemRackUser.EventStack) do
+							local mEventData = events[activeEventName]
+							if mEventData and mEventData.Anymount then
+								activeMountEvent = activeEventName
+								break
+							end
+						end
+						if activeMountEvent and isMounted and events[activeMountEvent] and events[activeMountEvent].Active then
+							local activeMountSet = ItemRack.GetEventSet(activeMountEvent)
+							if activeMountSet and ItemRackUser.Sets[activeMountSet] and ItemRackUser.Sets[activeMountSet].oldset == setname then
+								if events[activeMountEvent].NotInPVP and (instanceType=="arena" or instanceType=="pvp") then
 									keepMount = false
-								else
-									if ItemRackUser.Sets[activeMountEvent] and ItemRackUser.Sets[activeMountEvent].oldset == setname then
-										if events[activeMountEvent].NotInPVP then
-											if instanceType=="arena" or instanceType=="pvp" then
-												keepMount = false
-												if events[activeMountEvent].Unequip then
-													ItemRack.PopEvent(activeMountEvent)
-												end
-											end
-										end
-										if events[activeMountEvent].NotInPVE then
-											if instanceType=="party" or instanceType=="raid" then
-												keepMount = false
-												if events[activeMountEvent].Unequip then
-													ItemRack.PopEvent(activeMountEvent)
-												end
-											end
-										end
-									else
-										keepMount = false
+									if events[activeMountEvent].Unequip then
+										ItemRack.PopEvent(activeMountEvent)
+									end
+								elseif events[activeMountEvent].NotInPVE and (instanceType=="party" or instanceType=="raid") then
+									keepMount = false
+									if events[activeMountEvent].Unequip then
+										ItemRack.PopEvent(activeMountEvent)
 									end
 								end
 							else
 								keepMount = false
 							end
-							
-							if not keepMount and activeMountEvent and events[activeMountEvent] then
-								events[activeMountEvent].Active = false
-								_refreshMountState = 4
+						else
+							keepMount = false
+						end
+
+						if not keepMount and activeMountEvent and events[activeMountEvent] then
+							events[activeMountEvent].Active = false
+							_refreshMountState = 4
+						end
+
+						-- Equip set
+						table.insert(eventsToEquip, eventName)
+						if ItemRack.DebugAll or ItemRack.DebugTags.Events then
+							ItemRack.Debug("Events", "  Zone event transition to new signature for:", eventName, "action: equip")
+						end
+					elseif not ItemRack.IsSetEquipped(setname) then
+						-- First entry into the zone (not active yet) and set is not equipped
+						local keepMount = true
+						local activeMountEvent = nil
+						for _, activeEventName in ipairs(ItemRackUser.EventStack) do
+							local mEventData = events[activeEventName]
+							if mEventData and mEventData.Anymount then
+								activeMountEvent = activeEventName
+								break
 							end
-							eventToEquip = eventName
-						end -- close if Active/else (ManualOverride vs first entry)
-					elseif events[eventName].ManualOverride then
+						end
+						if activeMountEvent and isMounted and events[activeMountEvent] and events[activeMountEvent].Active then
+							local activeMountSet = ItemRack.GetEventSet(activeMountEvent)
+							if activeMountSet and ItemRackUser.Sets[activeMountSet] and ItemRackUser.Sets[activeMountSet].oldset == setname then
+								if events[activeMountEvent].NotInPVP and (instanceType=="arena" or instanceType=="pvp") then
+									keepMount = false
+									if events[activeMountEvent].Unequip then
+										ItemRack.PopEvent(activeMountEvent)
+									end
+								elseif events[activeMountEvent].NotInPVE and (instanceType=="party" or instanceType=="raid") then
+									keepMount = false
+									if events[activeMountEvent].Unequip then
+										ItemRack.PopEvent(activeMountEvent)
+									end
+								end
+							else
+								keepMount = false
+							end
+						else
+							keepMount = false
+						end
+
+						if not keepMount and activeMountEvent and events[activeMountEvent] then
+							events[activeMountEvent].Active = false
+							_refreshMountState = 4
+						end
+
+						table.insert(eventsToEquip, eventName)
+						if ItemRack.DebugAll or ItemRack.DebugTags.Events then
+							ItemRack.Debug("Events", "  Zone event first entry for:", eventName, "action: equip")
+						end
+					end
+					
+					eventData.Active = true
+					eventData.LastZoneMatched = matchedZone
+					eventData.LastZoneSignature = zoneSignature
+				else
+					-- Active and same signature
+					if not ItemRack.IsSetEquipped(setname) then
+						-- Same zone, set is not equipped, but event is active: user manually changed gear.
+						if not eventData.ManualOverride then
+							eventData.ManualOverride = true
+							if ItemRack.DebugAll or ItemRack.DebugTags.Events then
+								ItemRack.Debug("Events", "  Zone event manual override set for:", eventName, "in signature:", zoneSignature)
+							end
+						end
+					elseif eventData.ManualOverride then
 						-- Set IS equipped but ManualOverride was on - user re-equipped the zone set manually.
-						events[eventName].ManualOverride = nil
-						ItemRack.Debug("Events", "ProcessZoneEvent: ManualOverride cleared for "..(eventName or "nil").." - zone set re-equipped")
+						eventData.ManualOverride = nil
+						if ItemRack.DebugAll or ItemRack.DebugTags.Events then
+							ItemRack.Debug("Events", "  Zone event manual override cleared for:", eventName, "set re-equipped")
+						end
 					end
-					events[eventName].Active = true
-					events[eventName].LastZoneMatched = matchedZone
 				end
-			else-- if not inZone
-				if events[eventName].Active then
-					if events[eventName].Unequip then
-						eventToUnequip = eventName
+			else -- not matchedZone
+				if eventData.Active then
+					if eventData.Unequip then
+						table.insert(eventsToUnequip, eventName)
 					end
-					events[eventName].Active = nil
-					events[eventName].LastZoneMatched = nil
-					events[eventName].ManualOverride = nil
-				elseif events[eventName].Unequip and ItemRack.IsSetEquipped(setname) then
+					eventData.Active = nil
+					eventData.LastZoneMatched = nil
+					eventData.LastZoneSignature = nil
+					eventData.ManualOverride = nil
+					if ItemRack.DebugAll or ItemRack.DebugTags.Events then
+						ItemRack.Debug("Events", "  Zone event left matched zone for:", eventName, "action: unequip")
+					end
+				elseif eventData.Unequip and ItemRack.IsSetEquipped(setname) then
 					-- Fallback for consistency: only trigger if the user didn't manually equip this set
 					if ItemRackUser.CurrentSet ~= setname then
-						eventToUnequip = eventName
+						table.insert(eventsToUnequip, eventName)
 					end
 				end
 			end
 		end
 	end
-	if eventToUnequip then
-		ItemRack.PopEvent(eventToUnequip)
+
+	-- Deterministic execution of unequips first, then equips
+	table.sort(eventsToUnequip)
+	table.sort(eventsToEquip)
+
+	for _, en in ipairs(eventsToUnequip) do
+		ItemRack.PopEvent(en)
 	end
-	if eventToEquip then
-		ItemRack.PushEvent(eventToEquip)
+	for _, en in ipairs(eventsToEquip) do
+		ItemRack.PushEvent(en)
 	end
 end
 
@@ -1035,12 +1128,11 @@ function ItemRack.ProcessOnMovementUnequip()
 		events[eventName].Active = nil
 	end
 end
-
 function ItemRack.ProcessBuffEvent()
 	local enabled = ItemRackUser.Events.Enabled
 	local events = ItemRackEvents
 
-	local buff, setname, isSetEquipped, skip
+	local buff, setname, isSetEquipped
 
 	-- Zone-transition awareness: suppress OnMovement unequips if a zone change
 	-- happened within the last 1 second. Zone boundaries can cause speed blips
@@ -1048,39 +1140,52 @@ function ItemRack.ProcessBuffEvent()
 	local inZoneTransition = ItemRack.LastZoneChangeTime and (GetTime() - ItemRack.LastZoneChangeTime) < 1
 
 	for eventName in pairs(enabled) do
-		if events[eventName].Type=="Buff" then
-			skip = nil
-			if events[eventName].NotInPVP then
+		local eventData = events[eventName]
+		if eventData and eventData.Type=="Buff" then
+			local excluded = false
+			if eventData.NotInPVP then
 				local _,instanceType = IsInInstance()
 				if instanceType=="arena" or instanceType=="pvp" then
-					skip = 1
+					excluded = true
 				end
 			end
-			if events[eventName].NotInPVE then
+			if eventData.NotInPVE then
 				local _,instanceType = IsInInstance()
 				if instanceType=="party" or instanceType=="raid" then
-					skip = 1
+					excluded = true
 				end
 			end
-			if not skip then
+			
+			if excluded then
+				if eventData.Active then
+					if eventData.Unequip then
+						ItemRack.PopEvent(eventName)
+					end
+					eventData.Active = nil
+					if ItemRack.PendingOnMovementUnequip == eventName then
+						ItemRack.PendingOnMovementUnequip = nil
+						ItemRack.StopTimer("OnMovementUnequipTimer")
+					end
+				end
+			else
 				-- Determine the underlying buff/mount condition (ignoring movement)
 				local underlyingBuff
-				if events[eventName].Anymount then
+				if eventData.Anymount then
 					underlyingBuff = IsMounted() and not UnitOnTaxi("player")
 				else
-					underlyingBuff = AuraUtil.FindAuraByName(events[eventName].Buff,"player")
+					underlyingBuff = AuraUtil.FindAuraByName(eventData.Buff,"player")
 				end
 
 				-- Apply OnMovement check: buff is only true if moving
 				buff = underlyingBuff
-				if buff and events[eventName].OnMovement then
+				if buff and eventData.OnMovement then
 					buff = GetUnitSpeed("player") > 0
 				end
 				setname = ItemRackUser.Events.Set[eventName]
 				isSetEquipped = ItemRack.IsSetEquipped(setname)
 				
-				if events[eventName].OnMovement then
-					ItemRack.Debug("Events", "ProcessBuffEvent checking "..(eventName or "nil")..": moving="..tostring(GetUnitSpeed("player") > 0).." underlyingBuff="..tostring(underlyingBuff).." isSetEquipped="..tostring(isSetEquipped).." active="..tostring(events[eventName].Active))
+				if eventData.OnMovement then
+					ItemRack.Debug("Events", "ProcessBuffEvent checking "..(eventName or "nil")..": moving="..tostring(GetUnitSpeed("player") > 0).." underlyingBuff="..tostring(underlyingBuff).." isSetEquipped="..tostring(isSetEquipped).." active="..tostring(eventData.Active))
 				end
 				
 				-- Use .Active to track if we've already handled this event
@@ -1088,28 +1193,28 @@ function ItemRack.ProcessBuffEvent()
 				-- And ensures UnequipSet triggers even if the set is only partially equipped
 				if buff then
 					-- Player is moving (or buff active for non-movement events).
-					if events[eventName].OnMovement and ItemRack.PendingOnMovementUnequip == eventName then
+					if eventData.OnMovement and ItemRack.PendingOnMovementUnequip == eventName then
 						ItemRack.PendingOnMovementUnequip = nil
 						ItemRack.StopTimer("OnMovementUnequipTimer")
 					end
-					if not events[eventName].Active then
+					if not eventData.Active then
 						ItemRack.PushEvent(eventName)
-						events[eventName].Active = true
+						eventData.Active = true
 					end
 				elseif not buff then
-					if events[eventName].Active then
-						if events[eventName].Unequip then
+					if eventData.Active then
+						if eventData.Unequip then
 							-- Zone-transition suppression: if this is an OnMovement event and the
 							-- underlying buff is still active but we just crossed a zone boundary,
 							-- skip the unequip. The zone transition likely caused a speed blip
 							-- or aura flicker — not an intentional stop.
-							if events[eventName].OnMovement and underlyingBuff and inZoneTransition then
+							if eventData.OnMovement and underlyingBuff and inZoneTransition then
 								-- Suppress: still mounted, zone boundary artifact. Do nothing.
-							elseif events[eventName].OnMovement and underlyingBuff then
-								if events[eventName].OnMovementDelay == false then
+							elseif eventData.OnMovement and underlyingBuff then
+								if eventData.OnMovementDelay == false then
 									-- User explicitly disabled the 0.5s stop debounce. Instant unequip.
 									ItemRack.PopEvent(eventName)
-									events[eventName].Active = nil
+									eventData.Active = nil
 								else
 									-- OnMovement debounce: delay the unequip by 0.5s.
 									-- If the player starts moving again within that window, the
@@ -1121,12 +1226,12 @@ function ItemRack.ProcessBuffEvent()
 								end
 							else
 								ItemRack.PopEvent(eventName)
-								events[eventName].Active = nil
+								eventData.Active = nil
 							end
 						else
-							events[eventName].Active = nil
+							eventData.Active = nil
 						end
-					elseif isSetEquipped and events[eventName].Unequip then
+					elseif isSetEquipped and eventData.Unequip then
 						-- Fallback: If we didn't track it as active but the set IS equipped, unequip it
 						-- Fixed: Skip if the user manually equipped this set right now (CurrentSet check)
 						-- Fixed: Skip if the addon is actively swapping out any set (SetSwapping) or if items are locked (AnythingLocked) to prevent double-pops from server lag

@@ -1,3 +1,11 @@
+__ Development __
+- Centralized event recheck scheduler triggers automatic settled rechecks at 0.5s/1.5s on world loading and zone boundaries.
+- Unified combat and casting stop triggers to re-evaluate all event types instead of only buffs.
+- Implemented signature-aware zone transitions using instance ID to resolve overlaps and clear manual override across separate dungeons of the same type.
+- Handled buff and stance exclusions as state transitions to unwind active events immediately.
+- Ordered pending zone transitions deterministically by executing unequips before equips in alphabetical priority.
+- Fixed mount set lookup in ProcessZoneEvent and added defensive nil guards for event lookups.
+
 __ New in 4.39.4-beta1 - By Bl4ut0 __
 - Fix: Reorganized diagnostic dump output section order, added debug states (DebugAll, DebugChat, DebugTags) and restored the ItemRackUser.Buttons layout configuration. Reorganized options settings list.
 - Fix: Generalized the mount check in ProcessZoneEvent to search the active event stack for any active event with the Anymount flag set, allowing custom mount event names (like "pvp mount").
