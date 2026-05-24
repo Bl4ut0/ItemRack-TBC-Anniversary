@@ -6,7 +6,8 @@ __ Development __
 - Ordered pending zone transitions deterministically by executing unequips before equips in alphabetical priority.
 - Fixed mount set lookup in ProcessZoneEvent and added defensive nil guards for event lookups.
 
-__ New in 4.39.4-beta1 - By Bl4ut0 __
+__ New in 4.39.4 - By Bl4ut0 __
+- Fix: Fixed a major regression where active, dynamically-managed settings (such as the minimap icon position, events database version, show set info in tooltips, and action bar sound suppression settings) were pruned on startup by the SavedVariables auditor, causing them to reset on every logout or reload.
 - Fix: Reorganized diagnostic dump output section order, added debug states (DebugAll, DebugChat, DebugTags) and restored the ItemRackUser.Buttons layout configuration. Reorganized options settings list.
 - Fix: Generalized the mount check in ProcessZoneEvent to search the active event stack for any active event with the Anymount flag set, allowing custom mount event names (like "pvp mount").
 - Fix: Resolved code duplication syntax warnings in ItemRack.lua. Added automated Lua validation checks.

@@ -39,7 +39,7 @@ local GetNumAddOns = GetNumAddOns or (C_AddOns and C_AddOns.GetNumAddOns)
 
 local wowver, wowbuild, wowbuilddate, wowtoc = GetBuildInfo()
 ItemRack.Version = GetAddOnMetadata(addonName, "Version")
-ItemRack.BuildID = "v4.39.4-beta1-20260524"
+ItemRack.BuildID = "Dev"
 
 -- Global Debug System
 -- Usage: ItemRack.Debug("Queue", "some message", someVar)
@@ -261,7 +261,7 @@ ItemRackSettings = {
 	AllowHidden = "ON", -- allow the ability to hide items/sets in the menu with alt+click
 	ShowMinimap = "ON", -- whether to show the minimap button
 	TrinketMenuMode = "OFF", -- whether to merge top/bottom trinkets to one menu (leftclick=top,rightclick=bottom)
-	AnotherOther = "OFF", -- whether to dock the merged trinket menu to bottom trinket
+	AnchorOther = "OFF", -- whether to dock the merged trinket menu to bottom trinket
 	EquipToggle = "OFF", -- whether to toggle equipping a set when choosing to equip it
 	ShowHotKeys = "OFF", -- show key bindings on dockable buttons
 	Cooldown90 = "OFF", -- whether to count cooldown in seconds at 90 instead of 60
@@ -560,13 +560,6 @@ function ItemRack.AuditSavedVariables(printToChat)
 			if ItemRackSettings[k] == nil then
 				LogIssue("ItemRackSettings was missing default setting '" .. tostring(k) .. "'. Restored default.", true)
 				ItemRackSettings[k] = v
-			end
-		end
-		-- Prune obsolete settings
-		for k in pairs(ItemRackSettings) do
-			if ItemRack.DefaultSettings[k] == nil then
-				LogIssue("ItemRackSettings contained obsolete setting '" .. tostring(k) .. "'. Pruned.", true)
-				ItemRackSettings[k] = nil
 			end
 		end
 	end
