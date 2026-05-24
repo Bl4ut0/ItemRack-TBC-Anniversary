@@ -18,3 +18,5 @@ Images/
 .vscode
 OmniCC/
 OmniCC_Config/
+.tools/
+node_modules/
