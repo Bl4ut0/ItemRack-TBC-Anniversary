@@ -274,7 +274,10 @@ function ItemRack.EquipSet(setname, disableSound)
 	-- if in combat, dead, or casting, queue ALL items for later
 	-- PickupInventoryItem is blocked by the game during InCombatLockdown() for all items including weapons
 	if InCombatLockdown() or ItemRack.IsPlayerReallyDead() or ItemRack.NowCasting then
+		local reason = InCombatLockdown() and "combat" or (ItemRack.NowCasting and "casting" or "dead")
+		ItemRack.Debug("Equip", "EquipSet DEFERRED to CombatQueue: set=" .. tostring(setname) .. " reason=" .. reason .. " slots queued:")
 		for i in pairs(swap) do
+			ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
 			ItemRack.AddToCombatQueue(i,swap[i])
 			swap[i] = nil
 			if set.old then

@@ -1,7 +1,7 @@
 ## Interface: 11506, 20505
 ## Title: ItemRackOptions - Anniversary
 ## IconTexture: Interface\AddOns\ItemRack\ItemRackIcon
-## Version: 4.39.3
+## Version: 4.39.4-beta1
 ## Notes: Load-On-Demand modules for ItemRack
 ## Dependencies: ItemRack, Blizzard_MacroUI
 ## LoadOnDemand: 1

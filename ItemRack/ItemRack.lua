@@ -39,6 +39,7 @@ local GetNumAddOns = GetNumAddOns or (C_AddOns and C_AddOns.GetNumAddOns)
 
 local wowver, wowbuild, wowbuilddate, wowtoc = GetBuildInfo()
 ItemRack.Version = GetAddOnMetadata(addonName, "Version")
+ItemRack.BuildID = "v4.39.4-beta1-20260524"
 
 -- Global Debug System
 -- Usage: ItemRack.Debug("Queue", "some message", someVar)
@@ -69,6 +70,17 @@ function ItemRack.Debug(tag, ...)
 		table.insert(ItemRack.LogBuffer, date("[%H:%M:%S] ") .. text)
 		if #ItemRack.LogBuffer > 5000 then table.remove(ItemRack.LogBuffer, 1) end
 	end
+end
+
+function ItemRack.PrintDebugStatus()
+	local states = {}
+	local sortedTags = { "Events", "Equip", "Queue", "CombatQueue", "API", "UI", "Combat" }
+	for _, tag in ipairs(sortedTags) do
+		local state = ItemRack.DebugTags[tag] and "|cff00ff00ON|r" or "|cffff0000OFF|r"
+		table.insert(states, tag .. "=" .. state)
+	end
+	ItemRack.Print("Debug Status: MasterAll=" .. (ItemRack.DebugAll and "|cff00ff00ON|r" or "|cffff0000OFF|r") .. ", Chat=" .. (ItemRack.DebugChat and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
+	ItemRack.Print("Layers: " .. table.concat(states, ", "))
 end
 
 -- by Mikinho - Fix for latest update for Classic Era/SoD v11504
@@ -687,8 +699,11 @@ function ItemRack.OnCastingStart(self,event,unit,castID)
 			if ChannelInfo() then
 				local spellName = UnitChannelInfo("player")
 				ItemRack.NowChannelingSpell = spellName
+				ItemRack.Debug("Equip", "Casting BLOCKED (channel start): spell=" .. tostring(spellName) .. " castID=" .. tostring(castID) .. " pendingCQ=" .. tostring(next(ItemRack.CombatQueue) ~= nil) .. " setsWaiting=" .. #ItemRack.SetsWaiting)
 			else
 				ItemRack.NowChannelingSpell = nil
+				local spellName = UnitCastingInfo("player")
+				ItemRack.Debug("Equip", "Casting BLOCKED (cast start): spell=" .. tostring(spellName) .. " castID=" .. tostring(castID) .. " pendingCQ=" .. tostring(next(ItemRack.CombatQueue) ~= nil) .. " setsWaiting=" .. #ItemRack.SetsWaiting)
 			end
 		end
 	end
@@ -712,6 +727,7 @@ function ItemRack.OnCastingStop(self,event,unit,castID)
 			
 			ItemRack.NowCasting = nil
 			ItemRack.NowChannelingSpell = nil
+			ItemRack.Debug("Equip", "Casting RELEASED: event=" .. tostring(event) .. " castID=" .. tostring(castID) .. " pendingCQ=" .. tostring(next(ItemRack.CombatQueue) ~= nil) .. " setsWaiting=" .. #ItemRack.SetsWaiting)
 
 			-- For weapons, we want to try the swap immediately to hit the window between spamming.
 			-- Standard armor swaps can still wait for the 0.1s timer if needed, 
@@ -3422,12 +3438,7 @@ function ItemRack.SlashHandler(arg1)
 			ItemRack.LogBuffer = {}
 			ItemRack.Print("Diagnostic log buffer cleared.")
 		elseif subcmd == "status" then
-			local active = {}
-			for tag, val in pairs(ItemRack.DebugTags) do
-				if val then table.insert(active, "|cff00ff00" .. tag .. "|r") end
-			end
-			ItemRack.Print("Debug Status: MasterAll=" .. (ItemRack.DebugAll and "|cff00ff00ON|r" or "|cffff0000OFF|r") .. ", Chat=" .. (ItemRack.DebugChat and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
-			ItemRack.Print("Active tags: " .. (#active > 0 and table.concat(active, ", ") or "None"))
+			ItemRack.PrintDebugStatus()
 		elseif subcmd == "audit" then
 			ItemRack.AuditSavedVariables(true)
 		elseif subcmd == "help" then
@@ -3449,11 +3460,12 @@ function ItemRack.SlashHandler(arg1)
 				end
 			end
 			if not foundTag then
-				-- Dynamically register/format new tags if needed
-				foundTag = subcmd:gsub("^%l", string.upper)
+				ItemRack.Print("Invalid debug tag: '" .. tostring(subcmd) .. "'")
+				ItemRack.PrintDebugStatus()
+			else
+				ItemRack.DebugTags[foundTag] = not ItemRack.DebugTags[foundTag]
+				ItemRack.Print("Diagnostic tag [|cff00ff00" .. foundTag .. "|r] is now " .. (ItemRack.DebugTags[foundTag] and "|cff00ff00ENABLED|r" or "|cffff0000DISABLED|r"))
 			end
-			ItemRack.DebugTags[foundTag] = not ItemRack.DebugTags[foundTag]
-			ItemRack.Print("Diagnostic tag [|cff00ff00" .. foundTag .. "|r] is now " .. (ItemRack.DebugTags[foundTag] and "|cff00ff00ENABLED|r" or "|cffff0000DISABLED|r"))
 		else
 			ItemRack.DebugAll = not ItemRack.DebugAll
 			if ItemRack.DebugAll then
@@ -3538,29 +3550,133 @@ function ItemRack.SlashHandler(arg1)
 				end
 			end
 		end
-		
 		local dumpText = "=== ITEMRACK LOG BUFFER ===\n" .. table.concat(ItemRack.LogBuffer, "\n")
+		
 		dumpText = dumpText .. "\n\n=== RUNTIME STATE DUMP ===\n"
+		dumpText = dumpText .. "ItemRack.Version = " .. tostring(ItemRack.Version) .. "\n"
+		dumpText = dumpText .. "ItemRack.BuildID = " .. tostring(ItemRack.BuildID) .. "\n"
 		dumpText = dumpText .. "InCombatLockdown() = " .. tostring(InCombatLockdown()) .. "\n"
 		dumpText = dumpText .. "ItemRack.menuOpen = " .. tostring(ItemRack.menuOpen) .. "\n"
 		dumpText = dumpText .. "ItemRackMenuFrame:IsVisible() = " .. tostring(ItemRackMenuFrame and ItemRackMenuFrame:IsVisible()) .. "\n"
 		dumpText = dumpText .. "ItemRack.CombatQueue = " .. ItemRackLogFrame.Serialize(ItemRack.CombatQueue) .. "\n"
-		
-		dumpText = dumpText .. "\n=== SAVED VARIABLES DUMP ===\n"
+		dumpText = dumpText .. "ItemRack.SetSwapping = " .. tostring(ItemRack.SetSwapping) .. "\n"
+		dumpText = dumpText .. "ItemRack.DebugAll = " .. tostring(ItemRack.DebugAll) .. "\n"
+		dumpText = dumpText .. "ItemRack.DebugChat = " .. tostring(ItemRack.DebugChat) .. "\n"
+		dumpText = dumpText .. "ItemRack.DebugTags = " .. ItemRackLogFrame.Serialize(ItemRack.DebugTags) .. "\n"
 		dumpText = dumpText .. "ItemRackUser.Locked = " .. tostring(ItemRackUser.Locked) .. "\n"
 		dumpText = dumpText .. "ItemRackUser.Buttons = " .. ItemRackLogFrame.Serialize(ItemRackUser.Buttons) .. "\n"
 		dumpText = dumpText .. "ItemRackUser.CurrentSet = " .. tostring(ItemRackUser.CurrentSet) .. "\n"
-		dumpText = dumpText .. "ItemRackUser.SetSwapping = " .. tostring(ItemRack.SetSwapping) .. "\n"
 		dumpText = dumpText .. "ItemRackUser.EventStack = " .. ItemRackLogFrame.Serialize(ItemRackUser.EventStack) .. "\n"
-		
-		-- Only dump internal/corrupted ghosts or ~Unequip specifically since full SV is massive, 
-		-- or optionally dump active sets they were interacting with.
+		dumpText = dumpText .. "ItemRackUser.QueuesEnabled = " .. ItemRackLogFrame.Serialize(ItemRackUser.QueuesEnabled) .. "\n"
 		dumpText = dumpText .. "ItemRackUser.Sets['~Unequip'] = " .. ItemRackLogFrame.Serialize(ItemRackUser.Sets["~Unequip"]) .. "\n"
 		if ItemRackUser.CurrentSet and ItemRackUser.Sets[ItemRackUser.CurrentSet] then
 			dumpText = dumpText .. "ItemRackUser.Sets['" .. ItemRackUser.CurrentSet .. "'] = " .. ItemRackLogFrame.Serialize(ItemRackUser.Sets[ItemRackUser.CurrentSet]) .. "\n"
 		end
+
+		dumpText = dumpText .. "\n=== LAST AUDIT ===\n"
 		dumpText = dumpText .. "ItemRackUser.LastAudit = " .. ItemRackLogFrame.Serialize(ItemRackUser.LastAudit) .. "\n"
+
+		dumpText = dumpText .. "\n=== LAST REPAIR ===\n"
 		dumpText = dumpText .. "ItemRackUser.LastRepair = " .. ItemRackLogFrame.Serialize(ItemRackUser.LastRepair) .. "\n"
+
+		dumpText = dumpText .. "\n=== SETTINGS ===\n"
+		local optInfoSettings = {
+			-- User Settings (ItemRackUser)
+			{ name = "ItemRackUser.Locked", val = ItemRackUser.Locked },
+			{ name = "ItemRackUser.EnableEvents", val = ItemRackUser.EnableEvents },
+			{ name = "ItemRackUser.EnableQueues", val = ItemRackUser.EnableQueues },
+			{ name = "ItemRackUser.EnablePerSetQueues", val = ItemRackUser.EnablePerSetQueues },
+			{ name = "ItemRackUser.EnableQueueContextCheck", val = ItemRackUser.EnableQueueContextCheck },
+			{ name = "ItemRackUser.ButtonSpacing", val = ItemRackUser.ButtonSpacing },
+			{ name = "ItemRackUser.Alpha", val = ItemRackUser.Alpha },
+			{ name = "ItemRackUser.MainScale", val = ItemRackUser.MainScale },
+			{ name = "ItemRackUser.MenuScale", val = ItemRackUser.MenuScale },
+			{ name = "ItemRackUser.SetMenuWrap", val = ItemRackUser.SetMenuWrap },
+			{ name = "ItemRackUser.SetMenuWrapValue", val = ItemRackUser.SetMenuWrapValue },
+			
+			-- Global Settings (ItemRackSettings)
+			{ name = "ItemRackSettings.MenuOnShift", val = ItemRackSettings.MenuOnShift },
+			{ name = "ItemRackSettings.MenuOnRight", val = ItemRackSettings.MenuOnRight },
+			{ name = "ItemRackSettings.RightClickUse", val = ItemRackSettings.RightClickUse },
+			{ name = "ItemRackSettings.HideOOC", val = ItemRackSettings.HideOOC },
+			{ name = "ItemRackSettings.HidePetBattle", val = ItemRackSettings.HidePetBattle },
+			{ name = "ItemRackSettings.HideArena", val = ItemRackSettings.HideArena },
+			{ name = "ItemRackSettings.AllowEmpty", val = ItemRackSettings.AllowEmpty },
+			{ name = "ItemRackSettings.AllowHidden", val = ItemRackSettings.AllowHidden },
+			{ name = "ItemRackSettings.HideTradables", val = ItemRackSettings.HideTradables },
+			{ name = "ItemRackSettings.DisableAltClick", val = ItemRackSettings.DisableAltClick },
+			
+			-- Cooldown Settings
+			{ name = "ItemRackSettings.Notify", val = ItemRackSettings.Notify },
+			{ name = "ItemRackSettings.NotifyThirty", val = ItemRackSettings.NotifyThirty },
+			{ name = "ItemRackSettings.NotifyChatAlso", val = ItemRackSettings.NotifyChatAlso },
+			{ name = "ItemRackSettings.CooldownCount", val = ItemRackSettings.CooldownCount },
+			{ name = "ItemRackSettings.LargeNumbers", val = ItemRackSettings.LargeNumbers },
+			{ name = "ItemRackSettings.Cooldown90", val = ItemRackSettings.Cooldown90 },
+			
+			-- Tooltip Settings
+			{ name = "ItemRackSettings.ShowTooltips", val = ItemRackSettings.ShowTooltips },
+			{ name = "ItemRackSettings.ShowSetInTooltip", val = ItemRackSettings.ShowSetInTooltip },
+			{ name = "ItemRackSettings.TooltipColorUnEquipped", val = ItemRackSettings.TooltipColorUnEquipped },
+			{ name = "ItemRackSettings.TinyTooltips", val = ItemRackSettings.TinyTooltips },
+			{ name = "ItemRackSettings.TinyTooltipsQuickAccess", val = ItemRackSettings.TinyTooltipsQuickAccess },
+			{ name = "ItemRackSettings.TinyTooltipsSubMenusOnly", val = ItemRackSettings.TinyTooltipsSubMenusOnly },
+			{ name = "ItemRackSettings.DisableTooltipsInCombat", val = ItemRackSettings.DisableTooltipsInCombat },
+			{ name = "ItemRackSettings.TooltipFollow", val = ItemRackSettings.TooltipFollow },
+			
+			-- Interface & Misc
+			{ name = "ItemRackSettings.ShowMinimap", val = ItemRackSettings.ShowMinimap },
+			{ name = "ItemRackSettings.MinimapTooltip", val = ItemRackSettings.MinimapTooltip },
+			{ name = "ItemRackSettings.TrinketMenuMode", val = ItemRackSettings.TrinketMenuMode },
+			{ name = "ItemRackSettings.AnchorOther", val = ItemRackSettings.AnchorOther },
+			{ name = "ItemRackSettings.EquipToggle", val = ItemRackSettings.EquipToggle },
+			{ name = "ItemRackSettings.ShowHotKeys", val = ItemRackSettings.ShowHotKeys },
+			{ name = "ItemRackSettings.EquipOnSetPick", val = ItemRackSettings.EquipOnSetPick },
+			{ name = "ItemRackSettings.CharacterSheetMenus", val = ItemRackSettings.CharacterSheetMenus },
+			{ name = "ItemRackSettings.LeftSlotsGoRight", val = ItemRackSettings.LeftSlotsGoRight },
+			{ name = "ItemRackSettings.RightSlotsGoLeft", val = ItemRackSettings.RightSlotsGoLeft },
+		}
+		
+		local printedKeys = {}
+		for _, item in ipairs(optInfoSettings) do
+			local cleanKey = item.name:match("^ItemRackSettings%.(.+)$")
+			if cleanKey then
+				printedKeys[cleanKey] = true
+			end
+			dumpText = dumpText .. item.name .. " = " .. tostring(item.val) .. "\n"
+		end
+		
+		dumpText = dumpText .. "-- Other Settings:\n"
+		local otherKeys = {}
+		for k in pairs(ItemRackSettings) do
+			if not printedKeys[k] then
+				table.insert(otherKeys, k)
+			end
+		end
+		table.sort(otherKeys)
+		for _, k in ipairs(otherKeys) do
+			dumpText = dumpText .. "ItemRackSettings." .. k .. " = " .. tostring(ItemRackSettings[k]) .. "\n"
+		end
+
+		dumpText = dumpText .. "\n=== EVENTS STATE ===\n"
+		if ItemRackUser.Events then
+			dumpText = dumpText .. "ItemRackUser.Events.Enabled = " .. ItemRackLogFrame.Serialize(ItemRackUser.Events.Enabled) .. "\n"
+			dumpText = dumpText .. "ItemRackUser.Events.Set = " .. ItemRackLogFrame.Serialize(ItemRackUser.Events.Set) .. "\n"
+		end
+		if ItemRackEvents then
+			dumpText = dumpText .. "ItemRackEvents = " .. ItemRackLogFrame.Serialize(ItemRackEvents) .. "\n"
+		end
+		local setNames = {}
+		for name in pairs(ItemRackUser.Sets) do
+			table.insert(setNames, name)
+		end
+		table.sort(setNames)
+		dumpText = dumpText .. "ConfiguredSets = " .. ItemRackLogFrame.Serialize(setNames) .. "\n"
+
+		dumpText = dumpText .. "\n=== CASTING STATE ===\n"
+		dumpText = dumpText .. "ItemRack.NowCasting = " .. tostring(ItemRack.NowCasting) .. "\n"
+		dumpText = dumpText .. "ItemRack.NowChannelingSpell = " .. tostring(ItemRack.NowChannelingSpell) .. "\n"
+		dumpText = dumpText .. "ItemRack.SetsWaiting = " .. ItemRackLogFrame.Serialize(ItemRack.SetsWaiting) .. "\n"
 		
 		ItemRackLogFrame:Show()
 		ItemRackLogEditBox:SetText(dumpText)

@@ -787,24 +787,33 @@ function ItemRack.ProcessZoneEvent()
 							local keepMount = true
 							
 							-- If we're currently mounted and in our mount event.
-							if ItemRackUser.Sets["Mounted"] and isMounted and events["Mounted"] and events["Mounted"].Active then
-								if not ItemRack.IsSetEquipped(ItemRackUser.Events.Set["Mounted"]) then
+							local activeMountEvent = nil
+							for _, activeEventName in ipairs(ItemRackUser.EventStack) do
+								local eventData = events[activeEventName]
+								if eventData and eventData.Anymount then
+									activeMountEvent = activeEventName
+									break
+								end
+							end
+
+							if activeMountEvent and isMounted and events[activeMountEvent] and events[activeMountEvent].Active then
+								if not ItemRack.IsSetEquipped(ItemRackUser.Events.Set[activeMountEvent]) then
 									keepMount = false
 								else
-									if ItemRackUser.Sets["Mounted"].oldset == setname then
-										if events["Mounted"].NotInPVP then
+									if ItemRackUser.Sets[activeMountEvent] and ItemRackUser.Sets[activeMountEvent].oldset == setname then
+										if events[activeMountEvent].NotInPVP then
 											if instanceType=="arena" or instanceType=="pvp" then
 												keepMount = false
-												if events["Mounted"].Unequip then
-													ItemRack.PopEvent("Mounted")
+												if events[activeMountEvent].Unequip then
+													ItemRack.PopEvent(activeMountEvent)
 												end
 											end
 										end
-										if events["Mounted"].NotInPVE then
+										if events[activeMountEvent].NotInPVE then
 											if instanceType=="party" or instanceType=="raid" then
 												keepMount = false
-												if events["Mounted"].Unequip then
-													ItemRack.PopEvent("Mounted")
+												if events[activeMountEvent].Unequip then
+													ItemRack.PopEvent(activeMountEvent)
 												end
 											end
 										end
@@ -816,8 +825,8 @@ function ItemRack.ProcessZoneEvent()
 								keepMount = false
 							end
 							
-							if not keepMount then
-								events["Mounted"].Active = false
+							if not keepMount and activeMountEvent and events[activeMountEvent] then
+								events[activeMountEvent].Active = false
 								_refreshMountState = 4
 							end
 							eventToEquip = eventName
