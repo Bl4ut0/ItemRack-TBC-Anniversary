@@ -2,7 +2,7 @@
 
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
-## [Development]
+## [4.39.4-beta1] - 2026-05-24
 ### Diagnostic & Logging Improvements
 - **Casting & Channeling Debug Traces**: Added detailed debug logging to `OnCastingStart` and `OnCastingStop` to track when swaps are blocked and released by player casting/channeling states.
 - **Combat Queue Defer Debugging**: Added debug logging when an `EquipSet` is deferred to the combat queue, indicating the deferral reason (combat, casting, or death) along with the queued slot numbers and item IDs.
