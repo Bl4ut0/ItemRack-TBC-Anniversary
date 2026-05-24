@@ -1,0 +1,17 @@
+# Exclude repo-level files from GitHub's auto-generated source code archives
+.gitattributes export-ignore
+.gitignore export-ignore
+.vscode/ export-ignore
+.agent/ export-ignore
+.rules/ export-ignore
+.versions/ export-ignore
+CHANGELOG.md export-ignore
+CONTROLS.md export-ignore
+CURSEFORGE_DESCRIPTION.md export-ignore
+DEAD_ENDS.md export-ignore
+README.md export-ignore
+RELEASE_NOTES.md export-ignore
+TECHNICAL_CHANGES.md export-ignore
+TEMP_NOTES.md export-ignore
+Images/ export-ignore
+*.zip export-ignore
