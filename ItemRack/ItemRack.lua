@@ -273,6 +273,8 @@ ItemRackSettings = {
 	DisableAltClick = "OFF", -- whether to disable Alt+click from toggling auto queue (to allow self cast through)
 	TooltipColorUnEquipped = "OFF", -- whether to highlight unequipped set items in orange
 	DisableSwapSound = "OFF", -- whether to silence audio when ItemRack automatically swaps gear
+	ShowSetInTooltip = "OFF", -- whether to show set info in tooltips
+	DisableActionBarSound = "OFF", -- whether to silence Action Bar sounds
 }
 
 ItemRack.NoTitansGrip = {
@@ -461,6 +463,38 @@ function ItemRack.AuditSavedVariables(printToChat)
 		if printToChat then
 			ItemRack.Print("|cffffa500" .. prefix .. "|r" .. text)
 		end
+	end
+
+	-- Ensure base tables exist
+	if not ItemRackSettings then
+		ItemRackSettings = {}
+		LogIssue("ItemRackSettings was completely missing. Initialized.", true)
+	end
+	if not ItemRackUser then
+		ItemRackUser = {}
+		LogIssue("ItemRackUser was completely missing. Initialized.", true)
+	end
+	if not ItemRackUser.Sets then
+		ItemRackUser.Sets = {}
+		LogIssue("ItemRackUser.Sets was missing. Initialized.", true)
+	end
+	if not ItemRackUser.Queues then
+		ItemRackUser.Queues = {}
+		LogIssue("ItemRackUser.Queues was missing. Initialized.", true)
+	end
+	if not ItemRackUser.QueuesEnabled then
+		ItemRackUser.QueuesEnabled = {}
+		LogIssue("ItemRackUser.QueuesEnabled was missing. Initialized.", true)
+	end
+	if not ItemRackUser.EventStack then
+		ItemRackUser.EventStack = {}
+		LogIssue("ItemRackUser.EventStack was missing. Initialized.", true)
+	end
+	if not ItemRackUser.ItemsUsed then
+		ItemRackUser.ItemsUsed = {}
+	end
+	if not ItemRackUser.Hidden then
+		ItemRackUser.Hidden = {}
 	end
 
 	-- 1. Check CurrentSet
