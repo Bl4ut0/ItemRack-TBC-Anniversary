@@ -1,20 +1,21 @@
-# ItemRack TBC Anniversary - Release v4.39.4
+# ItemRack TBC Anniversary - Release v4.39.5
 
-This release addresses a critical settings persistence regression introduced in v4.39.3, along with several diagnostic, logging, and event improvements.
+This release includes major updates to the Event Swapping and Instance Transition frameworks to resolve instances where gear sets failed to load when entering or transitioning between dungeons, raids, and PvP environments, as well as fixing Masque quick slot button skinning and solid white backdrop textures.
 
 ---
 
+### ⚙️ Event Swapping & Instance Transitions
+* **Centralized Event Recheck Scheduler**: Added `ItemRack.ScheduleEventRecheck` and `ItemRack.RunAllEvents` to safely schedule and run event-based evaluations. Schedules automatic settled checks at `0.5s` and `1.5s` upon entering the world/instances (`PLAYER_ENTERING_WORLD`), and on zone changes (`ZONE_CHANGED_NEW_AREA`).
+* **Unified Event Release Triggers**: Refactored combat and casting stop events (`OnLeavingCombatOrDeath` and `OnCastingStop`) to run rechecks on all event categories (stances, spec, zones, buffs) instead of only buffs.
+* **Signature-Aware Zone Transitions**: Implemented multi-field zone signatures (incorporating instance type, zone text, subzone text, and unique instance ID) to cleanly differentiate between distinct dungeons of the same type.
+* **Improved Manual Override Protection**: Refactored override scoping in `ProcessZoneEvent`. Manual gear swaps are strictly protected within the same zone signature but automatically cleared upon zoning into a different zone/instance signature, allowing zone set auto-equip to resume.
+* **Exclusion Unwinding**: Rewrote buff and stance exclusion checks (`NotInPVP`/`NotInPVE`). When an event is active but its exclusion becomes true, the event is immediately unwound/popped from the stack rather than skipped, preventing zombie sets from sticking on the event stack.
+* **Deterministic Zone Swaps**: Replaced scalar pending zone actions with alphabetical sorting lists (`eventsToUnequip` and `eventsToEquip`), ensuring all unequips finish before equips are processed in a stable, deterministic order.
+* **Mount Set Resolution Fix**: Corrected set lookup in `ProcessZoneEvent` for mount events by resolving the set name through the active event data structure instead of using the raw event name.
+* **Defensive Programming Nil-Guards**: Added nil guards around enabled event lookups across all event processors to avoid Lua errors with corrupt profile data.
+
 ### 🐛 Bug Fixes
-* **Settings Persistence**: Fixed a major regression where active, dynamically-managed settings (such as the minimap icon position, events database version, show set info in tooltips, and action bar sound suppression settings) were pruned on startup by the SavedVariables auditor, causing them to reset on every logout or reload.
-
-### 🔍 Diagnostic & Logging Improvements
-* **Casting & Channeling Debug Traces**: Added detailed debug logging to `OnCastingStart` and `OnCastingStop` to track when swaps are blocked and released by player casting/channeling states.
-* **Combat Queue Defer Debugging**: Added debug logging when an `EquipSet` is deferred to the combat queue, indicating the deferral reason (combat, casting, or death) along with the queued slot numbers and item IDs.
-* **Expanded Diagnostic Dump**: Updated `/itemrack dump` output to include additional variables (event enabled states, queue configurations, active setting tables, and current casting/channeling blocks) for more comprehensive troubleshooting.
-* **Robust Debug Tag Validation**: Restricted toggling to valid debug tags, preventing the system from reporting random names as enabled. Toggling an invalid tag now prints a clean warning and displays all available layers and their status.
-* **Enhanced Debug Status Output**: Refactored `/itemrack debug status` to print a complete, color-coded list of all available layers (`Events`, `Equip`, `Queue`, `CombatQueue`, `API`, `UI`, `Combat`) and their exact `ON`/`OFF` states.
-* **Diagnostic Dump Reorganization**: Reorganized section output order to match development requests. Added debug states (`DebugAll`, `DebugChat`, and `DebugTags`) and restored the `ItemRackUser.Buttons` layout configuration to the dump. Reorganized options configuration list to match options UI hierarchy.
-
-### ⚙️ Event & Zone Improvements
-* **Auto-Dismount Zone Boundaries**: Generalized the mount check in `ProcessZoneEvent` to search the active event stack for any active event with the `Anymount` flag set, allowing custom mount event names like `"pvp mount"` to keep gear equipped correctly when transitioning zones.
-* **Syntax Validation**: Resolved code duplication syntax warnings in `ItemRack.lua`. Established an automated Lua validation runner inside scratch spaces.
+* **Masque Quick Slot Skinning**: Fixed Masque skinning for Quick Access buttons by passing explicit button regions (`Icon`, `Cooldown`, `Count`, `HotKey`) to `AddButton`.
+* **White Background Texture Fix**: Fixed a bug where the swap menu frame (`ItemRackMenuFrame`) background was rendered as a solid white texture in recent client patches. Re-anchored `bgFile` to `DialogBox-Background`.
+* **Blank Diagnostic Dump Fix**: Fixed a bug where the diagnostic log and state dump window (`/itemrack dump`) appeared entirely blank due to the multiline edit box collapsing to 0 height. Added an `OnTextChanged` height recalculator script.
+* **SavedVariables Auditor 'Custom' Set Guard**: Excluded the special `"Custom"` set string from database checks. Previously, running `/itemrack debug audit` or logging in while in a `"Custom"` gear state (such as being mounted with unsaved gear) would flag and clear the valid `"Custom"` history path, breaking dismount gear restoration.

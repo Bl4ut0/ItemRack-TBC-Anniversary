@@ -302,7 +302,13 @@ function ItemRack.InitButtons()
 		ItemRack.MenuMouseoverFrames["ItemRackButton"..i]=1
 
 		if ItemRack.MasqueGroups and ItemRack.MasqueGroups[1] then
-			ItemRack.MasqueGroups[1]:AddButton(button)
+			local name = button:GetName()
+			ItemRack.MasqueGroups[1]:AddButton(button, {
+				Icon = _G[name.."ItemRackIcon"],
+				Cooldown = _G[name.."Cooldown"],
+				Count = _G[name.."Count"],
+				HotKey = _G[name.."HotKey"],
+			})
 		end
 
 		-- Defensive cleanup: ensure no action bar scripts/events are active

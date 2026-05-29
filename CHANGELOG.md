@@ -13,6 +13,12 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 - **Mount Set Resolution Fix**: Corrected set lookup in `ProcessZoneEvent` for mount events by resolving the set name through the active event data structure instead of using the raw event name.
 - **Defensive Programming Nil-Guards**: Added nil guards around enabled event lookups across all event processors to avoid Lua errors with corrupt profile data.
 
+### Bug Fixes
+- **Masque Quick Slot Skinning**: Fixed Masque skinning for Quick Access buttons by passing explicit button regions (`Icon`, `Cooldown`, `Count`, `HotKey`) to `AddButton`.
+- **White Background Texture Fix**: Fixed a bug where the swap menu frame (`ItemRackMenuFrame`) background was rendered as a solid white texture in recent client patches. Re-anchored `bgFile` to `DialogBox-Background`.
+- **Blank Diagnostic Dump Fix**: Fixed a bug where the diagnostic log and state dump window (`/itemrack dump`) appeared entirely blank due to the multiline edit box collapsing to 0 height. Added an `OnTextChanged` height recalculator script.
+- **SavedVariables Auditor 'Custom' Set Guard**: Excluded the special `"Custom"` set string from database checks. Previously, running `/itemrack debug audit` or logging in while in a `"Custom"` gear state (such as being mounted with unsaved gear) would flag and clear the valid `"Custom"` history path, breaking dismount gear restoration.
+
 ## [4.39.4] - 2026-05-24
 ### Bug Fixes
 - **Settings Persistence**: Fixed a major regression where active, dynamically-managed settings (such as the minimap icon position, events database version, show set info in tooltips, and action bar sound suppression settings) were pruned on startup by the SavedVariables auditor, causing them to reset on every logout or reload.

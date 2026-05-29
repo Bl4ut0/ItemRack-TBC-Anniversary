@@ -504,6 +504,44 @@ function ItemRack.AuditSavedVariables(printToChat)
 	end
 
 	-- 2. Audit Sets
+	-- Identify active sets in the current session and silently wipe stale restoration data on inactive sets
+	local activeSets = {}
+	if ItemRackUser.CurrentSet then
+		activeSets[ItemRackUser.CurrentSet] = true
+	end
+	if ItemRack.SetSwapping then
+		activeSets[ItemRack.SetSwapping] = true
+	end
+	if ItemRack.SetsWaiting then
+		for _, q in ipairs(ItemRack.SetsWaiting) do
+			if q[1] then
+				activeSets[q[1]] = true
+			end
+		end
+	end
+	if ItemRackUser.EventStack then
+		for _, eventName in ipairs(ItemRackUser.EventStack) do
+			local setname = ItemRackUser.Events and ItemRackUser.Events.Set and ItemRackUser.Events.Set[eventName]
+			if setname then
+				activeSets[setname] = true
+			end
+		end
+	end
+
+	for setName, setData in pairs(ItemRackUser.Sets) do
+		-- Clear stale restore trails on inactive sets (excluding the special "Custom" set)
+		if not activeSets[setName] and setName ~= "Custom" then
+			if setData.oldset or (setData.old and next(setData.old)) then
+				setData.oldset = nil
+				if setData.old then
+					for k in pairs(setData.old) do
+						setData.old[k] = nil
+					end
+				end
+			end
+		end
+	end
+
 	for setName, setData in pairs(ItemRackUser.Sets) do
 		-- Self-referential oldset
 		if setData.oldset == setName then
@@ -521,15 +559,19 @@ function ItemRack.AuditSavedVariables(printToChat)
 			local current = setData.oldset
 			local loopDetected = false
 			while current do
-				if path[current] then
+				if current == setName then
 					loopDetected = true
+					break
+				end
+				if path[current] then
+					-- Visited before but doesn't contain setName (cycle is further down the chain)
 					break
 				end
 				path[current] = true
 				current = ItemRackUser.Sets[current] and ItemRackUser.Sets[current].oldset
 			end
 			if loopDetected then
-				LogIssue("Circular oldset reference detected in set chain starting at '" .. setName .. "'. Broken.", true)
+				LogIssue("Circular oldset reference detected for set '" .. setName .. "'. Cleared.", true)
 				setData.oldset = nil
 			end
 		end
@@ -3266,8 +3308,8 @@ function ItemRack.ReflectLock(override)
 	end
 	ItemRackMenuFrame:SetBackdrop(
 		{
-			bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-			edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+			bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+			edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
 			tile = true, tileSize = 16, edgeSize = 16,
 			insets = { left = 4, right = 4, top = 4, bottom = 4 }
 		}
@@ -3576,6 +3618,11 @@ function ItemRack.SlashHandler(arg1)
 			eb:SetWidth(680)
 			eb:SetAutoFocus(true)
 			eb:SetScript("OnEscapePressed", function(self) ItemRackLogFrame:Hide() end)
+			eb:SetScript("OnTextChanged", function(self)
+				local scrollFrame = self:GetParent()
+				self:SetHeight(0)
+				self:SetHeight(scrollFrame:GetHeight() + scrollFrame:GetVerticalScrollRange())
+			end)
 			sf:SetScrollChild(eb)
 			
 			-- Helper function to serialize WoW tables to string

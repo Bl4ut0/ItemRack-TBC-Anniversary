@@ -5,6 +5,9 @@ __ Development __
 - Handled buff and stance exclusions as state transitions to unwind active events immediately.
 - Ordered pending zone transitions deterministically by executing unequips before equips in alphabetical priority.
 - Fixed mount set lookup in ProcessZoneEvent and added defensive nil guards for event lookups.
+- Fixed Masque skinning for Quick Access buttons by passing explicit button regions (Icon, Cooldown, Count, HotKey) to AddButton.
+- Fixed a bug where the swap menu frame (ItemRackMenuFrame) background was rendered as a solid white texture in recent client patches. Re-anchored bgFile to DialogBox-Background.
+- Fixed a bug where the diagnostic log and state dump window (/itemrack dump) appeared entirely blank due to the multiline edit box collapsing to 0 height. Added an OnTextChanged height recalculator script.
 
 __ New in 4.39.4 - By Bl4ut0 __
 - Fix: Fixed a major regression where active, dynamically-managed settings (such as the minimap icon position, events database version, show set info in tooltips, and action bar sound suppression settings) were pruned on startup by the SavedVariables auditor, causing them to reset on every logout or reload.
