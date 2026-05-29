@@ -3977,15 +3977,28 @@ function ItemRack.GetQueues(setname)
 	if ItemRackUser.EnablePerSetQueues == "ON" then
 		local targetSet = setname or ItemRackUser.CurrentSet
 		local currentSet = targetSet and ItemRackUser.Sets[targetSet]
-		if currentSet and currentSet.Queues then
-			-- Explicit setname, or context check disabled: return raw data
+		if currentSet then
+			-- Explicit setname, or context check disabled: return proxy for raw set-specific data
 			if setname or ItemRackUser.EnableQueueContextCheck ~= "ON" then
-				return currentSet.Queues
+				return setmetatable({}, {
+					__index = function(_, slot)
+						if currentSet.Queues and currentSet.Queues[slot] ~= nil then
+							return currentSet.Queues[slot]
+						end
+						return nil
+					end,
+					__newindex = function(_, slot, value)
+						if not currentSet.Queues then
+							currentSet.Queues = {}
+						end
+						currentSet.Queues[slot] = value
+					end
+				})
 			end
 			-- Active context: per-slot inheritance via metatable
 			return setmetatable({}, {
 				__index = function(_, slot)
-					if currentSet.Queues[slot] ~= nil then
+					if currentSet.Queues and currentSet.Queues[slot] ~= nil then
 						return currentSet.Queues[slot]
 					end
 					if currentSet.equip and currentSet.equip[slot] ~= nil then
@@ -3998,11 +4011,14 @@ function ItemRack.GetQueues(setname)
 					return ItemRackUser.Queues[slot]
 				end,
 				__newindex = function(_, slot, value)
+					if not currentSet.Queues then
+						currentSet.Queues = {}
+					end
 					currentSet.Queues[slot] = value
 				end
 			})
 		end
-		return ItemRackUser.Queues -- fallback to global if set has no queues
+		return ItemRackUser.Queues -- fallback to global if set doesn't exist
 	else
 		return ItemRackUser.Queues
 	end
@@ -4016,14 +4032,27 @@ function ItemRack.GetQueuesEnabled(setname)
 	if ItemRackUser.EnablePerSetQueues == "ON" then
 		local targetSet = setname or ItemRackUser.CurrentSet
 		local currentSet = targetSet and ItemRackUser.Sets[targetSet]
-		if currentSet and currentSet.QueuesEnabled then
-			-- Explicit setname, or context check disabled: return raw data
+		if currentSet then
+			-- Explicit setname, or context check disabled: return proxy for raw set-specific data
 			if setname or ItemRackUser.EnableQueueContextCheck ~= "ON" then
-				return currentSet.QueuesEnabled
+				return setmetatable({}, {
+					__index = function(_, slot)
+						if currentSet.QueuesEnabled and currentSet.QueuesEnabled[slot] ~= nil then
+							return currentSet.QueuesEnabled[slot]
+						end
+						return nil
+					end,
+					__newindex = function(_, slot, value)
+						if not currentSet.QueuesEnabled then
+							currentSet.QueuesEnabled = {}
+						end
+						currentSet.QueuesEnabled[slot] = value
+					end
+				})
 			end
 			return setmetatable({}, {
 				__index = function(_, slot)
-					if currentSet.QueuesEnabled[slot] ~= nil then
+					if currentSet.QueuesEnabled and currentSet.QueuesEnabled[slot] ~= nil then
 						return currentSet.QueuesEnabled[slot]
 					end
 					if currentSet.equip and currentSet.equip[slot] ~= nil then
@@ -4036,11 +4065,14 @@ function ItemRack.GetQueuesEnabled(setname)
 					return ItemRackUser.QueuesEnabled[slot]
 				end,
 				__newindex = function(_, slot, value)
+					if not currentSet.QueuesEnabled then
+						currentSet.QueuesEnabled = {}
+					end
 					currentSet.QueuesEnabled[slot] = value
 				end
 			})
 		end
-		return ItemRackUser.QueuesEnabled -- fallback to global if set has no queuesEnabled
+		return ItemRackUser.QueuesEnabled -- fallback to global if set doesn't exist
 	else
 		return ItemRackUser.QueuesEnabled
 	end
