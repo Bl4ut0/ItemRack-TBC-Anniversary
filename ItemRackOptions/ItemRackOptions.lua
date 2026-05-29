@@ -117,6 +117,13 @@ function ItemRackOpt.InvOnLeave(self)
 	end
 end
 
+function ItemRackOpt.Init()
+	if ItemRackOpt.initialized then return end
+	ItemRackOpt.PopulateInitialIcons()
+	ItemRackOpt.PopulateEventList()
+	ItemRackOpt.initialized = true
+end
+
 function ItemRackOpt.OnLoad(self)
 	self:RegisterEvent("PLAYER_TALENT_UPDATE")
 	self:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
@@ -137,8 +144,6 @@ function ItemRackOpt.OnLoad(self)
 		ItemRackOpt.Inv[i] = {}
 		ItemRackOpt.HoldInv[i] = {}
 	end
-	ItemRackOpt.PopulateInitialIcons()
-	ItemRackOpt.PopulateEventList()
 	ItemRackOptSetsCurrentSet:EnableMouse(false)
 
 	ItemRackOptFrameTitle:SetText("IR "..ItemRack.Version)

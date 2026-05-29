@@ -168,6 +168,9 @@ function ItemRack.LoadEvents(resetDefault,resetAll)
 
 	ItemRack.CleanupEvents()
 	if ItemRackOpt then
+		if ItemRackOpt.Init then
+			ItemRackOpt.Init()
+		end
 		ItemRackOpt.PopulateEventList() -- if options loaded, recreate event list there
 	end
 end
