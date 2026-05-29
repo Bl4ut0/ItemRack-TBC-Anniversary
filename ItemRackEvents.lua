@@ -254,15 +254,15 @@ function ItemRack.ResetEvents(resetDefault,resetAll)
 end
 
 function ItemRack.InitEvents()
-	ItemRack.LoadEvents()
-	ItemRack.MigrateDefaultScriptEvents()
-
 	ItemRack.CreateTimer("EventsBuffTimer",ItemRack.ProcessBuffEvent,.15)
 	ItemRack.CreateTimer("EventsZoneTimer",ItemRack.ProcessZoneEvent,.16)
 	ItemRack.CreateTimer("CheckForMountedEvents",ItemRack.CheckForMountedEvents,.5,1)
 	ItemRack.CreateTimer("SpecChangeTimer",ItemRack.ProcessSpecializationEvent,0.5,1)
 	ItemRack.CreateTimer("MovementPollingTimer",ItemRack.PollMovement,.2,1)
 	ItemRack.CreateTimer("OnMovementUnequipTimer",ItemRack.ProcessOnMovementUnequip,.5)
+
+	ItemRack.LoadEvents()
+	ItemRack.MigrateDefaultScriptEvents()
 	
 	-- Initialize Event Stack and BaseGear set if missing
 	if not ItemRackUser.EventStack then
