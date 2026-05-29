@@ -2242,7 +2242,6 @@ function ItemRack.MenuOnClick(self,button)
 		local slot = ItemRack.menuOpen
 		if slot and slot < 20 then
 			if not ItemRack.GetQueues()[slot] then
-				LoadAddOn("ItemRackOptions")
 				ItemRackOptFrame:Show()
 				ItemRackOpt.TabOnClick(self, 4)
 				ItemRackOpt.SetupQueue(slot)
@@ -3289,8 +3288,8 @@ end
 
 function ItemRack.ToggleOptions(self,tab)
 	if not ItemRackOptFrame then
-		EnableAddOn("ItemRackOptions") -- it's LoD, and required. Enable if disabled
-		LoadAddOn("ItemRackOptions")
+		ItemRack.Print("Options panel not loaded.")
+		return
 	end
 	if ItemRackOptFrame:IsVisible() then
 		ItemRackOptFrame:Hide()

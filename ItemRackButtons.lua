@@ -801,7 +801,6 @@ function ItemRack.ButtonPreClick(self,button)
 	if button=="LeftButton" and IsAltKeyDown() then
 		if id<20 and ItemRackSettings.DisableAltClick=="OFF" then
 			if not ItemRack.GetQueues()[id] then
-				LoadAddOn("ItemRackOptions")
 				if ItemRackOpt and ItemRackOpt.SetupQueue then
 					local wasOpen = ItemRackOptFrame and ItemRackOptFrame:IsVisible()
 					if wasOpen then
@@ -842,13 +841,11 @@ function ItemRack.ButtonPostClick(self,button)
 		-- Alt+Right-click opens the Queue Options panel for this slot
 		if IsAltKeyDown() then
 			if id<20 then
-				LoadAddOn("ItemRackOptions")
 				ItemRackOptFrame:Show()
 				ItemRackOpt.TabOnClick(self,4)
 				ItemRackOpt.SetupQueue(id)
 			else
 				-- For slot 20 (set button), open Sets tab instead
-				LoadAddOn("ItemRackOptions")
 				ItemRackOptFrame:Show()
 				ItemRackOpt.TabOnClick(self,3)
 			end
@@ -1132,7 +1129,6 @@ function ItemRack.ButtonMenuOnClick(self)
 		if ItemRackOptFrame and ItemRackOptFrame:IsVisible() then
 			ItemRackOptFrame:Hide()
 		else
-			LoadAddOn("ItemRackOptions")
 			ItemRackOptFrame:Show()
 			if ItemRack.menuOpen<20 then
 				ItemRackOpt.TabOnClick(self,4)

@@ -194,10 +194,10 @@
 		<Size>
 			<AbsDimension x="46" y="24"/>
 		</Size>
-		<NormalTexture file="Interface\AddOns\ItemRackOptions\ItemRackOptTabs">
+		<NormalTexture file="Interface\AddOns\ItemRack\ItemRackOptions\ItemRackOptTabs">
 			<TexCoords left="0" right="0.765625" top="0" bottom=".375"/>
 		</NormalTexture>
-		<DisabledTexture file="Interface\AddOns\ItemRackOptions\ItemRackOptTabs">
+		<DisabledTexture file="Interface\AddOns\ItemRack\ItemRackOptions\ItemRackOptTabs">
 			<TexCoords left="0" right="0.765625" top=".5" bottom=".875"/>
 		</DisabledTexture>
 		<NormalFont style="ItemRackNormalTabFont"/>

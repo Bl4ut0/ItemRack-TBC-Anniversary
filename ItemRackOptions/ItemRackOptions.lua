@@ -2132,7 +2132,7 @@ function ItemRackOpt.EventListScrollFrameUpdate()
 			_G["ItemRackOptEventList"..i.."Name"]:SetText(displayText)
 			icon = _G["ItemRackOptEventList"..i.."Icon"]
 			if list[idx][2]=="Script" then
-				texture = "Interface\\AddOns\\ItemRackOptions\\ItemRackScriptIcon"
+				texture = "Interface\\AddOns\\ItemRack\\ItemRackOptions\\ItemRackScriptIcon"
 			elseif ItemRackUser.Events.Set[list[idx][1]] then
 				texture = ItemRackUser.Sets[ItemRackUser.Events.Set[list[idx][1]]].icon
 			else

@@ -20,3 +20,8 @@ ignore:
   - RELEASE_NOTES.md
   - TECHNICAL_CHANGES.md
   - TEMP_NOTES.md
+  - .tools
+  - node_modules
+  - package.json
+  - package-lock.json
+
