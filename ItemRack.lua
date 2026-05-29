@@ -680,6 +680,12 @@ function ItemRack.OnPlayerLogin()
 	ItemRack.InitCore()
 	ItemRack.InitButtons()
 	ItemRack.InitEvents()
+
+	-- Disable legacy standalone ItemRackOptions addon to prevent conflicts
+	local disableAddon = C_AddOns and C_AddOns.DisableAddOn or DisableAddOn
+	if disableAddon then
+		disableAddon("ItemRackOptions")
+	end
 	
 	-- Audit SavedVariables on startup
 	ItemRack.AuditSavedVariables(false)
