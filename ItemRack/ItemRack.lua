@@ -3617,6 +3617,7 @@ function ItemRack.SlashHandler(arg1)
 			eb:SetFontObject("ChatFontNormal")
 			eb:SetWidth(680)
 			eb:SetAutoFocus(true)
+			eb:SetMaxLetters(0)
 			eb:SetScript("OnEscapePressed", function(self) ItemRackLogFrame:Hide() end)
 			eb:SetScript("OnTextChanged", function(self)
 				local scrollFrame = self:GetParent()
@@ -3653,7 +3654,13 @@ function ItemRack.SlashHandler(arg1)
 				end
 			end
 		end
-		local dumpText = "=== ITEMRACK LOG BUFFER ===\n" .. table.concat(ItemRack.LogBuffer, "\n")
+		local logCount = #ItemRack.LogBuffer
+		local tempLog = {}
+		local startIdx = math.max(1, logCount - 500)
+		for i = startIdx, logCount do
+			table.insert(tempLog, ItemRack.LogBuffer[i])
+		end
+		local dumpText = "=== ITEMRACK LOG BUFFER (Last 500 lines) ===\n" .. table.concat(tempLog, "\n")
 		
 		dumpText = dumpText .. "\n\n=== RUNTIME STATE DUMP ===\n"
 		dumpText = dumpText .. "ItemRack.Version = " .. tostring(ItemRack.Version) .. "\n"
@@ -3784,7 +3791,9 @@ function ItemRack.SlashHandler(arg1)
 		ItemRackLogFrame:Show()
 		ItemRackLogEditBox:SetText(dumpText)
 		ItemRackLogEditBox:HighlightText()
-		ItemRackLogEditBox:SetFocus()
+		if not InCombatLockdown() then
+			ItemRackLogEditBox:SetFocus()
+		end
 	elseif arg1=="opt" or arg1=="options" or arg1=="config" then
 		ItemRack.ToggleOptions()
 	else
