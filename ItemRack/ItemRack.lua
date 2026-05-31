@@ -2512,6 +2512,10 @@ end
 --[[ Hooks to capture item use outside the mod ]]
 
 function ItemRack.ReflectItemUse(id)
+	local start, duration = GetInventoryItemCooldown("player", id)
+	if start and start > 0 and duration > 1.5 and (GetTime() - start) > 0.5 then
+		return
+	end
 	if ItemRackUser.Buttons[id] then
 		local btn = _G["ItemRackButton"..id]
 		if btn and btn.OriginalSetChecked then btn:OriginalSetChecked(true) end
