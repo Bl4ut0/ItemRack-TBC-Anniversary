@@ -679,6 +679,9 @@ function ItemRack.OnPlayerLogin()
 	ItemRack.InitTimers()
 	ItemRack.InitCore()
 	ItemRack.InitButtons()
+	if ItemRackOpt and ItemRackOpt.PostInit then
+		ItemRackOpt.PostInit()
+	end
 	ItemRack.InitEvents()
 
 	-- Disable legacy standalone ItemRackOptions addon to prevent conflicts
@@ -1923,7 +1926,8 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 		local menuCount = #(ItemRack.Menu)
 		local max_cols, button, icon
 		if ItemRackUser.SetMenuWrap=="ON" then
-			max_cols = ItemRackUser.SetMenuWrapValue
+			local wrapValue = tonumber(ItemRackUser.SetMenuWrapValue) or 3
+			max_cols = math.max(1, math.min(wrapValue, menuCount))
 		else
 			-- Dynamic wrap based on count to keep popups compact but manageable
 			if menuCount > 24 then
@@ -2517,6 +2521,10 @@ end
 --[[ Hooks to capture item use outside the mod ]]
 
 function ItemRack.ReflectItemUse(id)
+	local start, duration = GetInventoryItemCooldown("player", id)
+	if start and start > 0 and duration > 1.5 and (GetTime() - start) > 0.5 then
+		return
+	end
 	if ItemRackUser.Buttons[id] then
 		local btn = _G["ItemRackButton"..id]
 		if btn and btn.OriginalSetChecked then btn:OriginalSetChecked(true) end
