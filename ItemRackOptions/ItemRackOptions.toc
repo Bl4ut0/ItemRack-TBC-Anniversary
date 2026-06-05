@@ -1,4 +1,4 @@
-## Interface: 11506, 20505
+## Interface: 11508, 20505
 ## Title: ItemRackOptions - Anniversary
 ## IconTexture: Interface\AddOns\ItemRack\ItemRackIcon
 ## Version: Dev
