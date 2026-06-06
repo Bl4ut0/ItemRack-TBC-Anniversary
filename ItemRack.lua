@@ -3444,8 +3444,12 @@ function ItemRack.SetSetBindings()
 			for slot = 16, 18 do
 				local itemID = ItemRackUser.Sets[i].equip[slot]
 				if itemID and itemID ~= 0 then
-					local itemString = ItemRack.IRStringToItemString(ItemRack.UpdateIRString(itemID))
-					if itemString then
+					local baseID, enchantID = string.match(tostring(itemID), "^(%-?%d+):(%-?%d*)")
+					if baseID then
+						local itemString = "item:" .. baseID
+						if enchantID and enchantID ~= "" and enchantID ~= "0" then
+							itemString = itemString .. ":" .. enchantID
+						end
 						macrotext = macrotext .. "/equipslot [combat] " .. slot .. " " .. itemString .. "\n"
 					end
 				end
