@@ -3649,7 +3649,20 @@ function ItemRack.SlashHandler(arg1)
 			eb:SetMaxLetters(0)
 			eb:SetScript("OnEscapePressed", function(self) ItemRackLogFrame:Hide() end)
 			eb:SetScript("OnTextChanged", function(self)
+				local text = self:GetText() or ""
+				local newlines = 0
+				local pos = 0
+				while true do
+					pos = string.find(text, "\n", pos + 1, true)
+					if not pos then break end
+					newlines = newlines + 1
+				end
 				local scrollFrame = self:GetParent()
+				local parentHeight = scrollFrame:GetHeight()
+				if not parentHeight or parentHeight == 0 then
+					parentHeight = 450
+				end
+				self:SetHeight(math.max((newlines + 5) * 16, parentHeight))
 				scrollFrame:UpdateScrollChildRect()
 			end)
 			sf:SetScrollChild(eb)
@@ -3821,7 +3834,12 @@ function ItemRack.SlashHandler(arg1)
 		end)
 		
 		local dumpText = success and result or ("ERROR GENERATING DIAGNOSTIC DUMP:\n" .. tostring(result))
-		dumpText = string.gsub(dumpText, "[\000-\008\011\012\014-\031\127]", " ")
+		dumpText = string.gsub(dumpText, "\t", "_TAB_PLACEHOLDER_")
+		dumpText = string.gsub(dumpText, "\n", "_NL_PLACEHOLDER_")
+		dumpText = string.gsub(dumpText, "\r", "")
+		dumpText = string.gsub(dumpText, "%c", " ")
+		dumpText = string.gsub(dumpText, "_TAB_PLACEHOLDER_", "\t")
+		dumpText = string.gsub(dumpText, "_NL_PLACEHOLDER_", "\n")
 		ItemRackLogFrame:Show()
 		ItemRackLogEditBox:SetText(dumpText)
 		ItemRackLogEditBox:HighlightText()
