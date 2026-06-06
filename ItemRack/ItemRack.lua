@@ -3435,7 +3435,9 @@ function ItemRack.SetSetBindings()
 			for slot = 16, 18 do
 				local itemID = ItemRackUser.Sets[i].equip[slot]
 				if itemID and itemID ~= 0 then
-					local baseID, enchantID = string.match(tostring(itemID), "^(%-?%d+):(%-?%d*)")
+					local itemStr = tostring(itemID)
+					local baseID = string.match(itemStr, "^(%-?%d+)")
+					local enchantID = string.match(itemStr, "^%-?%d+:(%-?%d*)")
 					if baseID then
 						local itemString = "item:" .. baseID
 						if enchantID and enchantID ~= "" and enchantID ~= "0" then
@@ -3632,7 +3634,12 @@ function ItemRack.SlashHandler(arg1)
 			eb:SetScript("OnTextChanged", function(self)
 				local scrollFrame = self:GetParent()
 				self:SetHeight(0)
-				self:SetHeight(scrollFrame:GetHeight() + scrollFrame:GetVerticalScrollRange())
+				local textHeight = self:GetTextHeight()
+				local parentHeight = scrollFrame:GetHeight()
+				if parentHeight == 0 then
+					parentHeight = 450
+				end
+				self:SetHeight(math.max(textHeight + 20, parentHeight))
 			end)
 			sf:SetScrollChild(eb)
 			
