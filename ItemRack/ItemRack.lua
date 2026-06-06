@@ -2603,7 +2603,10 @@ function ItemRack.AddToCombatQueue(slot,id,isAutoQueue)
 		-- Debug: trace who is adding to CombatQueue
 		local itemName = id and id ~= 0 and (ItemRack.GetInfoByID(id) or tostring(id)) or "empty"
 		ItemRack.Debug("CombatQueue", "AddToCombatQueue slot="..tostring(slot).." item="..tostring(itemName).." auto="..tostring(isAutoQueue).." owner="..tostring(queueOwner or "global"))
-		ItemRack.Debug("CombatQueue", "stack: "..debugstack(2,4,0))
+		local stack = debugstack and debugstack(2,4,0)
+		if stack then
+			ItemRack.Debug("CombatQueue", "stack: "..stack)
+		end
 		ItemRack.UpdateCombatQueue()
 	end
 end
