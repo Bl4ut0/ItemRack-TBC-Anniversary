@@ -178,6 +178,23 @@ function ItemRack.OrderSwaps(swap)
 	end
 end
 
+function ItemRack.IsWeaponOnlySet(setname)
+	local set = setname and ItemRackUser.Sets[setname]
+	if not set or not set.equip then return false end
+	local hasWeapons = false
+	for slot, item in pairs(set.equip) do
+		if type(slot) == "number" then
+			if slot < 16 or slot > 18 then
+				return false
+			end
+			if item and item ~= 0 then
+				hasWeapons = true
+			end
+		end
+	end
+	return hasWeapons
+end
+
 function ItemRack.EquipSet(setname, disableSound)
 	ItemRack.Debug("Equip", "EquipSet invoked for set:", setname or "nil")
 	if not setname or not ItemRackUser.Sets[setname] then
@@ -235,7 +252,7 @@ function ItemRack.EquipSet(setname, disableSound)
 		end
 	end
 	ItemRack.Print(couldntFind) -- if couldntFind is nil then nothing will print
-
+ 
 	-- Snapshot current gear BEFORE checking if set is already equipped.
 	-- Even when no swaps are needed (set already worn), we must record what was
 	-- previously equipped so that UnequipSet can restore it later.
@@ -259,7 +276,7 @@ function ItemRack.EquipSet(setname, disableSound)
 			end
 		end
 	end
-
+ 
 	-- at this point, ItemRack.SwapList has only what needs to be swapped, indexed by slot
 	if not next(swap) then
 		ItemRack.Debug("Equip", "Set", setname, "already perfectly equipped. swap table is empty.")
@@ -270,21 +287,26 @@ function ItemRack.EquipSet(setname, disableSound)
 	local swapStr = ""
 	for k,v in pairs(swap) do swapStr = swapStr .. k..":"..v.." " end
 	ItemRack.Debug("Equip", "EquipSet swap list generated:", swapStr)
-
+ 
 	-- if in combat, dead, or casting, queue ALL items for later
 	-- PickupInventoryItem is blocked by the game during InCombatLockdown() for all items including weapons
 	if InCombatLockdown() or ItemRack.IsPlayerReallyDead() or ItemRack.NowCasting then
 		local reason = InCombatLockdown() and "combat" or (ItemRack.NowCasting and "casting" or "dead")
 		ItemRack.Debug("Equip", "EquipSet DEFERRED to CombatQueue: set=" .. tostring(setname) .. " reason=" .. reason .. " slots queued:")
+		local isWeaponOnly = InCombatLockdown() and ItemRack.IsWeaponOnlySet(setname)
 		for i in pairs(swap) do
-			ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
-			ItemRack.AddToCombatQueue(i,swap[i])
-			swap[i] = nil
-			if set.old then
-				set.old[i] = ItemRack.GetID(i)
-				ItemRack.CombatSet = setname
-			elseif set.oldset then
-				ItemRack.CombatSet = set.oldset
+			if isWeaponOnly then
+				swap[i] = nil
+			else
+				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
+				ItemRack.AddToCombatQueue(i,swap[i])
+				swap[i] = nil
+				if set.old then
+					set.old[i] = ItemRack.GetID(i)
+					ItemRack.CombatSet = setname
+				elseif set.oldset then
+					ItemRack.CombatSet = set.oldset
+				end
 			end
 		end
 	end
