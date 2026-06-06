@@ -3433,10 +3433,11 @@ function ItemRack.SetSetBindings()
 			button:SetAttribute("type","macro")
 			local macrotext = ""
 			for slot = 16, 18 do
-				if ItemRackUser.Sets[i].equip[slot] then
-					local name,_,_,_,_,_,_,_,_,_ = GetItemInfo("item:"..ItemRackUser.Sets[i].equip[slot])
-					if name then
-						macrotext = macrotext .. "/equipslot [combat]" .. slot .. " " .. name .. "\n";
+				local itemID = ItemRackUser.Sets[i].equip[slot]
+				if itemID and itemID ~= 0 then
+					local itemString = ItemRack.IRStringToItemString(ItemRack.UpdateIRString(itemID))
+					if itemString then
+						macrotext = macrotext .. "/equipslot [combat] " .. slot .. " " .. itemString .. "\n"
 					end
 				end
 			end
@@ -3469,6 +3470,7 @@ function ItemRack.SetSetBindings()
 end
 
 function ItemRack.RunSetBinding(setname)
+	ItemRack.Debug("API", "RunSetBinding triggered for set: " .. tostring(setname) .. " InCombat: " .. tostring(InCombatLockdown()))
 	if ItemRackSettings.EquipToggle=="ON" then
 		ItemRack.ToggleSet(setname)
 	else
