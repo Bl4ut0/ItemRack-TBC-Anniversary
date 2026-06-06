@@ -294,20 +294,15 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	if InCombatLockdown() or ItemRack.IsPlayerReallyDead() or ItemRack.NowCasting then
 		local reason = InCombatLockdown() and "combat" or (ItemRack.NowCasting and "casting" or "dead")
 		ItemRack.Debug("Equip", "EquipSet DEFERRED to CombatQueue: set=" .. tostring(setname) .. " reason=" .. reason .. " slots queued:")
-		local isWeaponOnly = InCombatLockdown() and ItemRack.IsWeaponOnlySet(setname)
 		for i in pairs(swap) do
-			if isWeaponOnly and isSecureKeybind then
-				swap[i] = nil
-			else
-				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
-				ItemRack.AddToCombatQueue(i,swap[i])
-				swap[i] = nil
-				if set.old then
-					set.old[i] = ItemRack.GetID(i)
-					ItemRack.CombatSet = setname
-				elseif set.oldset then
-					ItemRack.CombatSet = set.oldset
-				end
+			ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
+			ItemRack.AddToCombatQueue(i,swap[i])
+			swap[i] = nil
+			if set.old then
+				set.old[i] = ItemRack.GetID(i)
+				ItemRack.CombatSet = setname
+			elseif set.oldset then
+				ItemRack.CombatSet = set.oldset
 			end
 		end
 	end
