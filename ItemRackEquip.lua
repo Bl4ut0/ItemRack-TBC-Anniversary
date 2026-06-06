@@ -123,6 +123,7 @@ function ItemRack.ProcessSetsWaiting()
 	local setwaiting = ItemRack.SetsWaiting[1][1]
 	local whichequip = ItemRack.SetsWaiting[1][2]
 	local disableSound = ItemRack.SetsWaiting[1][3]
+	local isSecureKeybind = ItemRack.SetsWaiting[1][4]
 	table.remove(ItemRack.SetsWaiting,1)
 	
 	-- Safety: Skip sets that no longer exist (prevents getting stuck)
@@ -136,10 +137,10 @@ function ItemRack.ProcessSetsWaiting()
 	end
 	
 	ItemRack.Debug("API", "ProcessSetsWaiting executing callback for:", setwaiting)
-	whichequip(setwaiting, disableSound)
+	whichequip(setwaiting, disableSound, isSecureKeybind)
 end
 
-function ItemRack.AddSetToSetsWaiting(setwaiting,whichequip,disableSound)
+function ItemRack.AddSetToSetsWaiting(setwaiting,whichequip,disableSound,isSecureKeybind)
 	local wait = ItemRack.SetsWaiting
 	for i in pairs(wait) do
 		if wait[i][1]==setwaiting and wait[i][2]==whichequip then
@@ -148,7 +149,7 @@ function ItemRack.AddSetToSetsWaiting(setwaiting,whichequip,disableSound)
 		end
 	end
 	ItemRack.Debug("API", "AddSetToSetsWaiting added set to API lock queue:", setwaiting)
-	table.insert(wait,{setwaiting,whichequip,disableSound})
+	table.insert(wait,{setwaiting,whichequip,disableSound,isSecureKeybind})
 end
 
 function ItemRack.OrderSwaps(swap)
@@ -195,7 +196,7 @@ function ItemRack.IsWeaponOnlySet(setname)
 	return hasWeapons
 end
 
-function ItemRack.EquipSet(setname, disableSound)
+function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	ItemRack.Debug("Equip", "EquipSet invoked for set:", setname or "nil")
 	if not setname or not ItemRackUser.Sets[setname] then
 		ItemRack.Print("Set \""..tostring(setname).."\" doesn't exist.")
@@ -204,7 +205,7 @@ function ItemRack.EquipSet(setname, disableSound)
 	if ItemRack.AnythingLocked() then
 		ItemRack.Debug("Equip", "EquipSet deferred set:", setname, "- locked item:", ItemRack.GetLockedReason())
 		-- a swap is in progress, add this set to the wait list and leave
-		ItemRack.AddSetToSetsWaiting(setname,ItemRack.EquipSet, disableSound)
+		ItemRack.AddSetToSetsWaiting(setname,ItemRack.EquipSet, disableSound, isSecureKeybind)
 		return
 	end
 	local set = ItemRackUser.Sets[setname]
@@ -295,7 +296,7 @@ function ItemRack.EquipSet(setname, disableSound)
 		ItemRack.Debug("Equip", "EquipSet DEFERRED to CombatQueue: set=" .. tostring(setname) .. " reason=" .. reason .. " slots queued:")
 		local isWeaponOnly = InCombatLockdown() and ItemRack.IsWeaponOnlySet(setname)
 		for i in pairs(swap) do
-			if isWeaponOnly then
+			if isWeaponOnly and isSecureKeybind then
 				swap[i] = nil
 			else
 				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
@@ -893,12 +894,12 @@ function ItemRack.UnequipSet(setname, disableSound)
 	end
 end
 
-function ItemRack.ToggleSet(setname,exact,disableSound)
+function ItemRack.ToggleSet(setname,exact,disableSound,isSecureKeybind)
 	if ItemRack.IsSetEquipped(setname,exact) then
 --		print("remove "..setname)
 		ItemRack.UnequipSet(setname,disableSound)
 	else
 --		print("equip "..setname)
-		ItemRack.EquipSet(setname,disableSound)
+		ItemRack.EquipSet(setname,disableSound,isSecureKeybind)
 	end
 end
