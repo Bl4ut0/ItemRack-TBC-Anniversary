@@ -3632,14 +3632,18 @@ function ItemRack.SlashHandler(arg1)
 			eb:SetMaxLetters(0)
 			eb:SetScript("OnEscapePressed", function(self) ItemRackLogFrame:Hide() end)
 			eb:SetScript("OnTextChanged", function(self)
+				local text = self:GetText() or ""
+				local _, newlines = string.gsub(text, "\n", "")
+				local _, fontHeight = self:GetFont()
+				fontHeight = fontHeight or 12
+				local lineSpacing = fontHeight + 3
+				local calculatedHeight = (newlines + 2) * lineSpacing + 100
 				local scrollFrame = self:GetParent()
-				self:SetHeight(0)
-				local textHeight = self:GetTextHeight()
 				local parentHeight = scrollFrame:GetHeight()
-				if parentHeight == 0 then
+				if not parentHeight or parentHeight == 0 then
 					parentHeight = 450
 				end
-				self:SetHeight(math.max(textHeight + 20, parentHeight))
+				self:SetHeight(math.max(calculatedHeight, parentHeight))
 			end)
 			sf:SetScrollChild(eb)
 			
