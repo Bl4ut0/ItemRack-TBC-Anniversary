@@ -3821,6 +3821,7 @@ function ItemRack.SlashHandler(arg1)
 		end)
 		
 		local dumpText = success and result or ("ERROR GENERATING DIAGNOSTIC DUMP:\n" .. tostring(result))
+		dumpText = string.gsub(dumpText, "[\000-\008\011\012\014-\031\127]", " ")
 		ItemRackLogFrame:Show()
 		ItemRackLogEditBox:SetText(dumpText)
 		ItemRackLogEditBox:HighlightText()
