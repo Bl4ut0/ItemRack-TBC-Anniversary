@@ -3443,11 +3443,16 @@ function ItemRack.SetSetBindings()
 						if enchantID and enchantID ~= "" and enchantID ~= "0" then
 							itemString = itemString .. ":" .. enchantID
 						end
-						macrotext = macrotext .. "/equipslot [combat] " .. slot .. " " .. itemString .. "\n"
+						local name = GetItemInfo(itemString)
+						local equipIdentifier = name or itemString
+						macrotext = macrotext .. "/equipslot [combat] " .. slot .. " " .. equipIdentifier .. "\n"
 					end
 				end
 			end
 			button:SetAttribute("macrotext",macrotext)
+			if macrotext ~= "" then
+				ItemRack.Debug("API", "SetSetBindings compiled macro for " .. i .. ": " .. string.gsub(macrotext, "\n", " | "))
+			end
 			button:SetScript("PostClick", function() ItemRack.RunSetBinding(i) end)
 			
 			local key = ItemRackUser.Sets[i].key
@@ -3478,9 +3483,9 @@ end
 function ItemRack.RunSetBinding(setname)
 	ItemRack.Debug("API", "RunSetBinding triggered for set: " .. tostring(setname) .. " InCombat: " .. tostring(InCombatLockdown()))
 	if ItemRackSettings.EquipToggle=="ON" then
-		ItemRack.ToggleSet(setname)
+		ItemRack.ToggleSet(setname, nil, nil, true)
 	else
-		ItemRack.EquipSet(setname)
+		ItemRack.EquipSet(setname, nil, true)
 	end
 end
 
@@ -3633,7 +3638,13 @@ function ItemRack.SlashHandler(arg1)
 			eb:SetScript("OnEscapePressed", function(self) ItemRackLogFrame:Hide() end)
 			eb:SetScript("OnTextChanged", function(self)
 				local text = self:GetText() or ""
-				local _, newlines = string.gsub(text, "\n", "")
+				local newlines = 0
+				local pos = 0
+				while true do
+					pos = string.find(text, "\n", pos + 1, true)
+					if not pos then break end
+					newlines = newlines + 1
+				end
 				local _, fontHeight = self:GetFont()
 				fontHeight = fontHeight or 12
 				local lineSpacing = fontHeight + 3
@@ -3644,6 +3655,7 @@ function ItemRack.SlashHandler(arg1)
 					parentHeight = 450
 				end
 				self:SetHeight(math.max(calculatedHeight, parentHeight))
+				scrollFrame:UpdateScrollChildRect()
 			end)
 			sf:SetScrollChild(eb)
 			
@@ -3675,140 +3687,145 @@ function ItemRack.SlashHandler(arg1)
 				end
 			end
 		end
-		local logCount = #ItemRack.LogBuffer
-		local tempLog = {}
-		local startIdx = math.max(1, logCount - 500)
-		for i = startIdx, logCount do
-			table.insert(tempLog, ItemRack.LogBuffer[i])
-		end
-		local dumpText = "=== ITEMRACK LOG BUFFER (Last 500 lines) ===\n" .. table.concat(tempLog, "\n")
 		
-		dumpText = dumpText .. "\n\n=== RUNTIME STATE DUMP ===\n"
-		dumpText = dumpText .. "ItemRack.Version = " .. tostring(ItemRack.Version) .. "\n"
-		dumpText = dumpText .. "ItemRack.BuildID = " .. tostring(ItemRack.BuildID) .. "\n"
-		dumpText = dumpText .. "InCombatLockdown() = " .. tostring(InCombatLockdown()) .. "\n"
-		dumpText = dumpText .. "ItemRack.menuOpen = " .. tostring(ItemRack.menuOpen) .. "\n"
-		dumpText = dumpText .. "ItemRackMenuFrame:IsVisible() = " .. tostring(ItemRackMenuFrame and ItemRackMenuFrame:IsVisible()) .. "\n"
-		dumpText = dumpText .. "ItemRack.CombatQueue = " .. ItemRackLogFrame.Serialize(ItemRack.CombatQueue) .. "\n"
-		dumpText = dumpText .. "ItemRack.SetSwapping = " .. tostring(ItemRack.SetSwapping) .. "\n"
-		dumpText = dumpText .. "ItemRack.DebugAll = " .. tostring(ItemRack.DebugAll) .. "\n"
-		dumpText = dumpText .. "ItemRack.DebugChat = " .. tostring(ItemRack.DebugChat) .. "\n"
-		dumpText = dumpText .. "ItemRack.DebugTags = " .. ItemRackLogFrame.Serialize(ItemRack.DebugTags) .. "\n"
-		dumpText = dumpText .. "ItemRackUser.Locked = " .. tostring(ItemRackUser.Locked) .. "\n"
-		dumpText = dumpText .. "ItemRackUser.Buttons = " .. ItemRackLogFrame.Serialize(ItemRackUser.Buttons) .. "\n"
-		dumpText = dumpText .. "ItemRackUser.CurrentSet = " .. tostring(ItemRackUser.CurrentSet) .. "\n"
-		dumpText = dumpText .. "ItemRackUser.EventStack = " .. ItemRackLogFrame.Serialize(ItemRackUser.EventStack) .. "\n"
-		dumpText = dumpText .. "ItemRackUser.QueuesEnabled = " .. ItemRackLogFrame.Serialize(ItemRackUser.QueuesEnabled) .. "\n"
-		dumpText = dumpText .. "ItemRackUser.Sets['~Unequip'] = " .. ItemRackLogFrame.Serialize(ItemRackUser.Sets["~Unequip"]) .. "\n"
-		if ItemRackUser.CurrentSet and ItemRackUser.Sets[ItemRackUser.CurrentSet] then
-			dumpText = dumpText .. "ItemRackUser.Sets['" .. ItemRackUser.CurrentSet .. "'] = " .. ItemRackLogFrame.Serialize(ItemRackUser.Sets[ItemRackUser.CurrentSet]) .. "\n"
-		end
-
-		dumpText = dumpText .. "\n=== LAST AUDIT ===\n"
-		dumpText = dumpText .. "ItemRackUser.LastAudit = " .. ItemRackLogFrame.Serialize(ItemRackUser.LastAudit) .. "\n"
-
-		dumpText = dumpText .. "\n=== LAST REPAIR ===\n"
-		dumpText = dumpText .. "ItemRackUser.LastRepair = " .. ItemRackLogFrame.Serialize(ItemRackUser.LastRepair) .. "\n"
-
-		dumpText = dumpText .. "\n=== SETTINGS ===\n"
-		local optInfoSettings = {
-			-- User Settings (ItemRackUser)
-			{ name = "ItemRackUser.Locked", val = ItemRackUser.Locked },
-			{ name = "ItemRackUser.EnableEvents", val = ItemRackUser.EnableEvents },
-			{ name = "ItemRackUser.EnableQueues", val = ItemRackUser.EnableQueues },
-			{ name = "ItemRackUser.EnablePerSetQueues", val = ItemRackUser.EnablePerSetQueues },
-			{ name = "ItemRackUser.EnableQueueContextCheck", val = ItemRackUser.EnableQueueContextCheck },
-			{ name = "ItemRackUser.ButtonSpacing", val = ItemRackUser.ButtonSpacing },
-			{ name = "ItemRackUser.Alpha", val = ItemRackUser.Alpha },
-			{ name = "ItemRackUser.MainScale", val = ItemRackUser.MainScale },
-			{ name = "ItemRackUser.MenuScale", val = ItemRackUser.MenuScale },
-			{ name = "ItemRackUser.SetMenuWrap", val = ItemRackUser.SetMenuWrap },
-			{ name = "ItemRackUser.SetMenuWrapValue", val = ItemRackUser.SetMenuWrapValue },
-			
-			-- Global Settings (ItemRackSettings)
-			{ name = "ItemRackSettings.MenuOnShift", val = ItemRackSettings.MenuOnShift },
-			{ name = "ItemRackSettings.MenuOnRight", val = ItemRackSettings.MenuOnRight },
-			{ name = "ItemRackSettings.RightClickUse", val = ItemRackSettings.RightClickUse },
-			{ name = "ItemRackSettings.HideOOC", val = ItemRackSettings.HideOOC },
-			{ name = "ItemRackSettings.HidePetBattle", val = ItemRackSettings.HidePetBattle },
-			{ name = "ItemRackSettings.HideArena", val = ItemRackSettings.HideArena },
-			{ name = "ItemRackSettings.AllowEmpty", val = ItemRackSettings.AllowEmpty },
-			{ name = "ItemRackSettings.AllowHidden", val = ItemRackSettings.AllowHidden },
-			{ name = "ItemRackSettings.HideTradables", val = ItemRackSettings.HideTradables },
-			{ name = "ItemRackSettings.DisableAltClick", val = ItemRackSettings.DisableAltClick },
-			
-			-- Cooldown Settings
-			{ name = "ItemRackSettings.Notify", val = ItemRackSettings.Notify },
-			{ name = "ItemRackSettings.NotifyThirty", val = ItemRackSettings.NotifyThirty },
-			{ name = "ItemRackSettings.NotifyChatAlso", val = ItemRackSettings.NotifyChatAlso },
-			{ name = "ItemRackSettings.CooldownCount", val = ItemRackSettings.CooldownCount },
-			{ name = "ItemRackSettings.LargeNumbers", val = ItemRackSettings.LargeNumbers },
-			{ name = "ItemRackSettings.Cooldown90", val = ItemRackSettings.Cooldown90 },
-			
-			-- Tooltip Settings
-			{ name = "ItemRackSettings.ShowTooltips", val = ItemRackSettings.ShowTooltips },
-			{ name = "ItemRackSettings.ShowSetInTooltip", val = ItemRackSettings.ShowSetInTooltip },
-			{ name = "ItemRackSettings.TooltipColorUnEquipped", val = ItemRackSettings.TooltipColorUnEquipped },
-			{ name = "ItemRackSettings.TinyTooltips", val = ItemRackSettings.TinyTooltips },
-			{ name = "ItemRackSettings.TinyTooltipsQuickAccess", val = ItemRackSettings.TinyTooltipsQuickAccess },
-			{ name = "ItemRackSettings.TinyTooltipsSubMenusOnly", val = ItemRackSettings.TinyTooltipsSubMenusOnly },
-			{ name = "ItemRackSettings.DisableTooltipsInCombat", val = ItemRackSettings.DisableTooltipsInCombat },
-			{ name = "ItemRackSettings.TooltipFollow", val = ItemRackSettings.TooltipFollow },
-			
-			-- Interface & Misc
-			{ name = "ItemRackSettings.ShowMinimap", val = ItemRackSettings.ShowMinimap },
-			{ name = "ItemRackSettings.MinimapTooltip", val = ItemRackSettings.MinimapTooltip },
-			{ name = "ItemRackSettings.TrinketMenuMode", val = ItemRackSettings.TrinketMenuMode },
-			{ name = "ItemRackSettings.AnchorOther", val = ItemRackSettings.AnchorOther },
-			{ name = "ItemRackSettings.EquipToggle", val = ItemRackSettings.EquipToggle },
-			{ name = "ItemRackSettings.ShowHotKeys", val = ItemRackSettings.ShowHotKeys },
-			{ name = "ItemRackSettings.EquipOnSetPick", val = ItemRackSettings.EquipOnSetPick },
-			{ name = "ItemRackSettings.CharacterSheetMenus", val = ItemRackSettings.CharacterSheetMenus },
-			{ name = "ItemRackSettings.LeftSlotsGoRight", val = ItemRackSettings.LeftSlotsGoRight },
-			{ name = "ItemRackSettings.RightSlotsGoLeft", val = ItemRackSettings.RightSlotsGoLeft },
-		}
-		
-		local printedKeys = {}
-		for _, item in ipairs(optInfoSettings) do
-			local cleanKey = item.name:match("^ItemRackSettings%.(.+)$")
-			if cleanKey then
-				printedKeys[cleanKey] = true
+		local success, result = pcall(function()
+			local logCount = #ItemRack.LogBuffer
+			local tempLog = {}
+			local startIdx = math.max(1, logCount - 500)
+			for i = startIdx, logCount do
+				table.insert(tempLog, ItemRack.LogBuffer[i])
 			end
-			dumpText = dumpText .. item.name .. " = " .. tostring(item.val) .. "\n"
-		end
-		
-		dumpText = dumpText .. "-- Other Settings:\n"
-		local otherKeys = {}
-		for k in pairs(ItemRackSettings) do
-			if not printedKeys[k] then
-				table.insert(otherKeys, k)
+			local dumpText = "=== ITEMRACK LOG BUFFER (Last 500 lines) ===\n" .. table.concat(tempLog, "\n")
+			
+			dumpText = dumpText .. "\n\n=== RUNTIME STATE DUMP ===\n"
+			dumpText = dumpText .. "ItemRack.Version = " .. tostring(ItemRack.Version) .. "\n"
+			dumpText = dumpText .. "ItemRack.BuildID = " .. tostring(ItemRack.BuildID) .. "\n"
+			dumpText = dumpText .. "InCombatLockdown() = " .. tostring(InCombatLockdown()) .. "\n"
+			dumpText = dumpText .. "ItemRack.menuOpen = " .. tostring(ItemRack.menuOpen) .. "\n"
+			dumpText = dumpText .. "ItemRackMenuFrame:IsVisible() = " .. tostring(ItemRackMenuFrame and ItemRackMenuFrame:IsVisible()) .. "\n"
+			dumpText = dumpText .. "ItemRack.CombatQueue = " .. ItemRackLogFrame.Serialize(ItemRack.CombatQueue) .. "\n"
+			dumpText = dumpText .. "ItemRack.SetSwapping = " .. tostring(ItemRack.SetSwapping) .. "\n"
+			dumpText = dumpText .. "ItemRack.DebugAll = " .. tostring(ItemRack.DebugAll) .. "\n"
+			dumpText = dumpText .. "ItemRack.DebugChat = " .. tostring(ItemRack.DebugChat) .. "\n"
+			dumpText = dumpText .. "ItemRack.DebugTags = " .. ItemRackLogFrame.Serialize(ItemRack.DebugTags) .. "\n"
+			dumpText = dumpText .. "ItemRackUser.Locked = " .. tostring(ItemRackUser.Locked) .. "\n"
+			dumpText = dumpText .. "ItemRackUser.Buttons = " .. ItemRackLogFrame.Serialize(ItemRackUser.Buttons) .. "\n"
+			dumpText = dumpText .. "ItemRackUser.CurrentSet = " .. tostring(ItemRackUser.CurrentSet) .. "\n"
+			dumpText = dumpText .. "ItemRackUser.EventStack = " .. ItemRackLogFrame.Serialize(ItemRackUser.EventStack) .. "\n"
+			dumpText = dumpText .. "ItemRackUser.QueuesEnabled = " .. ItemRackLogFrame.Serialize(ItemRackUser.QueuesEnabled) .. "\n"
+			dumpText = dumpText .. "ItemRackUser.Sets['~Unequip'] = " .. ItemRackLogFrame.Serialize(ItemRackUser.Sets["~Unequip"]) .. "\n"
+			if ItemRackUser.CurrentSet and ItemRackUser.Sets[ItemRackUser.CurrentSet] then
+				dumpText = dumpText .. "ItemRackUser.Sets['" .. ItemRackUser.CurrentSet .. "'] = " .. ItemRackLogFrame.Serialize(ItemRackUser.Sets[ItemRackUser.CurrentSet]) .. "\n"
 			end
-		end
-		table.sort(otherKeys)
-		for _, k in ipairs(otherKeys) do
-			dumpText = dumpText .. "ItemRackSettings." .. k .. " = " .. tostring(ItemRackSettings[k]) .. "\n"
-		end
 
-		dumpText = dumpText .. "\n=== EVENTS STATE ===\n"
-		if ItemRackUser.Events then
-			dumpText = dumpText .. "ItemRackUser.Events.Enabled = " .. ItemRackLogFrame.Serialize(ItemRackUser.Events.Enabled) .. "\n"
-			dumpText = dumpText .. "ItemRackUser.Events.Set = " .. ItemRackLogFrame.Serialize(ItemRackUser.Events.Set) .. "\n"
-		end
-		if ItemRackEvents then
-			dumpText = dumpText .. "ItemRackEvents = " .. ItemRackLogFrame.Serialize(ItemRackEvents) .. "\n"
-		end
-		local setNames = {}
-		for name in pairs(ItemRackUser.Sets) do
-			table.insert(setNames, name)
-		end
-		table.sort(setNames)
-		dumpText = dumpText .. "ConfiguredSets = " .. ItemRackLogFrame.Serialize(setNames) .. "\n"
+			dumpText = dumpText .. "\n=== LAST AUDIT ===\n"
+			dumpText = dumpText .. "ItemRackUser.LastAudit = " .. ItemRackLogFrame.Serialize(ItemRackUser.LastAudit) .. "\n"
 
-		dumpText = dumpText .. "\n=== CASTING STATE ===\n"
-		dumpText = dumpText .. "ItemRack.NowCasting = " .. tostring(ItemRack.NowCasting) .. "\n"
-		dumpText = dumpText .. "ItemRack.NowChannelingSpell = " .. tostring(ItemRack.NowChannelingSpell) .. "\n"
-		dumpText = dumpText .. "ItemRack.SetsWaiting = " .. ItemRackLogFrame.Serialize(ItemRack.SetsWaiting) .. "\n"
+			dumpText = dumpText .. "\n=== LAST REPAIR ===\n"
+			dumpText = dumpText .. "ItemRackUser.LastRepair = " .. ItemRackLogFrame.Serialize(ItemRackUser.LastRepair) .. "\n"
+
+			dumpText = dumpText .. "\n=== SETTINGS ===\n"
+			local optInfoSettings = {
+				-- User Settings (ItemRackUser)
+				{ name = "ItemRackUser.Locked", val = ItemRackUser.Locked },
+				{ name = "ItemRackUser.EnableEvents", val = ItemRackUser.EnableEvents },
+				{ name = "ItemRackUser.EnableQueues", val = ItemRackUser.EnableQueues },
+				{ name = "ItemRackUser.EnablePerSetQueues", val = ItemRackUser.EnablePerSetQueues },
+				{ name = "ItemRackUser.EnableQueueContextCheck", val = ItemRackUser.EnableQueueContextCheck },
+				{ name = "ItemRackUser.ButtonSpacing", val = ItemRackUser.ButtonSpacing },
+				{ name = "ItemRackUser.Alpha", val = ItemRackUser.Alpha },
+				{ name = "ItemRackUser.MainScale", val = ItemRackUser.MainScale },
+				{ name = "ItemRackUser.MenuScale", val = ItemRackUser.MenuScale },
+				{ name = "ItemRackUser.SetMenuWrap", val = ItemRackUser.SetMenuWrap },
+				{ name = "ItemRackUser.SetMenuWrapValue", val = ItemRackUser.SetMenuWrapValue },
+				
+				-- Global Settings (ItemRackSettings)
+				{ name = "ItemRackSettings.MenuOnShift", val = ItemRackSettings.MenuOnShift },
+				{ name = "ItemRackSettings.MenuOnRight", val = ItemRackSettings.MenuOnRight },
+				{ name = "ItemRackSettings.RightClickUse", val = ItemRackSettings.RightClickUse },
+				{ name = "ItemRackSettings.HideOOC", val = ItemRackSettings.HideOOC },
+				{ name = "ItemRackSettings.HidePetBattle", val = ItemRackSettings.HidePetBattle },
+				{ name = "ItemRackSettings.HideArena", val = ItemRackSettings.HideArena },
+				{ name = "ItemRackSettings.AllowEmpty", val = ItemRackSettings.AllowEmpty },
+				{ name = "ItemRackSettings.AllowHidden", val = ItemRackSettings.AllowHidden },
+				{ name = "ItemRackSettings.HideTradables", val = ItemRackSettings.HideTradables },
+				{ name = "ItemRackSettings.DisableAltClick", val = ItemRackSettings.DisableAltClick },
+				
+				-- Cooldown Settings
+				{ name = "ItemRackSettings.Notify", val = ItemRackSettings.Notify },
+				{ name = "ItemRackSettings.NotifyThirty", val = ItemRackSettings.NotifyThirty },
+				{ name = "ItemRackSettings.NotifyChatAlso", val = ItemRackSettings.NotifyChatAlso },
+				{ name = "ItemRackSettings.CooldownCount", val = ItemRackSettings.CooldownCount },
+				{ name = "ItemRackSettings.LargeNumbers", val = ItemRackSettings.LargeNumbers },
+				{ name = "ItemRackSettings.Cooldown90", val = ItemRackSettings.Cooldown90 },
+				
+				-- Tooltip Settings
+				{ name = "ItemRackSettings.ShowTooltips", val = ItemRackSettings.ShowTooltips },
+				{ name = "ItemRackSettings.ShowSetInTooltip", val = ItemRackSettings.ShowSetInTooltip },
+				{ name = "ItemRackSettings.TooltipColorUnEquipped", val = ItemRackSettings.TooltipColorUnEquipped },
+				{ name = "ItemRackSettings.TinyTooltips", val = ItemRackSettings.TinyTooltips },
+				{ name = "ItemRackSettings.TinyTooltipsQuickAccess", val = ItemRackSettings.TinyTooltipsQuickAccess },
+				{ name = "ItemRackSettings.TinyTooltipsSubMenusOnly", val = ItemRackSettings.TinyTooltipsSubMenusOnly },
+				{ name = "ItemRackSettings.DisableTooltipsInCombat", val = ItemRackSettings.DisableTooltipsInCombat },
+				{ name = "ItemRackSettings.TooltipFollow", val = ItemRackSettings.TooltipFollow },
+				
+				-- Interface & Misc
+				{ name = "ItemRackSettings.ShowMinimap", val = ItemRackSettings.ShowMinimap },
+				{ name = "ItemRackSettings.MinimapTooltip", val = ItemRackSettings.MinimapTooltip },
+				{ name = "ItemRackSettings.TrinketMenuMode", val = ItemRackSettings.TrinketMenuMode },
+				{ name = "ItemRackSettings.AnchorOther", val = ItemRackSettings.AnchorOther },
+				{ name = "ItemRackSettings.EquipToggle", val = ItemRackSettings.EquipToggle },
+				{ name = "ItemRackSettings.ShowHotKeys", val = ItemRackSettings.ShowHotKeys },
+				{ name = "ItemRackSettings.EquipOnSetPick", val = ItemRackSettings.EquipOnSetPick },
+				{ name = "ItemRackSettings.CharacterSheetMenus", val = ItemRackSettings.CharacterSheetMenus },
+				{ name = "ItemRackSettings.LeftSlotsGoRight", val = ItemRackSettings.LeftSlotsGoRight },
+				{ name = "ItemRackSettings.RightSlotsGoLeft", val = ItemRackSettings.RightSlotsGoLeft },
+			}
+			
+			local printedKeys = {}
+			for _, item in ipairs(optInfoSettings) do
+				local cleanKey = item.name:match("^ItemRackSettings%.(.+)$")
+				if cleanKey then
+					printedKeys[cleanKey] = true
+				end
+				dumpText = dumpText .. item.name .. " = " .. tostring(item.val) .. "\n"
+			end
+			
+			dumpText = dumpText .. "-- Other Settings:\n"
+			local otherKeys = {}
+			for k in pairs(ItemRackSettings) do
+				if not printedKeys[k] then
+					table.insert(otherKeys, k)
+				end
+			end
+			table.sort(otherKeys)
+			for _, k in ipairs(otherKeys) do
+				dumpText = dumpText .. "ItemRackSettings." .. k .. " = " .. tostring(ItemRackSettings[k]) .. "\n"
+			end
+
+			dumpText = dumpText .. "\n=== EVENTS STATE ===\n"
+			if ItemRackUser.Events then
+				dumpText = dumpText .. "ItemRackUser.Events.Enabled = " .. ItemRackLogFrame.Serialize(ItemRackUser.Events.Enabled) .. "\n"
+				dumpText = dumpText .. "ItemRackUser.Events.Set = " .. ItemRackLogFrame.Serialize(ItemRackUser.Events.Set) .. "\n"
+			end
+			if ItemRackEvents then
+				dumpText = dumpText .. "ItemRackEvents = " .. ItemRackLogFrame.Serialize(ItemRackEvents) .. "\n"
+			end
+			local setNames = {}
+			for name in pairs(ItemRackUser.Sets) do
+				table.insert(setNames, name)
+			end
+			table.sort(setNames)
+			dumpText = dumpText .. "ConfiguredSets = " .. ItemRackLogFrame.Serialize(setNames) .. "\n"
+
+			dumpText = dumpText .. "\n=== CASTING STATE ===\n"
+			dumpText = dumpText .. "ItemRack.NowCasting = " .. tostring(ItemRack.NowCasting) .. "\n"
+			dumpText = dumpText .. "ItemRack.NowChannelingSpell = " .. tostring(ItemRack.NowChannelingSpell) .. "\n"
+			dumpText = dumpText .. "ItemRack.SetsWaiting = " .. ItemRackLogFrame.Serialize(ItemRack.SetsWaiting) .. "\n"
+			return dumpText
+		end)
 		
+		local dumpText = success and result or ("ERROR GENERATING DIAGNOSTIC DUMP:\n" .. tostring(result))
 		ItemRackLogFrame:Show()
 		ItemRackLogEditBox:SetText(dumpText)
 		ItemRackLogEditBox:HighlightText()
