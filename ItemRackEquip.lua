@@ -290,20 +290,33 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	ItemRack.Debug("Equip", "EquipSet swap list generated:", swapStr)
  
 	-- if in combat, dead, or casting, queue items for later
-	-- PickupInventoryItem is blocked by the game during InCombatLockdown() for all items
-	-- However: when triggered via secure keybind, the SecureActionButton macrotext already
-	-- handles weapon slots 16-18 via "/equipslot [combat]" — so we skip those slots to
-	-- avoid double-swapping (queueing them would revert the weapon when combat ends).
+	-- PickupInventoryItem is blocked by the game during InCombatLockdown()
+	-- Exception: when triggered via secure keybind in combat, if the ACTUAL swap
+	-- only involves weapon slots (16-18), the SecureActionButton's /equipslot [combat]
+	-- macro already handled them — skip the queue. This works whether the set is
+	-- weapon-only or a full gear set that only needs weapons changed right now.
 	if InCombatLockdown() or ItemRack.IsPlayerReallyDead() or ItemRack.NowCasting then
 		local reason = InCombatLockdown() and "combat" or (ItemRack.NowCasting and "casting" or "dead")
-		ItemRack.Debug("Equip", "EquipSet DEFERRED to CombatQueue: set=" .. tostring(setname) .. " reason=" .. reason .. " slots queued:")
-		for i in pairs(swap) do
-			-- Weapon slots (16=MH, 17=OH, 18=Ranged) are handled by the secure macro
-			-- during combat keybind presses — skip them to avoid double-swap
-			if isSecureKeybind and InCombatLockdown() and (i >= 16 and i <= 18) then
-				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " SKIPPED (secure macro handles weapon in combat)")
+		-- Check if the actual swap is weapon-only at runtime
+		local swapIsWeaponOnly = isSecureKeybind and InCombatLockdown()
+		if swapIsWeaponOnly then
+			for i in pairs(swap) do
+				if i < 16 or i > 18 then
+					swapIsWeaponOnly = false
+					break
+				end
+			end
+		end
+		ItemRack.Debug("Equip", "EquipSet DEFERRED: set=" .. tostring(setname) .. " reason=" .. reason .. " swapIsWeaponOnly=" .. tostring(swapIsWeaponOnly))
+		if swapIsWeaponOnly then
+			-- Secure macro already handled all weapon slots — just clear the swap
+			for i in pairs(swap) do
+				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " SKIPPED (secure macro handled weapon swap in combat)")
 				swap[i] = nil
-			else
+			end
+		else
+			-- Non-weapon slots need changing — queue everything for after combat
+			for i in pairs(swap) do
 				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
 				ItemRack.AddToCombatQueue(i,swap[i])
 				swap[i] = nil

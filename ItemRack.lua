@@ -3444,6 +3444,10 @@ function ItemRack.SetSetBindings()
 
 			button:SetAttribute("type","macro")
 			local macrotext = ""
+			-- Generate /equipslot [combat] macrotext for any set with weapon slots.
+			-- The [combat] conditional ensures this only fires during combat.
+			-- At runtime, EquipSet checks whether the actual swap is weapon-only
+			-- before deciding to let the secure macro handle it vs queuing.
 			for slot = 16, 18 do
 				local itemID = ItemRackUser.Sets[i].equip[slot]
 				if itemID and itemID ~= 0 then
@@ -3463,7 +3467,7 @@ function ItemRack.SetSetBindings()
 			end
 			button:SetAttribute("macrotext",macrotext)
 			if macrotext ~= "" then
-				ItemRack.Debug("API", "SetSetBindings compiled macro for " .. i .. ": " .. string.gsub(macrotext, "\n", " | "))
+				ItemRack.Debug("API", "SetSetBindings compiled combat macro for " .. i .. ": " .. string.gsub(macrotext, "\n", " | "))
 			end
 			button:SetScript("PostClick", function() ItemRack.RunSetBinding(i) end)
 			
