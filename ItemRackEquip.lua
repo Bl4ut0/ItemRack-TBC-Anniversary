@@ -289,43 +289,24 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	for k,v in pairs(swap) do swapStr = swapStr .. k..":"..v.." " end
 	ItemRack.Debug("Equip", "EquipSet swap list generated:", swapStr)
  
-	-- if in combat, dead, or casting, queue items for later
+	-- if in combat, dead, or casting, queue ALL items for later
 	-- PickupInventoryItem is blocked by the game during InCombatLockdown()
-	-- Exception: when triggered via secure keybind in combat, if the ACTUAL swap
-	-- only involves weapon slots (16-18), the SecureActionButton's /equipslot [combat]
-	-- macro already handled them — skip the queue. This works whether the set is
-	-- weapon-only or a full gear set that only needs weapons changed right now.
+	-- The SecureActionButton macrotext attempts weapon swaps via /equipslot [combat]
+	-- but this doesn't work in Classic — we always queue as the reliable path.
+	-- When combat ends, EquipSet checks if items are already equipped and skips them,
+	-- so if the macro ever does work, the queue gracefully becomes a no-op.
 	if InCombatLockdown() or ItemRack.IsPlayerReallyDead() or ItemRack.NowCasting then
 		local reason = InCombatLockdown() and "combat" or (ItemRack.NowCasting and "casting" or "dead")
-		-- Check if the actual swap is weapon-only at runtime
-		local swapIsWeaponOnly = isSecureKeybind and InCombatLockdown()
-		if swapIsWeaponOnly then
-			for i in pairs(swap) do
-				if i < 16 or i > 18 then
-					swapIsWeaponOnly = false
-					break
-				end
-			end
-		end
-		ItemRack.Debug("Equip", "EquipSet DEFERRED: set=" .. tostring(setname) .. " reason=" .. reason .. " swapIsWeaponOnly=" .. tostring(swapIsWeaponOnly))
-		if swapIsWeaponOnly then
-			-- Secure macro already handled all weapon slots — just clear the swap
-			for i in pairs(swap) do
-				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " SKIPPED (secure macro handled weapon swap in combat)")
-				swap[i] = nil
-			end
-		else
-			-- Non-weapon slots need changing — queue everything for after combat
-			for i in pairs(swap) do
-				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
-				ItemRack.AddToCombatQueue(i,swap[i])
-				swap[i] = nil
-				if set.old then
-					set.old[i] = ItemRack.GetID(i)
-					ItemRack.CombatSet = setname
-				elseif set.oldset then
-					ItemRack.CombatSet = set.oldset
-				end
+		ItemRack.Debug("Equip", "EquipSet DEFERRED to CombatQueue: set=" .. tostring(setname) .. " reason=" .. reason)
+		for i in pairs(swap) do
+			ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
+			ItemRack.AddToCombatQueue(i,swap[i])
+			swap[i] = nil
+			if set.old then
+				set.old[i] = ItemRack.GetID(i)
+				ItemRack.CombatSet = setname
+			elseif set.oldset then
+				ItemRack.CombatSet = set.oldset
 			end
 		end
 	end
