@@ -3469,7 +3469,11 @@ function ItemRack.SetSetBindings()
 			if macrotext ~= "" then
 				ItemRack.Debug("API", "SetSetBindings compiled combat macro for " .. i .. ": " .. string.gsub(macrotext, "\n", " | "))
 			end
-			button:SetScript("PostClick", function() ItemRack.RunSetBinding(i) end)
+			local setName = i -- capture for closure
+			button:SetScript("PostClick", function()
+				ItemRack.Debug("API", "PostClick fired for button: " .. tostring(buttonName) .. " set: " .. tostring(setName) .. " InCombat: " .. tostring(InCombatLockdown()))
+				ItemRack.RunSetBinding(setName)
+			end)
 			
 			local key = ItemRackUser.Sets[i].key
 			
@@ -3482,6 +3486,7 @@ function ItemRack.SetSetBindings()
 			else
 				SetBindingClick(key, buttonName)
 			end
+			ItemRack.Debug("API", "SetSetBindings bound set='" .. i .. "' key='" .. tostring(key) .. "' button='" .. buttonName .. "' hasMacro=" .. tostring(macrotext ~= ""))
 		end
 	end
 	
@@ -3494,6 +3499,7 @@ function ItemRack.SetSetBindings()
 			SaveBindings(bindingSet)
 		end
 	end
+	ItemRack.Debug("API", "SetSetBindings complete. BindingsInitialized=" .. tostring(ItemRack.BindingsInitialized))
 end
 
 function ItemRack.RunSetBinding(setname)
