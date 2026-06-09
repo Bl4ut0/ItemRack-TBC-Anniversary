@@ -734,11 +734,12 @@ function ItemRack.IsSetEquipped(setname,exact)
 					end
 				end
 				
-				-- If the slot has an active auto-queue, accept whichever queued item
-				-- is intentionally active for this set context, and reject only when
-				-- the queue would still swap to something else.
+				-- If auto-queues are globally enabled and this slot has an active
+				-- queue, accept whichever queued item is intentionally active for
+				-- this set context. Dormant queue settings must not make an unchanged
+				-- equipment set appear as "Custom".
 				local slotQueue = ItemRack.GetQueues(setname)[i]
-				if slotQueue and #slotQueue > 0 and ItemRack.GetQueuesEnabled(setname)[i] then
+				if ItemRackUser.EnableQueues == "ON" and slotQueue and #slotQueue > 0 and ItemRack.GetQueuesEnabled(setname)[i] then
 					local currentBaseID = ItemRack.GetIRString(id,true)
 					local currentCustomTime
 					local currentInQueue = false
@@ -767,7 +768,10 @@ function ItemRack.IsSetEquipped(setname,exact)
 					end
 				end
 				
-				if not match then return false end
+				if not match then
+					ItemRack.Debug("Equip", "IsSetEquipped mismatch: set="..tostring(setname).." slot="..tostring(i).." expected="..tostring(set[i]).." equipped="..tostring(id).." queues="..tostring(ItemRackUser.EnableQueues))
+					return false
+				end
 			end
 		end
 		

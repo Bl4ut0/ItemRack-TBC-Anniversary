@@ -699,6 +699,10 @@ function ItemRack.OnPlayerLogout()
 end
 
 function ItemRack.RunAllEvents(reason)
+	if ItemRackUser.EnableEvents ~= "ON" then
+		ItemRack.Debug("Events", "RunAllEvents skipped (events disabled):", reason)
+		return
+	end
 	local getSlots = C_Container and C_Container.GetContainerNumSlots or _G.GetContainerNumSlots
 	local numSlots = getSlots and getSlots(0)
 	if not numSlots or numSlots == 0 then
