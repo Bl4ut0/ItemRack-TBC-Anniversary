@@ -679,16 +679,7 @@ function ItemRack.OnPlayerLogin()
 	ItemRack.InitTimers()
 	ItemRack.InitCore()
 	ItemRack.InitButtons()
-	if ItemRackOpt and ItemRackOpt.PostInit then
-		ItemRackOpt.PostInit()
-	end
 	ItemRack.InitEvents()
-	
-	-- Disable legacy standalone ItemRackOptions addon to prevent conflicts
-	local disableAddon = C_AddOns and C_AddOns.DisableAddOn or DisableAddOn
-	if disableAddon then
-		disableAddon("ItemRackOptions")
-	end
 	
 	-- Audit SavedVariables on startup
 	ItemRack.AuditSavedVariables(false)
@@ -2260,13 +2251,10 @@ function ItemRack.MenuOnClick(self,button)
 		local slot = ItemRack.menuOpen
 		if slot and slot < 20 then
 			if not ItemRack.GetQueues()[slot] then
-				if ItemRackOptFrame then
-					ItemRackOptFrame:Show()
-					ItemRackOpt.TabOnClick(self, 4)
-					ItemRackOpt.SetupQueue(slot)
-				else
-					ItemRack.Print("Options panel not loaded.")
-				end
+				LoadAddOn("ItemRackOptions")
+				ItemRackOptFrame:Show()
+				ItemRackOpt.TabOnClick(self, 4)
+				ItemRackOpt.SetupQueue(slot)
 			end
 			-- Ensure per-set table exists before writing
 			if ItemRackUser.EnablePerSetQueues == "ON" then
@@ -3317,8 +3305,8 @@ end
 
 function ItemRack.ToggleOptions(self,tab)
 	if not ItemRackOptFrame then
-		ItemRack.Print("Options panel not loaded.")
-		return
+		EnableAddOn("ItemRackOptions") -- it's LoD, and required. Enable if disabled
+		LoadAddOn("ItemRackOptions")
 	end
 	if ItemRackOptFrame:IsVisible() then
 		ItemRackOptFrame:Hide()

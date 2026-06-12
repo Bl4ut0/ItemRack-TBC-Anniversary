@@ -168,9 +168,6 @@ function ItemRack.LoadEvents(resetDefault,resetAll)
 
 	ItemRack.CleanupEvents()
 	if ItemRackOpt then
-		if ItemRackOpt.Init then
-			ItemRackOpt.Init()
-		end
 		ItemRackOpt.PopulateEventList() -- if options loaded, recreate event list there
 	end
 end
@@ -257,15 +254,15 @@ function ItemRack.ResetEvents(resetDefault,resetAll)
 end
 
 function ItemRack.InitEvents()
+	ItemRack.LoadEvents()
+	ItemRack.MigrateDefaultScriptEvents()
+
 	ItemRack.CreateTimer("EventsBuffTimer",ItemRack.ProcessBuffEvent,.15)
 	ItemRack.CreateTimer("EventsZoneTimer",ItemRack.ProcessZoneEvent,.16)
 	ItemRack.CreateTimer("CheckForMountedEvents",ItemRack.CheckForMountedEvents,.5,1)
 	ItemRack.CreateTimer("SpecChangeTimer",ItemRack.ProcessSpecializationEvent,0.5,1)
 	ItemRack.CreateTimer("MovementPollingTimer",ItemRack.PollMovement,.2,1)
 	ItemRack.CreateTimer("OnMovementUnequipTimer",ItemRack.ProcessOnMovementUnequip,.5)
-
-	ItemRack.LoadEvents()
-	ItemRack.MigrateDefaultScriptEvents()
 	
 	-- Initialize Event Stack and BaseGear set if missing
 	if not ItemRackUser.EventStack then
@@ -464,12 +461,9 @@ function ItemRack.ToggleEvents(self)
 	ItemRackUser.EnableEvents = ItemRackUser.EnableEvents=="ON" and "OFF" or "ON"
 	if not next(ItemRackUser.Events.Enabled) then
 		-- user is turning on events with no events enabled, go to events frame
-		if ItemRackOptFrame then
-			ItemRackOptFrame:Show()
-			ItemRackOpt.TabOnClick(self,3)
-		else
-			ItemRack.Print("Options panel not loaded.")
-		end
+		LoadAddOn("ItemRackOptions")
+		ItemRackOptFrame:Show()
+		ItemRackOpt.TabOnClick(self,3)
 	else
 		if ItemRackOptFrame and ItemRackOptFrame:IsVisible() then
 			ItemRackOpt.ListScrollFrameUpdate()
