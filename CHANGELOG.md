@@ -3,6 +3,10 @@
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
 ## [Development]
+### Folder Structure Collapse
+- **Single-Folder Flattened Directory Structure**: Consolidated ItemRack, Libs, and ItemRackOptions into a single root-level flattened directory structure to simplify installation and packaging.
+
+## [4.39.5] - 2026-06-12
 ### Event Swapping & Instance Transitions
 - **Centralized Event Recheck Scheduler**: Added `ItemRack.ScheduleEventRecheck` and `ItemRack.RunAllEvents` to safely schedule and run event-based evaluations. Schedules automatic settled checks at `0.5s` and `1.5s` upon entering the world/instances (`PLAYER_ENTERING_WORLD`), and on zone changes (`ZONE_CHANGED_NEW_AREA`).
 - **Unified Event Release Triggers**: Refactored combat and casting stop events (`OnLeavingCombatOrDeath` and `OnCastingStop`) to run rechecks on all event categories (stances, spec, zones, buffs) instead of only buffs.
