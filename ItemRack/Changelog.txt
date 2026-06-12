@@ -1,4 +1,6 @@
 __ Development __
+
+__ New in 4.39.5 - By Bl4ut0 __
 - Centralized event recheck scheduler triggers automatic settled rechecks at 0.5s/1.5s on world loading and zone boundaries.
 - Unified combat and casting stop triggers to re-evaluate all event types instead of only buffs.
 - Implemented signature-aware zone transitions using instance ID to resolve overlaps and clear manual override across separate dungeons of the same type.
