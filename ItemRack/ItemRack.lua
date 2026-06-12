@@ -1819,8 +1819,13 @@ function ItemRack.DockWindows(menuDock,relativeTo,mainDock,menuOrient,movable)
 	ItemRack.menuDock = menuDock
 	ItemRack.menuOrient = menuOrient
 	ItemRack.menuMovable = movable
-	ItemRack.menuDockedTo = relativeTo:GetName()
-	ItemRack.MenuMouseoverFrames[relativeTo:GetName()] = 1 -- add frame to mouseover candidates
+	local name = relativeTo and type(relativeTo.GetName) == "function" and relativeTo:GetName()
+	if name then
+		ItemRack.menuDockedTo = name
+		ItemRack.MenuMouseoverFrames[name] = 1 -- add frame to mouseover candidates
+	else
+		ItemRack.menuDockedTo = "Minimap"
+	end
 	ItemRack.ReflectLock(not ItemRack.menuMovable)
 	ItemRack.ReflectMenuScale()
 end
