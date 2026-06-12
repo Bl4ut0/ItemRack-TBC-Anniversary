@@ -1,5 +1,8 @@
 __ Development __
 
+__ New in 4.39.6 - By Bl4ut0 __
+- Fixed tooltip anchoring inconsistency for right-side character sheet slots to pop out to the left by default (matching the pre-4.39.4 default behavior) and aligned AnchorTooltip to match.
+
 __ New in 4.39.5 - By Bl4ut0 __
 - Centralized event recheck scheduler triggers automatic settled rechecks at 0.5s/1.5s on world loading and zone boundaries.
 - Unified combat and casting stop triggers to re-evaluate all event types instead of only buffs.

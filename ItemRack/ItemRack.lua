@@ -2796,15 +2796,15 @@ function ItemRack.AnchorTooltip(owner)
 					GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
 				elseif slot==1 or slot==2 or slot==3 or slot==15 or slot==5 or slot==4 or slot==19 or slot==9 then
 					if ItemRackSettings.LeftSlotsGoRight == "ON" then
-						GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+						GameTooltip:SetOwner(ItemRackMenuFrame, "ANCHOR_RIGHT")
 					else
-						GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
+						GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
 					end
 				else
 					if ItemRackSettings.RightSlotsGoLeft == "ON" then
-						GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
-					else
 						GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+					else
+						GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
 					end
 				end
 			end
