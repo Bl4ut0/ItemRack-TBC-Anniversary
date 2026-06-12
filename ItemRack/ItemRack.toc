@@ -18,3 +18,7 @@ ItemRackButtons.xml
 ItemRackEquip.lua
 ItemRackQueue.lua
 ItemRackEvents.lua
+
+# Options Module (startup loaded)
+ItemRackOptions\ItemRackOptions.lua
+ItemRackOptions\ItemRackOptions.xml

@@ -1,5 +1,8 @@
 local _
 
+local defaultItemRackUser = ItemRackUser
+local defaultItemRackSettings = ItemRackSettings
+
 ItemRackOpt = {
 	Icons = {}, -- list of all icons possible for a set
 	Inv = {}, -- 0-19 currently chosen items per slot
@@ -117,6 +120,37 @@ function ItemRackOpt.InvOnLeave(self)
 	end
 end
 
+function ItemRackOpt.Init()
+	if ItemRackOpt.initialized then return end
+	ItemRackOpt.PopulateInitialIcons()
+	ItemRackOpt.PopulateEventList()
+	ItemRackOpt.initialized = true
+end
+
+-- PostInit: Deferred initialization that requires ItemRackUser.Buttons and other
+-- PLAYER_LOGIN data to be fully set up. Called from ItemRack.OnPlayerLogin() after
+-- InitButtons() has run. In the old addon structure, ItemRackOptions was LoadOnDemand
+-- with Dependencies: ItemRack, so its OnLoad always ran after PLAYER_LOGIN.
+-- Now that Options is merged into the main TOC, its XML OnLoad fires during file
+-- loading before PLAYER_LOGIN, so this work must be deferred.
+function ItemRackOpt.PostInit()
+	if ItemRackOpt.postInitialized then return end
+	-- Re-point optset in OptInfo to the active SavedVariables tables
+	if ItemRackOpt.OptInfo then
+		for _, opt in ipairs(ItemRackOpt.OptInfo) do
+			if opt.optset == defaultItemRackUser then
+				opt.optset = ItemRackUser
+			elseif opt.optset == defaultItemRackSettings then
+				opt.optset = ItemRackSettings
+			end
+		end
+	end
+	ItemRack.CreateTimer("SlotMarquee",ItemRackOpt.SlotMarquee,.1,1)
+	ItemRackOpt.InitializeSliders()
+	ItemRackOpt.TabOnClick(ItemRackOptFrame, 1) -- start at tab 1 (config)
+	ItemRackOpt.postInitialized = true
+end
+
 function ItemRackOpt.OnLoad(self)
 	self:RegisterEvent("PLAYER_TALENT_UPDATE")
 	self:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
@@ -137,8 +171,6 @@ function ItemRackOpt.OnLoad(self)
 		ItemRackOpt.Inv[i] = {}
 		ItemRackOpt.HoldInv[i] = {}
 	end
-	ItemRackOpt.PopulateInitialIcons()
-	ItemRackOpt.PopulateEventList()
 	ItemRackOptSetsCurrentSet:EnableMouse(false)
 
 	ItemRackOptFrameTitle:SetText("IR "..ItemRack.Version)
@@ -223,12 +255,7 @@ function ItemRackOpt.OnLoad(self)
 		{type="button",button=ItemRackOptSoundSettings,label="Sound Settings",tooltip="Open sound settings to control swap and action bar sounds per event."},
 	}
 
-	ItemRackOpt.InitializeSliders()
-	ItemRackOpt.TabOnClick(self,1) -- start at tab 1 (config)
-
 	ItemRackOptBindFrame:EnableMouseWheel(true)
-
-	ItemRack.CreateTimer("SlotMarquee",ItemRackOpt.SlotMarquee,.1,1)
 
 	for i in pairs(ItemRack.CheckButtonLabels) do
 		if _G[i] then
@@ -1099,7 +1126,9 @@ function ItemRackOpt.OptListCheckButtonOnClick(self,override)
 	if opt.variable then
 		opt.optset[opt.variable] = check
 	end
-	if opt.variable=="MenuOnRight" then
+	if opt.variable=="Locked" then
+		ItemRack.ReflectLock()
+	elseif opt.variable=="MenuOnRight" then
 		if check=="ON" then
 			ItemRackSettings.MenuOnShift = "OFF"
 		end
@@ -2132,7 +2161,7 @@ function ItemRackOpt.EventListScrollFrameUpdate()
 			_G["ItemRackOptEventList"..i.."Name"]:SetText(displayText)
 			icon = _G["ItemRackOptEventList"..i.."Icon"]
 			if list[idx][2]=="Script" then
-				texture = "Interface\\AddOns\\ItemRackOptions\\ItemRackScriptIcon"
+				texture = "Interface\\AddOns\\ItemRack\\ItemRackOptions\\ItemRackScriptIcon"
 			elseif ItemRackUser.Events.Set[list[idx][1]] then
 				texture = ItemRackUser.Sets[ItemRackUser.Events.Set[list[idx][1]]].icon
 			else
