@@ -1,8 +1,8 @@
-# ItemRack TBC Anniversary - Release v4.39.6
+# ItemRack TBC Anniversary - Release v4.39.7
 
-This hotfix release resolves an inconsistency in tooltip anchoring for right-side character sheet equipment slots, restoring the correct default popout direction to the left and aligning `AnchorTooltip` to prevent positioning conflicts.
+This hotfix release resolves a bug where right-side character sheet equipment slots (Gloves through Rings) had their tooltips anchor incorrectly to the left, causing them to overlap and obscure popout menus. It replaces coordinate-based layout evaluations with a settings-based logical check to prevent timing and race condition bugs.
 
 ---
 
 ### 🐛 Bug Fixes
-* **Tooltip Anchoring Inconsistency**: Restored the tooltip default popout direction for right-side slots to the left (matching the behavior prior to version 4.39.4). Aligned the `AnchorTooltip` logic to match the slot-enter layout, resolving positioning conflicts and flickering during active cooldown updates.
+* **Tooltip Anchoring Overlap**: Fixed a bug where right-side character sheet slots (Gloves through Rings) would have their tooltips anchor to the left and overlap the popout menus due to a timing race condition with coordinate-based layout evaluations. Replaced coordinate lookups with a deterministic settings-based evaluation.

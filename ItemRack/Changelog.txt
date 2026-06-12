@@ -1,5 +1,8 @@
 __ Development __
 
+__ New in 4.39.7 - By Bl4ut0 __
+- Fixed a bug where right-side character sheet slots (Gloves through Rings) would have their tooltips anchor to the left and overlap the popout menus by replacing coordinate-based layout checks with a deterministic settings-based evaluation.
+
 __ New in 4.39.6 - By Bl4ut0 __
 - Fixed tooltip anchoring inconsistency for right-side character sheet slots to pop out to the left by default (matching the pre-4.39.4 default behavior) and aligned AnchorTooltip to match.
 

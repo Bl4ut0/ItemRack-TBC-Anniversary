@@ -3092,7 +3092,14 @@ function PaperDollItemSlotButton_OnEnter(self)
 	if isMenuOpen and slot then
 		local desiredOwner, desiredAnchor
 		
-		local menuOnRight = (ItemRackMenuFrame:GetLeft() or 0) >= (self:GetLeft() or 0)
+		local menuOnRight
+		if slot == 0 or (slot >= 16 and slot <= 18) then
+			menuOnRight = false
+		elseif slot==1 or slot==2 or slot==3 or slot==15 or slot==5 or slot==4 or slot==19 or slot==9 then
+			menuOnRight = (ItemRackSettings.LeftSlotsGoRight == "ON")
+		else
+			menuOnRight = (ItemRackSettings.RightSlotsGoLeft ~= "ON")
+		end
 		
 		if slot == 0 or (slot >= 16 and slot <= 18) then
 			-- Bottom slots: menu goes down. Tooltip to the right is fine.
