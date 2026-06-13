@@ -329,8 +329,8 @@ Additionally, we overrode the standard interaction textures (`PushedTexture`, `H
 
 ---
 
-## Options Sizing and Menu Wrap Layout Fix
-**Files:** `ItemRack.lua`, `ItemRackButtons.lua`, `ItemRackOptions.lua`
+## Options Sizing and Menu Wrap Improvements
+**Files:** `ItemRack.lua`, `ItemRackButtons.lua`, `ItemRackOptions.lua`, `ItemRackOptions.xml`
 
 ### Sizing Accessibility Checkboxes
 - Replaced the options scale slider/editbox with three mutual-exclusive checkboxes: **Default size** (1.0), **Bigger** (1.3), and **Biggest** (1.6) for visual accessibility.
@@ -341,3 +341,9 @@ Additionally, we overrode the standard interaction textures (`PushedTexture`, `H
 - Fixed a layout bug in `ItemRack.BuildMenu()` where popout menus (such as the sets list menu) failed to wrap when `SetMenuWrap` was enabled. 
 - Because WoW's `Slider:GetValue()` API returns floating-point values, `col == max_cols` (e.g. `3 == 3.0000001`) would fail to match, causing the row to extend indefinitely in a single line while leaving the backdrop frame broken.
 - Resolved this by casting `ItemRackUser.SetMenuWrapValue` using `math.floor` and changing the comparison check to `col >= max_cols`.
+
+### Separated Quick Menu and Character Menu Wrapping
+- Split the menu wrapping functionality into two distinct user settings to avoid layout conflicts:
+  - **Quick Menu Wrap** (`SetMenuWrap` / `SetMenuWrapValue`): Applied to quick access buttons and sets popout menus, which extend vertically (wrapping horizontally).
+  - **Character Sheet Menu Wrap** (`CharMenuWrap` / `CharMenuWrapValue`): Applied to character pane slot hover menus, which extend horizontally (wrapping vertically).
+- Updated the defaults, self-healing/saved variables auditing, button reset functions, and options window widgets to register and control both sets of settings independently.
