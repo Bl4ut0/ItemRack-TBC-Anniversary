@@ -234,6 +234,10 @@ ItemRackUser = {
 	Alpha = 1, -- alpha of buttons
 	MainScale = 1, -- scale of the dockable buttons
 	MenuScale = .85, -- scale of the menu in relation to docked buttons
+	OptScale = 1, -- scale of the options frame
+	OptSizeDefault = "ON",
+	OptSizeBigger = "OFF",
+	OptSizeBiggest = "OFF",
 	SetMenuWrap = "OFF", -- whether user defines when to wrap the menu
 	SetMenuWrapValue = 3, -- when to wrap the menu if user defined
 }
@@ -495,6 +499,50 @@ function ItemRack.AuditSavedVariables(printToChat)
 	end
 	if not ItemRackUser.Hidden then
 		ItemRackUser.Hidden = {}
+	end
+
+	-- Ensure default settings in ItemRackUser
+	local userDefaults = {
+		Locked = "OFF",
+		EnableEvents = "ON",
+		EnableQueues = "ON",
+		EnablePerSetQueues = "OFF",
+		EnableQueueContextCheck = "ON",
+		ButtonSpacing = 4,
+		Alpha = 1,
+		MainScale = 1,
+		MenuScale = .85,
+		OptScale = 1,
+		OptSizeDefault = "ON",
+		OptSizeBigger = "OFF",
+		OptSizeBiggest = "OFF",
+		SetMenuWrap = "OFF",
+		SetMenuWrapValue = 3,
+	}
+	for k, v in pairs(userDefaults) do
+		if ItemRackUser[k] == nil then
+			ItemRackUser[k] = v
+		end
+	end
+
+	-- Sync checkboxes with OptScale if they are inconsistent
+	if ItemRackUser.OptScale then
+		if ItemRackUser.OptScale > 1.45 then
+			ItemRackUser.OptSizeDefault = "OFF"
+			ItemRackUser.OptSizeBigger = "OFF"
+			ItemRackUser.OptSizeBiggest = "ON"
+			ItemRackUser.OptScale = 1.6
+		elseif ItemRackUser.OptScale > 1.15 then
+			ItemRackUser.OptSizeDefault = "OFF"
+			ItemRackUser.OptSizeBigger = "ON"
+			ItemRackUser.OptSizeBiggest = "OFF"
+			ItemRackUser.OptScale = 1.3
+		else
+			ItemRackUser.OptSizeDefault = "ON"
+			ItemRackUser.OptSizeBigger = "OFF"
+			ItemRackUser.OptSizeBiggest = "OFF"
+			ItemRackUser.OptScale = 1.0
+		end
 	end
 
 	-- 1. Check CurrentSet
@@ -1926,7 +1974,7 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 		local menuCount = #(ItemRack.Menu)
 		local max_cols, button, icon
 		if ItemRackUser.SetMenuWrap=="ON" then
-			max_cols = ItemRackUser.SetMenuWrapValue
+			max_cols = math.floor(tonumber(ItemRackUser.SetMenuWrapValue) or 3)
 		else
 			-- Dynamic wrap based on count to keep popups compact but manageable
 			if menuCount > 24 then
@@ -1975,7 +2023,7 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 			if ItemRack.menuOrient=="VERTICAL" then
 				xpos = xpos + ItemRack.DockInfo[ItemRack.currentDock].xdir*40
 				col = col + 1
-				if col==max_cols then
+				if col>=max_cols then
 					xpos = ItemRack.DockInfo[ItemRack.currentDock].xstart
 					col = 0
 					ypos = ypos + ItemRack.DockInfo[ItemRack.currentDock].ydir*40
@@ -1985,7 +2033,7 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 			else
 				ypos = ypos + ItemRack.DockInfo[ItemRack.currentDock].ydir*40
 				col = col + 1
-				if col==max_cols then
+				if col>=max_cols then
 					ypos = ItemRack.DockInfo[ItemRack.currentDock].ystart
 					col = 0
 					xpos = xpos + ItemRack.DockInfo[ItemRack.currentDock].xdir*40
@@ -3751,6 +3799,7 @@ function ItemRack.SlashHandler(arg1)
 				{ name = "ItemRackUser.Alpha", val = ItemRackUser.Alpha },
 				{ name = "ItemRackUser.MainScale", val = ItemRackUser.MainScale },
 				{ name = "ItemRackUser.MenuScale", val = ItemRackUser.MenuScale },
+				{ name = "ItemRackUser.OptScale", val = ItemRackUser.OptScale },
 				{ name = "ItemRackUser.SetMenuWrap", val = ItemRackUser.SetMenuWrap },
 				{ name = "ItemRackUser.SetMenuWrapValue", val = ItemRackUser.SetMenuWrapValue },
 				

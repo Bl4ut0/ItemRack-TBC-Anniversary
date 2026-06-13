@@ -169,6 +169,10 @@ function ItemRackOpt.OnLoad(self)
 		{type="number",optset=ItemRackUser,variable="MenuScale",button=ItemRackOptMenuScale,label="Menu scale",tooltip="Scale size of the menu in relation to the button it's docked to."},
 		{type="slider",button=ItemRackOptMenuScaleSlider,variable="MenuScale",label="Menu scale",tooltip="Scale size of the menu.", min=.5, max=2, step=.05, form="%.2f"},
 
+		{type="check",optset=ItemRackUser,variable="OptSizeDefault",label="Default size",tooltip="Scale options page to 100% (default)."},
+		{type="check",optset=ItemRackUser,variable="OptSizeBigger",label="Bigger",tooltip="Scale options page to 130%."},
+		{type="check",optset=ItemRackUser,variable="OptSizeBiggest",label="Biggest",tooltip="Scale options page to 160%."},
+
 		{type="check",optset=ItemRackUser,variable="SetMenuWrap",label="Set menu wrap",tooltip="Check this to set a fixed value when the menu wraps to a new row.  Uncheck to let ItemRack decide."},
 
 		{type="number",optset=ItemRackUser,variable="SetMenuWrapValue",depend="SetMenuWrap",button=ItemRackOptSetMenuWrapValue,label="When to wrap",tooltip="When 'Set menu wrap' checked, this is the number of menu items before wrapping to a new row/column."},
@@ -260,6 +264,7 @@ function ItemRackOpt.InitializeSliders()
 end
 
 function ItemRackOpt.OnShow(setname)
+	ItemRackOpt.ReflectOptScale()
 	for i=0,19 do
 		ItemRackOpt.Inv[i].id = ItemRack.GetID(i)
 	end
@@ -1057,6 +1062,11 @@ function ItemRackOpt.UpdateSlider(name)
 	end
 end
 
+function ItemRackOpt.ReflectOptScale(scale)
+	scale = scale or ItemRackUser.OptScale or 1
+	ItemRackOptFrame:SetScale(scale)
+end
+
 function ItemRackOpt.NumberEditBoxOnEnter(self)
 	self:ClearFocus()
 	local name = string.match(self:GetName(),"ItemRackOpt(.+)")
@@ -1104,6 +1114,36 @@ function ItemRackOpt.OptListCheckButtonOnClick(self,override)
 			ItemRackSettings.MenuOnShift = "OFF"
 		end
 		ItemRack.ReflectMenuOnRight()
+	elseif opt.variable=="OptSizeDefault" then
+		if check=="OFF" then
+			ItemRackUser.OptSizeDefault = "ON"
+		else
+			ItemRackUser.OptSizeBigger = "OFF"
+			ItemRackUser.OptSizeBiggest = "OFF"
+			ItemRackUser.OptScale = 1.0
+			ItemRackOpt.ReflectOptScale()
+		end
+		ItemRackOpt.ListScrollFrameUpdate()
+	elseif opt.variable=="OptSizeBigger" then
+		if check=="OFF" then
+			ItemRackUser.OptSizeBigger = "ON"
+		else
+			ItemRackUser.OptSizeDefault = "OFF"
+			ItemRackUser.OptSizeBiggest = "OFF"
+			ItemRackUser.OptScale = 1.3
+			ItemRackOpt.ReflectOptScale()
+		end
+		ItemRackOpt.ListScrollFrameUpdate()
+	elseif opt.variable=="OptSizeBiggest" then
+		if check=="OFF" then
+			ItemRackUser.OptSizeBiggest = "ON"
+		else
+			ItemRackUser.OptSizeDefault = "OFF"
+			ItemRackUser.OptSizeBigger = "OFF"
+			ItemRackUser.OptScale = 1.6
+			ItemRackOpt.ReflectOptScale()
+		end
+		ItemRackOpt.ListScrollFrameUpdate()
 	elseif opt.variable=="MenuOnShift" then
 		if check=="ON" and ItemRackSettings.MenuOnRight=="ON" then
 			ItemRackSettings.MenuOnRight = "OFF"

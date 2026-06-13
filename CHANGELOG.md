@@ -3,6 +3,8 @@
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
 ## [Development]
+- **Accessibility Options Sizing**: Replaced the options scale slider/editbox with three mutual-exclusive checkboxes (**Default size**, **Bigger**, and **Biggest**) to easily size the options frame for visually impaired players. Profile migration auto-maps existing custom slider scales onto the checkboxes on login.
+- **Set Menu Wrap Layout Bugfix**: Fixed a layout bug where floating-point numbers returned from WoW's slider API (e.g. `3.0000001` instead of `3`) caused wrapping logic (`col == max_cols`) to fail. Added `math.floor` cast and `>=` comparison to ensure correct wrapping on popout menus (like the sets menu).
 
 ## [4.39.7] - 2026-06-12
 ### Bug Fixes

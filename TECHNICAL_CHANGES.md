@@ -287,14 +287,14 @@ end
 | File | Changes |
 |------|---------|
 | `ItemRack/ItemRack.toc` | Version 4.27, Interface 20505, updated author |
-| `ItemRack/ItemRack.lua` | C_AddOns, C_Container, C_Item shims, AuraUtil shim, Menu item count logic |
-| `ItemRack/ItemRackButtons.lua` | LoadAddOn shim, Item count/Ammo slot display logic |
+| `ItemRack/ItemRack.lua` | C_AddOns, C_Container, C_Item shims, AuraUtil shim, Menu item count logic, Options scale settings/sync/audit, Menu wrap float bugfix |
+| `ItemRack/ItemRackButtons.lua` | LoadAddOn shim, Item count/Ammo slot display logic, Reset options scale settings |
 | `ItemRack/ItemRackButtons.xml` | ActionBarButtonTemplate inheritance |
 | `ItemRack/ItemRackEquip.lua` | C_Container shims, Spec-to-Gear logic, UI persistence checks |
 | `ItemRack/ItemRackQueue.lua` | GetItemCooldown shim (C_Container), GetItemSpell/GetItemCount/IsEquippedItem shims |
 | `ItemRack/ItemRackEvents.lua` | Spec stability timer, redundancy filters |
 | `ItemRackOptions/ItemRackOptions.toc` | Version 4.27, Interface 20505 |
-| `ItemRackOptions/ItemRackOptions.lua` | Dual Spec UI spacing, SpecDirty tracking, Save Set consistency |
+| `ItemRackOptions/ItemRackOptions.lua` | Dual Spec UI spacing, SpecDirty tracking, Save Set consistency, Sizing accessibility checkboxes |
 
 ---
 
@@ -326,3 +326,18 @@ Additionally, we overrode the standard interaction textures (`PushedTexture`, `H
     end
 </OnLoad>
 ```
+
+---
+
+## Options Sizing and Menu Wrap Layout Fix
+**Files:** `ItemRack.lua`, `ItemRackButtons.lua`, `ItemRackOptions.lua`
+
+### Sizing Accessibility Checkboxes
+- Replaced the options scale slider/editbox with three mutual-exclusive checkboxes: **Default size** (1.0), **Bigger** (1.3), and **Biggest** (1.6) for visual accessibility.
+- Added backward-compatible profile migration inside `ItemRack.AuditSavedVariables()` to automatically translate any existing slider-based numeric scale values to the closest checkbox state.
+- Integrated checkbox states into the `"Reset Buttons"` routine.
+
+### Menu Wrap Float Bugfix
+- Fixed a layout bug in `ItemRack.BuildMenu()` where popout menus (such as the sets list menu) failed to wrap when `SetMenuWrap` was enabled. 
+- Because WoW's `Slider:GetValue()` API returns floating-point values, `col == max_cols` (e.g. `3 == 3.0000001`) would fail to match, causing the row to extend indefinitely in a single line while leaving the backdrop frame broken.
+- Resolved this by casting `ItemRackUser.SetMenuWrapValue` using `math.floor` and changing the comparison check to `col >= max_cols`.
