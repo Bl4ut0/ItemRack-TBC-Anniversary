@@ -173,10 +173,15 @@ function ItemRackOpt.OnLoad(self)
 		{type="check",optset=ItemRackUser,variable="OptSizeBigger",label="Bigger",tooltip="Scale options page to 130%."},
 		{type="check",optset=ItemRackUser,variable="OptSizeBiggest",label="Biggest",tooltip="Scale options page to 160%."},
 
-		{type="check",optset=ItemRackUser,variable="SetMenuWrap",label="Set menu wrap",tooltip="Check this to set a fixed value when the menu wraps to a new row.  Uncheck to let ItemRack decide."},
+		{type="check",optset=ItemRackUser,variable="SetMenuWrap",label="Quick menu wrap",tooltip="Check this to set a fixed value when the quick access and set menus wrap.  Uncheck to let ItemRack decide."},
 
-		{type="number",optset=ItemRackUser,variable="SetMenuWrapValue",depend="SetMenuWrap",button=ItemRackOptSetMenuWrapValue,label="When to wrap",tooltip="When 'Set menu wrap' checked, this is the number of menu items before wrapping to a new row/column."},
-		{type="slider",optset=ItemRackUser,button=ItemRackOptSetMenuWrapValueSlider,depend="SetMenuWrap",variable="SetMenuWrapValue",label="When to wrap",tooltip="When 'Set menu wrap' checked, this is the number of menu items before wrapping to a new row/column.", min=1, max=30, step=1, form="%d"},
+		{type="number",optset=ItemRackUser,variable="SetMenuWrapValue",depend="SetMenuWrap",button=ItemRackOptSetMenuWrapValue,label="When to wrap",tooltip="When 'Quick menu wrap' checked, this is the number of menu items before wrapping to a new row/column."},
+		{type="slider",optset=ItemRackUser,button=ItemRackOptSetMenuWrapValueSlider,depend="SetMenuWrap",variable="SetMenuWrapValue",label="When to wrap",tooltip="When 'Quick menu wrap' checked, this is the number of menu items before wrapping to a new row/column.", min=1, max=30, step=1, form="%d"},
+
+		{type="check",optset=ItemRackUser,variable="CharMenuWrap",label="Char sheet wrap",tooltip="Check this to set a fixed value when the character sheet slot menus wrap.  Uncheck to let ItemRack decide."},
+
+		{type="number",optset=ItemRackUser,variable="CharMenuWrapValue",depend="CharMenuWrap",button=ItemRackOptCharMenuWrapValue,label="When to wrap",tooltip="When 'Char sheet wrap' checked, this is the number of menu items before wrapping to a new row/column."},
+		{type="slider",optset=ItemRackUser,button=ItemRackOptCharMenuWrapValueSlider,depend="CharMenuWrap",variable="CharMenuWrapValue",label="When to wrap",tooltip="When 'Char sheet wrap' checked, this is the number of menu items before wrapping to a new row/column.", min=1, max=30, step=1, form="%d"},
 
 		{type="label",label="Global Settings"},
 		{type="check",optset=ItemRackSettings,variable="MenuOnShift",label="Menu on Shift",tooltip="Only show menu while Shift is held down."},

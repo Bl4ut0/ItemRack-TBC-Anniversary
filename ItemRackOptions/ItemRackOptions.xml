@@ -1357,6 +1357,8 @@
 					<EditBox name="ItemRackOptMenuScale" inherits="ItemRackNumberEditBoxTemplate"/>
 					<Slider name="ItemRackOptSetMenuWrapValueSlider" inherits="ItemRackOptSliderTemplate"/>
 					<EditBox name="ItemRackOptSetMenuWrapValue" inherits="ItemRackNumberEditBoxTemplate"/>
+					<Slider name="ItemRackOptCharMenuWrapValueSlider" inherits="ItemRackOptSliderTemplate"/>
+					<EditBox name="ItemRackOptCharMenuWrapValue" inherits="ItemRackNumberEditBoxTemplate"/>
 					<Button name="ItemRackOptList1" inherits="ItemRackOptTemplate" id="1">
 						<Anchors>
 							<Anchor point="TOPLEFT">

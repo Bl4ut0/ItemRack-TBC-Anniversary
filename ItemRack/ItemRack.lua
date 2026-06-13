@@ -240,6 +240,8 @@ ItemRackUser = {
 	OptSizeBiggest = "OFF",
 	SetMenuWrap = "OFF", -- whether user defines when to wrap the menu
 	SetMenuWrapValue = 3, -- when to wrap the menu if user defined
+	CharMenuWrap = "OFF", -- whether user defines when to wrap the character sheet menu
+	CharMenuWrapValue = 3, -- when to wrap the character sheet menu if user defined
 }
 
 ItemRackSettings = {
@@ -518,6 +520,8 @@ function ItemRack.AuditSavedVariables(printToChat)
 		OptSizeBiggest = "OFF",
 		SetMenuWrap = "OFF",
 		SetMenuWrapValue = 3,
+		CharMenuWrap = "OFF",
+		CharMenuWrapValue = 3,
 	}
 	for k, v in pairs(userDefaults) do
 		if ItemRackUser[k] == nil then
@@ -1973,20 +1977,40 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 		local col,row,xpos,ypos = 0,0,ItemRack.DockInfo[ItemRack.currentDock].xstart,ItemRack.DockInfo[ItemRack.currentDock].ystart
 		local menuCount = #(ItemRack.Menu)
 		local max_cols, button, icon
-		if ItemRackUser.SetMenuWrap=="ON" then
-			max_cols = math.floor(tonumber(ItemRackUser.SetMenuWrapValue) or 3)
-		else
-			-- Dynamic wrap based on count to keep popups compact but manageable
-			if menuCount > 24 then
-				max_cols = 6
-			elseif menuCount > 12 then
-				max_cols = 4
-			elseif menuCount > 8 then
-				max_cols = 3
-			elseif menuCount > 4 then
-				max_cols = 2
+		local isCharSheet = (masqueGroup == 3) or (ItemRack.menuDockedTo and string.find(ItemRack.menuDockedTo, "^Character"))
+		if isCharSheet then
+			if ItemRackUser.CharMenuWrap=="ON" then
+				max_cols = math.floor(tonumber(ItemRackUser.CharMenuWrapValue) or 3)
 			else
-				max_cols = 1
+				-- Dynamic wrap based on count to keep popups compact but manageable
+				if menuCount > 24 then
+					max_cols = 6
+				elseif menuCount > 12 then
+					max_cols = 4
+				elseif menuCount > 8 then
+					max_cols = 3
+				elseif menuCount > 4 then
+					max_cols = 2
+				else
+					max_cols = 1
+				end
+			end
+		else
+			if ItemRackUser.SetMenuWrap=="ON" then
+				max_cols = math.floor(tonumber(ItemRackUser.SetMenuWrapValue) or 3)
+			else
+				-- Dynamic wrap based on count to keep popups compact but manageable
+				if menuCount > 24 then
+					max_cols = 6
+				elseif menuCount > 12 then
+					max_cols = 4
+				elseif menuCount > 8 then
+					max_cols = 3
+				elseif menuCount > 4 then
+					max_cols = 2
+				else
+					max_cols = 1
+				end
 			end
 		end
 
