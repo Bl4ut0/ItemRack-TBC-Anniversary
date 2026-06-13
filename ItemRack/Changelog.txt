@@ -1,5 +1,10 @@
 __ Development __
 
+__ New in 4.39.8 - By Bl4ut0 __
+- Added Options panel accessibility sizing checkboxes (Default, Bigger, Biggest) to scale the settings UI (100%, 130%, 160% scale).
+- Split the menu wrapping functionality into two independent settings: "Quick menu wrap" (horizontal expansion, e.g. for quick access buttons) and "Char sheet wrap" (vertical expansion, e.g. for slot hover menus) to prevent layout conflicts.
+- Fixed a layout bug where floating-point values returned from WoW's slider API caused popout menu wrapping to fail, leaving backdrop frames broken.
+
 __ New in 4.39.7 - By Bl4ut0 __
 - Fixed a bug where right-side character sheet slots (Gloves through Rings) would have their tooltips anchor to the left and overlap the popout menus by replacing coordinate-based layout checks with a deterministic settings-based evaluation.
 

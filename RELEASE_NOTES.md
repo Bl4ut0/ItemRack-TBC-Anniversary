@@ -1,8 +1,12 @@
-# ItemRack TBC Anniversary - Release v4.39.7
+# ItemRack TBC Anniversary - Release v4.39.8
 
-This hotfix release resolves a bug where right-side character sheet equipment slots (Gloves through Rings) had their tooltips anchor incorrectly to the left, causing them to overlap and obscure popout menus. It replaces coordinate-based layout evaluations with a settings-based logical check to prevent timing and race condition bugs.
+This release introduces options panel sizing accessibility options for visually impaired players, splits the menu wrapping functionality into two independent settings (preventing layout conflicts between vertical quick-access dropdowns and horizontal character-slot hover menus), and resolves a layout bug where floating-point values from the slider API caused wrapping to fail.
 
 ---
 
+### 🚀 Features & Accessibility
+* **Accessibility Sizing Checkboxes**: Replaced the options scale slider with three discrete checkboxes (**Default size**, **Bigger**, and **Biggest**) to easily change options panel scale (1.0, 1.3, and 1.6 scale respectively). Includes backward-compatible settings migration on login.
+* **Separated Wrap Settings**: Split wrapping settings into **Quick menu wrap** and **Char sheet wrap** to support horizontal and vertical menu orientations independently.
+
 ### 🐛 Bug Fixes
-* **Tooltip Anchoring Overlap**: Fixed a bug where right-side character sheet slots (Gloves through Rings) would have their tooltips anchor to the left and overlap the popout menus due to a timing race condition with coordinate-based layout evaluations. Replaced coordinate lookups with a deterministic settings-based evaluation.
+* **Menu Wrap Layout Bug**: Cast wrap thresholds with `math.floor` and updated comparisons to `>=` to fix the WoW slider float precision bug that stretched menus into single lines and broke the background frame.
