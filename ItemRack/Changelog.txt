@@ -1,4 +1,6 @@
 __ Development __
+
+__ New in 4.39.9 - By Bl4ut0 __
 - Enabled screen clamping for the main options frame (ItemRackOptFrame) and the event script editor (ItemRackFloatingEditor) to prevent windows from clipping off-screen when scaled up.
 
 __ New in 4.39.8 - By Bl4ut0 __
