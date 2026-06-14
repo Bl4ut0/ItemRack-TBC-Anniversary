@@ -1,4 +1,4 @@
-__ Development __
+__ New in 4.40-beta1 - By Bl4ut0 __
 - Fixed a bug where manual item or set swaps queued during combat were deleted from the combat queue if the currently equipped item was ready (cooldown finished). Added an AutoQueueFlag check to ensure only auto-queued items are removed from the queue.
 
 __ New in 4.39.9 - By Bl4ut0 __
