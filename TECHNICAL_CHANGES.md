@@ -360,3 +360,16 @@ When the Options panel scale is increased using the new accessibility checkboxes
 - Added `clampedToScreen="true"` attributes to both `ItemRackOptFrame` and `ItemRackFloatingEditor` in the XML definitions.
 - Added programmatical enforcement via `self:SetClampedToScreen(true)` in `ItemRackOpt.OnLoad()`.
 - Updated `ItemRackOpt.ReflectOptScale()` to toggle the clamping state (`SetClampedToScreen(false)` followed by `SetClampedToScreen(true)`) whenever the scale is updated. Toggling the clamp state forces WoW's layout engine to immediately recalculate the frame boundaries and snap it back within the visible screen area.
+
+---
+
+## Manual Swaps Combat Queue Fix
+**File:** `ItemRack/ItemRackQueue.lua`
+
+### Problem
+When the player is in combat and triggers a manual item or set swap, the swap is queued in `ItemRack.CombatQueue`. However, if the currently equipped item in that slot has no active cooldown (meaning `ready` is true), the periodic auto-queue processor `ItemRack.ProcessAutoQueue()` would immediately identify the equipped item as ready and call `ItemRack.RemoveFromCombatQueue(slot)`. This silently deleted the user's manual swap from the combat queue before combat ended, resulting in ignored swaps.
+
+### Solution
+- Updated the queue removal condition in `ItemRack.ProcessAutoQueue()` to verify the swap's origin.
+- Guarded the cleanup check with `ItemRack.AutoQueueFlag` and `ItemRack.AutoQueueFlag[slot]`.
+- This ensures that only auto-queued swaps (which have `AutoQueueFlag[slot] = true`) are removed from the queue when the equipped item is ready, while manual item/set swaps are safely preserved.

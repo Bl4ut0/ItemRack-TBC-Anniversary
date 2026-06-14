@@ -360,7 +360,7 @@ function ItemRack.ProcessAutoQueue(slot)
 		end
 	end
 	local ready = ItemRack.ItemNearReady(baseID, slot, equippedCustomTime)
-	if ready and ItemRack.CombatQueue[slot] then
+	if ready and ItemRack.CombatQueue[slot] and ItemRack.AutoQueueFlag and ItemRack.AutoQueueFlag[slot] then
 		ItemRack.RemoveFromCombatQueue(slot)
 	end
 
