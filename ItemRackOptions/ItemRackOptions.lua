@@ -122,6 +122,7 @@ function ItemRackOpt.OnLoad(self)
 	self:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
 	self:SetScript("OnEvent", ItemRackOpt.OnEvent)
 
+	self:SetClampedToScreen(true)
 	table.insert(UISpecialFrames,"ItemRackOptFrame")
 	Mixin(ItemRackOptFrame, BackdropTemplateMixin)
 	ItemRackOptFrame:SetBackdrop({
@@ -1070,6 +1071,8 @@ end
 function ItemRackOpt.ReflectOptScale(scale)
 	scale = scale or ItemRackUser.OptScale or 1
 	ItemRackOptFrame:SetScale(scale)
+	ItemRackOptFrame:SetClampedToScreen(false)
+	ItemRackOptFrame:SetClampedToScreen(true)
 end
 
 function ItemRackOpt.NumberEditBoxOnEnter(self)

@@ -881,7 +881,7 @@
 	</Button>
 
 
-	<Frame name="ItemRackOptFrame" hidden="true" movable="true" enableMouse="true" toplevel="true" inherits="BackdropTemplate">
+	<Frame name="ItemRackOptFrame" hidden="true" clampedToScreen="true" movable="true" enableMouse="true" toplevel="true" inherits="BackdropTemplate">
 		<Size>
 			<AbsDimension x="288" y="348"/>
 		</Size>
@@ -3646,7 +3646,7 @@
 	</Frame>
 
 
-	<Frame name="ItemRackFloatingEditor" parent="UIParent" movable="true" resizable="true" enableMouse="true" toplevel="true" hidden="true" inherits="BackdropTemplate">
+	<Frame name="ItemRackFloatingEditor" parent="UIParent" clampedToScreen="true" movable="true" resizable="true" enableMouse="true" toplevel="true" hidden="true" inherits="BackdropTemplate">
 		<Size>
 			<AbsDimension x="400" y="300"/>
 		</Size>

@@ -347,3 +347,16 @@ Additionally, we overrode the standard interaction textures (`PushedTexture`, `H
   - **Quick Menu Wrap** (`SetMenuWrap` / `SetMenuWrapValue`): Applied to quick access buttons and sets popout menus, which extend vertically (wrapping horizontally).
   - **Character Sheet Menu Wrap** (`CharMenuWrap` / `CharMenuWrapValue`): Applied to character pane slot hover menus, which extend horizontally (wrapping vertically).
 - Updated the defaults, self-healing/saved variables auditing, button reset functions, and options window widgets to register and control both sets of settings independently.
+
+---
+
+## Options Window Screen Clamping
+**Files:** `ItemRackOptions/ItemRackOptions.lua`, `ItemRackOptions/ItemRackOptions.xml`
+
+### Problem
+When the Options panel scale is increased using the new accessibility checkboxes (**Bigger** at 130% or **Biggest** at 160%), the frame can easily clip or open completely off-screen, particularly on lower resolutions or if the panel was previously dragged near a screen edge.
+
+### Solution
+- Added `clampedToScreen="true"` attributes to both `ItemRackOptFrame` and `ItemRackFloatingEditor` in the XML definitions.
+- Added programmatical enforcement via `self:SetClampedToScreen(true)` in `ItemRackOpt.OnLoad()`.
+- Updated `ItemRackOpt.ReflectOptScale()` to toggle the clamping state (`SetClampedToScreen(false)` followed by `SetClampedToScreen(true)`) whenever the scale is updated. Toggling the clamp state forces WoW's layout engine to immediately recalculate the frame boundaries and snap it back within the visible screen area.

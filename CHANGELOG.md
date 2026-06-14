@@ -3,6 +3,7 @@
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
 ## [Development]
+- **Options Screen Clamping**: Enabled `clampedToScreen` and added runtime clamping updates for `ItemRackOptFrame` and `ItemRackFloatingEditor`. This prevents the options page and script editor from clipping off-screen when the frame scale is increased.
 
 ## [4.39.8] - 2026-06-13
 ### Accessibility & Layout Improvements
