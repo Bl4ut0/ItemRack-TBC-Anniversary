@@ -2,6 +2,9 @@
 
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
+## [Development]
+- **Manual Swaps Combat Queue Fix**: Fixed a bug where manual item swaps or manual set swaps queued during combat were deleted from the combat queue if the currently equipped item in that slot was ready (had no active cooldown). `ProcessAutoQueue` now respects `ItemRack.AutoQueueFlag[slot]` and only removes auto-queued swaps.
+
 ## [4.40-beta1] - 2026-06-14
 ### Bug Fixes & Improvements
 - **Manual Swaps Combat Queue Fix**: Fixed a bug where manual item swaps or manual set swaps queued during combat were deleted from the combat queue if the currently equipped item in that slot was ready (had no active cooldown). `ProcessAutoQueue` now respects `ItemRack.AutoQueueFlag[slot]` and only removes auto-queued swaps.
