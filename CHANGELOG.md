@@ -3,6 +3,7 @@
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
 ## [Development]
+- **Auto-Queue Stuck Slots Fix**: Resolved a bug where equipping an item set containing multiple items already on cooldown (with Auto-Queue enabled) only swapped the first slot. Subsequent slots were deferred to the combat queue and got stuck outside of combat. `ItemRack.LocksChanged()` now sequentially processes deferred combat queue swaps and waiting sets.
 - **Manual Swaps Combat Queue Fix**: Fixed a bug where manual item swaps or manual set swaps queued during combat were deleted from the combat queue if the currently equipped item in that slot was ready (had no active cooldown). `ProcessAutoQueue` now respects `ItemRack.AutoQueueFlag[slot]` and only removes auto-queued swaps.
 
 ## [4.40-beta1] - 2026-06-14

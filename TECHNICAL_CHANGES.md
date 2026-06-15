@@ -6,6 +6,23 @@ This document details all modifications made to port ItemRack Classic to the TBC
 
 The TBC Anniversary Edition runs on a modern WoW client engine (similar to Retail), which means many APIs have been moved to new namespaces or deprecated. This port adds compatibility shims and fixes to ensure ItemRack functions correctly.
 
+## Auto-Queue Stuck Slots Fix
+**File:** [ItemRack.lua](file:///c:/Dev%20Projects/ItemRack/ItemRack/ItemRack.lua) — `ItemRack.LocksChanged`
+
+### Problem
+When equipping an item set containing multiple items that are already on cooldown with Auto-Queue enabled for those slots, only the first slot would get auto-swapped. The subsequent slots would get stuck and never swap.
+
+### Root Cause
+During the set swap or subsequent periodic queue check, the first slot swap locks that slot.
+When processing the next auto-queued slot, `EquipItemByID` checks `AnythingLocked()`. Since the first slot is locked, `EquipItemByID` defers the second slot's swap by adding it to `ItemRack.CombatQueue`.
+When the first slot's swap finishes, `ITEM_LOCK_CHANGED` triggers `LocksChanged()`. However, `LocksChanged()` originally had no checks to process the `CombatQueue` when OOC. The combat queue would remain unprocessed indefinitely outside of combat, keeping the slots stuck.
+
+### Solution
+Modified `LocksChanged()` to process `CombatQueue` and `SetsWaiting` sequentially inside the `else` block:
+- If there are items in `CombatQueue`, no items are locked, player is not casting, and player is not in combat, we trigger `ProcessCombatQueue()`.
+- If `ProcessCombatQueue()` initiates a swap, `AnythingLocked()` becomes true, preventing `ProcessSetsWaiting()` from executing in the same frame.
+- If `ProcessCombatQueue()` does not swap anything (or is empty), `AnythingLocked()` remains false and we proceed to evaluate and process `SetsWaiting` immediately.
+
 ---
 
 ## GameTooltip Taint Fix (ADDON_ACTION_BLOCKED)

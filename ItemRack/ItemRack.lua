@@ -1732,8 +1732,13 @@ function ItemRack.LocksChanged()
 	elseif ItemRackMenuFrame:IsVisible() and ItemRack.BankOpen and not ItemRack.AnythingLocked() then
 		ItemRackMenuFrame:Hide()
 		ItemRack.BuildMenu()
-	elseif #(ItemRack.SetsWaiting)>0 and not ItemRack.AnythingLocked() then
-		ItemRack.ProcessSetsWaiting()
+	else
+		if next(ItemRack.CombatQueue) and not ItemRack.AnythingLocked() and not ItemRack.NowCasting and not InCombatLockdown() then
+			ItemRack.ProcessCombatQueue()
+		end
+		if #(ItemRack.SetsWaiting)>0 and not ItemRack.AnythingLocked() then
+			ItemRack.ProcessSetsWaiting()
+		end
 	end
 end
 
