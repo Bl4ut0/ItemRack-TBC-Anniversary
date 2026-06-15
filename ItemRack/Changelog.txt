@@ -1,4 +1,6 @@
 __ Development __
+
+__ New in 4.40-beta2 - By Bl4ut0 __
 - Resolved a bug where equipping an item set containing multiple items already on cooldown (with Auto-Queue enabled) only swapped the first slot. Subsequent slots were deferred to the combat queue and got stuck outside of combat. ItemRack.LocksChanged() now sequentially processes deferred combat queue swaps and waiting sets.
 - Fixed a bug where manual item or set swaps queued during combat were deleted from the combat queue if the currently equipped item was ready (cooldown finished). Added an AutoQueueFlag check to ensure only auto-queued items are removed from the queue.
 
