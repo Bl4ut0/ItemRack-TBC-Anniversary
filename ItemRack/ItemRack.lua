@@ -1152,7 +1152,6 @@ do
 			tooltip:AddDoubleLine("ItemRack Set: ", name, 0,.6,1, 0,.6,1)
 			data[name] = nil
 		end
-		tooltip:Show()
 	end
 end
 

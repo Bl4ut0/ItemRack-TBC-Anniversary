@@ -6,6 +6,24 @@ This document details all modifications made to port ItemRack Classic to the TBC
 
 The TBC Anniversary Edition runs on a modern WoW client engine (similar to Retail), which means many APIs have been moved to new namespaces or deprecated. This port adds compatibility shims and fixes to ensure ItemRack functions correctly.
 
+## Action Bar Button Taint Fix (GameTooltip:Show)
+**File:** [ItemRack.lua](file:///c:/Dev%20Projects/ItemRack/ItemRack/ItemRack.lua) — `ItemRack.ListSetsHavingItem`
+
+### Problem
+Hovering over Blizzard action bar buttons would intermittently throw `ADDON_ACTION_BLOCKED` errors on protected calls like `ActionButton1:SetAttribute()` within `UpdatePressAndHoldAction`.
+
+### Root Cause
+Whenever the player hovered over items in their bags or character sheet slots, `ItemRack` appended the set names containing the item to the tooltip.
+In the secure hooks (`SetBagItem`, `SetInventoryItem`, `SetHyperlink`), `ListSetsHavingItem` called `tooltip:Show()` to force the tooltip to resize and update.
+Because `hooksecurefunc` callbacks execute in the addon's insecure context, calling `Show()` on the shared `GameTooltip` tainted the tooltip frame.
+When the user subsequently hovered over an Action Bar button, the Blizzard UI called `GameTooltip:SetOwner(ActionButton, ...)` which propagated the taint to the Action Button.
+Once the secure button became tainted, any internal Blizzard ActionButton functions attempting protected operations (like `SetAttribute`) were blocked.
+
+### Solution
+Removed the redundant `tooltip:Show()` call from `ListSetsHavingItem`. Since Blizzard's default UI already calls `Show()` at the end of the item-hover execution path, the tooltip is refreshed and drawn in a secure context with our added lines, completely preventing taint propagation.
+
+---
+
 ## Auto-Queue Stuck Slots Fix
 **File:** [ItemRack.lua](file:///c:/Dev%20Projects/ItemRack/ItemRack/ItemRack.lua) — `ItemRack.LocksChanged`
 
