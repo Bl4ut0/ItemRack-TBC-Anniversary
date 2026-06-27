@@ -1,4 +1,6 @@
 __ Development __
+
+__ New in 4.40-beta3 - By Bl4ut0 __
 - Folder Structure Collapse: Consolidated ItemRack, Libs, and ItemRackOptions into a single root-level flattened directory structure to simplify installation and packaging.
 - Fixed character sheet left-side popout menus rendering off-screen by default in the default WoW UI. Defaulted LeftSlotsGoRight to "ON" and added a one-time profile migration to update existing configurations.
 - Fixed ADDON_ACTION_BLOCKED taint errors on Blizzard action buttons (SetAttribute) caused by calling tooltip:Show() inside ListSetsHavingItem under insecure hooks. Removed the redundant Show() call.
