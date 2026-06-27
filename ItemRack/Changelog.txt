@@ -1,4 +1,5 @@
 __ Development __
+- Fixed character sheet left-side popout menus rendering off-screen by default in the default WoW UI. Defaulted LeftSlotsGoRight to "ON" and added a one-time profile migration to update existing configurations.
 - Fixed ADDON_ACTION_BLOCKED taint errors on Blizzard action buttons (SetAttribute) caused by calling tooltip:Show() inside ListSetsHavingItem under insecure hooks. Removed the redundant Show() call.
 - Resolved a bug where equipping an item set containing multiple items already on cooldown (with Auto-Queue enabled) only swapped the first slot. Subsequent slots were deferred to the combat queue and got stuck outside of combat. ItemRack.LocksChanged() now sequentially processes deferred combat queue swaps and waiting sets.
 - Fixed a bug where manual item or set swaps queued during combat were deleted from the combat queue if the currently equipped item was ready (cooldown finished). Added an AutoQueueFlag check to ensure only auto-queued items are removed from the queue.

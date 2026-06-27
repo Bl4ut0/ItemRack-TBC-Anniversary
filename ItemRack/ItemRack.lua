@@ -274,7 +274,8 @@ ItemRackSettings = {
 	EquipOnSetPick = "OFF", -- whether to equip a set when picked in the set tab of options
 	MinimapTooltip = "ON", -- whether to display the minimap button tooltip to explain clicks
 	CharacterSheetMenus = "ON", -- whether to display slot menus on mouseover of the character sheet
-	LeftSlotsGoRight = "OFF", -- whether left-side character slots dock their menus to the RIGHT instead of left
+	LeftSlotsGoRight = "ON", -- whether left-side character slots dock their menus to the RIGHT instead of left
+	LeftSlotsGoRightDefaultSet = true, -- whether the default has been set/migrated to ON to fix off-screen issue
 	RightSlotsGoLeft = "OFF", -- whether right-side character slots dock their menus to the LEFT instead of right
 	DisableAltClick = "OFF", -- whether to disable Alt+click from toggling auto queue (to allow self cast through)
 	TooltipColorUnEquipped = "OFF", -- whether to highlight unequipped set items in orange
@@ -1266,6 +1267,10 @@ function ItemRack.InitCore()
 	ItemRackSettings.DisableAltClick = ItemRackSettings.DisableAltClick or "OFF" -- 2.23
 	ItemRackSettings.HidePetBattle = ItemRackSettings.HidePetBattle or "ON" -- 2.87
 	ItemRackSettings.HideArena = ItemRackSettings.HideArena or "OFF"
+	if not ItemRackSettings.LeftSlotsGoRightDefaultSet then
+		ItemRackSettings.LeftSlotsGoRight = "ON"
+		ItemRackSettings.LeftSlotsGoRightDefaultSet = true
+	end
 	ItemRackSettings.LeftSlotsGoRight = ItemRackSettings.LeftSlotsGoRight or "ON" -- 4.28
 	ItemRackSettings.RightSlotsGoLeft = ItemRackSettings.RightSlotsGoLeft or "OFF" -- 4.27.3
 	ItemRackSettings.TinyTooltipsQuickAccess = ItemRackSettings.TinyTooltipsQuickAccess or "OFF"
