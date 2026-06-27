@@ -881,7 +881,7 @@
 	</Button>
 
 
-	<Frame name="ItemRackOptFrame" hidden="true" movable="true" enableMouse="true" toplevel="true" inherits="BackdropTemplate">
+	<Frame name="ItemRackOptFrame" hidden="true" clampedToScreen="true" movable="true" enableMouse="true" toplevel="true" inherits="BackdropTemplate">
 		<Size>
 			<AbsDimension x="288" y="348"/>
 		</Size>
@@ -1357,6 +1357,8 @@
 					<EditBox name="ItemRackOptMenuScale" inherits="ItemRackNumberEditBoxTemplate"/>
 					<Slider name="ItemRackOptSetMenuWrapValueSlider" inherits="ItemRackOptSliderTemplate"/>
 					<EditBox name="ItemRackOptSetMenuWrapValue" inherits="ItemRackNumberEditBoxTemplate"/>
+					<Slider name="ItemRackOptCharMenuWrapValueSlider" inherits="ItemRackOptSliderTemplate"/>
+					<EditBox name="ItemRackOptCharMenuWrapValue" inherits="ItemRackNumberEditBoxTemplate"/>
 					<Button name="ItemRackOptList1" inherits="ItemRackOptTemplate" id="1">
 						<Anchors>
 							<Anchor point="TOPLEFT">
@@ -3644,7 +3646,7 @@
 	</Frame>
 
 
-	<Frame name="ItemRackFloatingEditor" parent="UIParent" movable="true" resizable="true" enableMouse="true" toplevel="true" hidden="true" inherits="BackdropTemplate">
+	<Frame name="ItemRackFloatingEditor" parent="UIParent" clampedToScreen="true" movable="true" resizable="true" enableMouse="true" toplevel="true" hidden="true" inherits="BackdropTemplate">
 		<Size>
 			<AbsDimension x="400" y="300"/>
 		</Size>

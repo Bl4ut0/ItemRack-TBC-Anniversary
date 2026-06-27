@@ -16,6 +16,7 @@ WTF/
 Images/
 .rules/
 .vscode
+.gemini/
 OmniCC/
 OmniCC_Config/
 .tools/

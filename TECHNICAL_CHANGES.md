@@ -6,6 +6,41 @@ This document details all modifications made to port ItemRack Classic to the TBC
 
 The TBC Anniversary Edition runs on a modern WoW client engine (similar to Retail), which means many APIs have been moved to new namespaces or deprecated. This port adds compatibility shims and fixes to ensure ItemRack functions correctly.
 
+## Action Bar Button Taint Fix (GameTooltip:Show)
+**File:** [ItemRack.lua](file:///c:/Dev%20Projects/ItemRack/ItemRack/ItemRack.lua) — `ItemRack.ListSetsHavingItem`
+
+### Problem
+Hovering over Blizzard action bar buttons would intermittently throw `ADDON_ACTION_BLOCKED` errors on protected calls like `ActionButton1:SetAttribute()` within `UpdatePressAndHoldAction`.
+
+### Root Cause
+Whenever the player hovered over items in their bags or character sheet slots, `ItemRack` appended the set names containing the item to the tooltip.
+In the secure hooks (`SetBagItem`, `SetInventoryItem`, `SetHyperlink`), `ListSetsHavingItem` called `tooltip:Show()` to force the tooltip to resize and update.
+Because `hooksecurefunc` callbacks execute in the addon's insecure context, calling `Show()` on the shared `GameTooltip` tainted the tooltip frame.
+When the user subsequently hovered over an Action Bar button, the Blizzard UI called `GameTooltip:SetOwner(ActionButton, ...)` which propagated the taint to the Action Button.
+Once the secure button became tainted, any internal Blizzard ActionButton functions attempting protected operations (like `SetAttribute`) were blocked.
+
+### Solution
+Removed the redundant `tooltip:Show()` call from `ListSetsHavingItem`. Since Blizzard's default UI already calls `Show()` at the end of the item-hover execution path, the tooltip is refreshed and drawn in a secure context with our added lines, completely preventing taint propagation.
+
+---
+
+## Auto-Queue Stuck Slots Fix
+**File:** [ItemRack.lua](file:///c:/Dev%20Projects/ItemRack/ItemRack/ItemRack.lua) — `ItemRack.LocksChanged`
+
+### Problem
+When equipping an item set containing multiple items that are already on cooldown with Auto-Queue enabled for those slots, only the first slot would get auto-swapped. The subsequent slots would get stuck and never swap.
+
+### Root Cause
+During the set swap or subsequent periodic queue check, the first slot swap locks that slot.
+When processing the next auto-queued slot, `EquipItemByID` checks `AnythingLocked()`. Since the first slot is locked, `EquipItemByID` defers the second slot's swap by adding it to `ItemRack.CombatQueue`.
+When the first slot's swap finishes, `ITEM_LOCK_CHANGED` triggers `LocksChanged()`. However, `LocksChanged()` originally had no checks to process the `CombatQueue` when OOC. The combat queue would remain unprocessed indefinitely outside of combat, keeping the slots stuck.
+
+### Solution
+Modified `LocksChanged()` to process `CombatQueue` and `SetsWaiting` sequentially inside the `else` block:
+- If there are items in `CombatQueue`, no items are locked, player is not casting, and player is not in combat, we trigger `ProcessCombatQueue()`.
+- If `ProcessCombatQueue()` initiates a swap, `AnythingLocked()` becomes true, preventing `ProcessSetsWaiting()` from executing in the same frame.
+- If `ProcessCombatQueue()` does not swap anything (or is empty), `AnythingLocked()` remains false and we proceed to evaluate and process `SetsWaiting` immediately.
+
 ---
 
 ## GameTooltip Taint Fix (ADDON_ACTION_BLOCKED)
@@ -287,14 +322,14 @@ end
 | File | Changes |
 |------|---------|
 | `ItemRack/ItemRack.toc` | Version 4.27, Interface 20505, updated author |
-| `ItemRack/ItemRack.lua` | C_AddOns, C_Container, C_Item shims, AuraUtil shim, Menu item count logic |
-| `ItemRack/ItemRackButtons.lua` | LoadAddOn shim, Item count/Ammo slot display logic |
+| `ItemRack/ItemRack.lua` | C_AddOns, C_Container, C_Item shims, AuraUtil shim, Menu item count logic, Options scale settings/sync/audit, Menu wrap float bugfix |
+| `ItemRack/ItemRackButtons.lua` | LoadAddOn shim, Item count/Ammo slot display logic, Reset options scale settings |
 | `ItemRack/ItemRackButtons.xml` | ActionBarButtonTemplate inheritance |
 | `ItemRack/ItemRackEquip.lua` | C_Container shims, Spec-to-Gear logic, UI persistence checks |
 | `ItemRack/ItemRackQueue.lua` | GetItemCooldown shim (C_Container), GetItemSpell/GetItemCount/IsEquippedItem shims |
 | `ItemRack/ItemRackEvents.lua` | Spec stability timer, redundancy filters |
 | `ItemRackOptions/ItemRackOptions.toc` | Version 4.27, Interface 20505 |
-| `ItemRackOptions/ItemRackOptions.lua` | Dual Spec UI spacing, SpecDirty tracking, Save Set consistency |
+| `ItemRackOptions/ItemRackOptions.lua` | Dual Spec UI spacing, SpecDirty tracking, Save Set consistency, Sizing accessibility checkboxes |
 
 ---
 
@@ -326,3 +361,50 @@ Additionally, we overrode the standard interaction textures (`PushedTexture`, `H
     end
 </OnLoad>
 ```
+
+---
+
+## Options Sizing and Menu Wrap Improvements
+**Files:** `ItemRack.lua`, `ItemRackButtons.lua`, `ItemRackOptions.lua`, `ItemRackOptions.xml`
+
+### Sizing Accessibility Checkboxes
+- Replaced the options scale slider/editbox with three mutual-exclusive checkboxes: **Default size** (1.0), **Bigger** (1.3), and **Biggest** (1.6) for visual accessibility.
+- Added backward-compatible profile migration inside `ItemRack.AuditSavedVariables()` to automatically translate any existing slider-based numeric scale values to the closest checkbox state.
+- Integrated checkbox states into the `"Reset Buttons"` routine.
+
+### Menu Wrap Float Bugfix
+- Fixed a layout bug in `ItemRack.BuildMenu()` where popout menus (such as the sets list menu) failed to wrap when `SetMenuWrap` was enabled. 
+- Because WoW's `Slider:GetValue()` API returns floating-point values, `col == max_cols` (e.g. `3 == 3.0000001`) would fail to match, causing the row to extend indefinitely in a single line while leaving the backdrop frame broken.
+- Resolved this by casting `ItemRackUser.SetMenuWrapValue` using `math.floor` and changing the comparison check to `col >= max_cols`.
+
+### Separated Quick Menu and Character Menu Wrapping
+- Split the menu wrapping functionality into two distinct user settings to avoid layout conflicts:
+  - **Quick Menu Wrap** (`SetMenuWrap` / `SetMenuWrapValue`): Applied to quick access buttons and sets popout menus, which extend vertically (wrapping horizontally).
+  - **Character Sheet Menu Wrap** (`CharMenuWrap` / `CharMenuWrapValue`): Applied to character pane slot hover menus, which extend horizontally (wrapping vertically).
+- Updated the defaults, self-healing/saved variables auditing, button reset functions, and options window widgets to register and control both sets of settings independently.
+
+---
+
+## Options Window Screen Clamping
+**Files:** `ItemRackOptions/ItemRackOptions.lua`, `ItemRackOptions/ItemRackOptions.xml`
+
+### Problem
+When the Options panel scale is increased using the new accessibility checkboxes (**Bigger** at 130% or **Biggest** at 160%), the frame can easily clip or open completely off-screen, particularly on lower resolutions or if the panel was previously dragged near a screen edge.
+
+### Solution
+- Added `clampedToScreen="true"` attributes to both `ItemRackOptFrame` and `ItemRackFloatingEditor` in the XML definitions.
+- Added programmatical enforcement via `self:SetClampedToScreen(true)` in `ItemRackOpt.OnLoad()`.
+- Updated `ItemRackOpt.ReflectOptScale()` to toggle the clamping state (`SetClampedToScreen(false)` followed by `SetClampedToScreen(true)`) whenever the scale is updated. Toggling the clamp state forces WoW's layout engine to immediately recalculate the frame boundaries and snap it back within the visible screen area.
+
+---
+
+## Manual Swaps Combat Queue Fix
+**File:** `ItemRack/ItemRackQueue.lua`
+
+### Problem
+When the player is in combat and triggers a manual item or set swap, the swap is queued in `ItemRack.CombatQueue`. However, if the currently equipped item in that slot has no active cooldown (meaning `ready` is true), the periodic auto-queue processor `ItemRack.ProcessAutoQueue()` would immediately identify the equipped item as ready and call `ItemRack.RemoveFromCombatQueue(slot)`. This silently deleted the user's manual swap from the combat queue before combat ended, resulting in ignored swaps.
+
+### Solution
+- Updated the queue removal condition in `ItemRack.ProcessAutoQueue()` to verify the swap's origin.
+- Guarded the cleanup check with `ItemRack.AutoQueueFlag` and `ItemRack.AutoQueueFlag[slot]`.
+- This ensures that only auto-queued swaps (which have `AutoQueueFlag[slot] = true`) are removed from the queue when the equipped item is ready, while manual item/set swaps are safely preserved.

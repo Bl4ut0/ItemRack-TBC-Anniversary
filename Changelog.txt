@@ -1,5 +1,31 @@
 __ Development __
 - Folder Structure Collapse: Consolidated ItemRack, Libs, and ItemRackOptions into a single root-level flattened directory structure to simplify installation and packaging.
+- Fixed character sheet left-side popout menus rendering off-screen by default in the default WoW UI. Defaulted LeftSlotsGoRight to "ON" and added a one-time profile migration to update existing configurations.
+- Fixed ADDON_ACTION_BLOCKED taint errors on Blizzard action buttons (SetAttribute) caused by calling tooltip:Show() inside ListSetsHavingItem under insecure hooks. Removed the redundant Show() call.
+- Resolved a bug where equipping an item set containing multiple items already on cooldown (with Auto-Queue enabled) only swapped the first slot. Subsequent slots were deferred to the combat queue and got stuck outside of combat. ItemRack.LocksChanged() now sequentially processes deferred combat queue swaps and waiting sets.
+- Fixed a bug where manual item or set swaps queued during combat were deleted from the combat queue if the currently equipped item was ready (cooldown finished). Added an AutoQueueFlag check to ensure only auto-queued items are removed from the queue.
+
+__ New in 4.40-beta2 - By Bl4ut0 __
+- Resolved a bug where equipping an item set containing multiple items already on cooldown (with Auto-Queue enabled) only swapped the first slot. Subsequent slots were deferred to the combat queue and got stuck outside of combat. ItemRack.LocksChanged() now sequentially processes deferred combat queue swaps and waiting sets.
+- Fixed a bug where manual item or set swaps queued during combat were deleted from the combat queue if the currently equipped item was ready (cooldown finished). Added an AutoQueueFlag check to ensure only auto-queued items are removed from the queue.
+
+__ New in 4.40-beta1 - By Bl4ut0 __
+- Fixed a bug where manual item or set swaps queued during combat were deleted from the combat queue if the currently equipped item was ready (cooldown finished). Added an AutoQueueFlag check to ensure only auto-queued items are removed from the queue.
+
+__ New in 4.39.9 - By Bl4ut0 __
+- Enabled screen clamping for the main options frame (ItemRackOptFrame) and the event script editor (ItemRackFloatingEditor) to prevent windows from clipping off-screen when scaled up.
+
+__ New in 4.39.8 - By Bl4ut0 __
+- Added Options panel accessibility sizing checkboxes (Default, Bigger, Biggest) to scale the settings UI (100%, 130%, 160% scale).
+- Split the menu wrapping functionality into two independent settings: "Quick menu wrap" (horizontal expansion, e.g. for quick access buttons) and "Char sheet wrap" (vertical expansion, e.g. for slot hover menus) to prevent layout conflicts.
+- Fixed a layout bug where floating-point values returned from WoW's slider API caused popout menu wrapping to fail, leaving backdrop frames broken.
+
+__ New in 4.39.7 - By Bl4ut0 __
+- Fixed a bug where right-side character sheet slots (Gloves through Rings) would have their tooltips anchor to the left and overlap the popout menus by replacing coordinate-based layout checks with a deterministic settings-based evaluation.
+
+__ New in 4.39.6 - By Bl4ut0 __
+- Fixed tooltip anchoring inconsistency for right-side character sheet slots to pop out to the left by default (matching the pre-4.39.4 default behavior) and aligned AnchorTooltip to match.
+
 
 __ New in 4.39.5 - By Bl4ut0 __
 - Centralized event recheck scheduler triggers automatic settled rechecks at 0.5s/1.5s on world loading and zone boundaries.

@@ -234,8 +234,14 @@ ItemRackUser = {
 	Alpha = 1, -- alpha of buttons
 	MainScale = 1, -- scale of the dockable buttons
 	MenuScale = .85, -- scale of the menu in relation to docked buttons
+	OptScale = 1, -- scale of the options frame
+	OptSizeDefault = "ON",
+	OptSizeBigger = "OFF",
+	OptSizeBiggest = "OFF",
 	SetMenuWrap = "OFF", -- whether user defines when to wrap the menu
 	SetMenuWrapValue = 3, -- when to wrap the menu if user defined
+	CharMenuWrap = "OFF", -- whether user defines when to wrap the character sheet menu
+	CharMenuWrapValue = 3, -- when to wrap the character sheet menu if user defined
 }
 
 ItemRackSettings = {
@@ -268,7 +274,8 @@ ItemRackSettings = {
 	EquipOnSetPick = "OFF", -- whether to equip a set when picked in the set tab of options
 	MinimapTooltip = "ON", -- whether to display the minimap button tooltip to explain clicks
 	CharacterSheetMenus = "ON", -- whether to display slot menus on mouseover of the character sheet
-	LeftSlotsGoRight = "OFF", -- whether left-side character slots dock their menus to the RIGHT instead of left
+	LeftSlotsGoRight = "ON", -- whether left-side character slots dock their menus to the RIGHT instead of left
+	LeftSlotsGoRightDefaultSet = true, -- whether the default has been set/migrated to ON to fix off-screen issue
 	RightSlotsGoLeft = "OFF", -- whether right-side character slots dock their menus to the LEFT instead of right
 	DisableAltClick = "OFF", -- whether to disable Alt+click from toggling auto queue (to allow self cast through)
 	TooltipColorUnEquipped = "OFF", -- whether to highlight unequipped set items in orange
@@ -495,6 +502,52 @@ function ItemRack.AuditSavedVariables(printToChat)
 	end
 	if not ItemRackUser.Hidden then
 		ItemRackUser.Hidden = {}
+	end
+
+	-- Ensure default settings in ItemRackUser
+	local userDefaults = {
+		Locked = "OFF",
+		EnableEvents = "ON",
+		EnableQueues = "ON",
+		EnablePerSetQueues = "OFF",
+		EnableQueueContextCheck = "ON",
+		ButtonSpacing = 4,
+		Alpha = 1,
+		MainScale = 1,
+		MenuScale = .85,
+		OptScale = 1,
+		OptSizeDefault = "ON",
+		OptSizeBigger = "OFF",
+		OptSizeBiggest = "OFF",
+		SetMenuWrap = "OFF",
+		SetMenuWrapValue = 3,
+		CharMenuWrap = "OFF",
+		CharMenuWrapValue = 3,
+	}
+	for k, v in pairs(userDefaults) do
+		if ItemRackUser[k] == nil then
+			ItemRackUser[k] = v
+		end
+	end
+
+	-- Sync checkboxes with OptScale if they are inconsistent
+	if ItemRackUser.OptScale then
+		if ItemRackUser.OptScale > 1.45 then
+			ItemRackUser.OptSizeDefault = "OFF"
+			ItemRackUser.OptSizeBigger = "OFF"
+			ItemRackUser.OptSizeBiggest = "ON"
+			ItemRackUser.OptScale = 1.6
+		elseif ItemRackUser.OptScale > 1.15 then
+			ItemRackUser.OptSizeDefault = "OFF"
+			ItemRackUser.OptSizeBigger = "ON"
+			ItemRackUser.OptSizeBiggest = "OFF"
+			ItemRackUser.OptScale = 1.3
+		else
+			ItemRackUser.OptSizeDefault = "ON"
+			ItemRackUser.OptSizeBigger = "OFF"
+			ItemRackUser.OptSizeBiggest = "OFF"
+			ItemRackUser.OptScale = 1.0
+		end
 	end
 
 	-- 1. Check CurrentSet
@@ -1109,7 +1162,6 @@ do
 			tooltip:AddDoubleLine("ItemRack Set: ", name, 0,.6,1, 0,.6,1)
 			data[name] = nil
 		end
-		tooltip:Show()
 	end
 end
 
@@ -1224,6 +1276,10 @@ function ItemRack.InitCore()
 	ItemRackSettings.DisableAltClick = ItemRackSettings.DisableAltClick or "OFF" -- 2.23
 	ItemRackSettings.HidePetBattle = ItemRackSettings.HidePetBattle or "ON" -- 2.87
 	ItemRackSettings.HideArena = ItemRackSettings.HideArena or "OFF"
+	if not ItemRackSettings.LeftSlotsGoRightDefaultSet then
+		ItemRackSettings.LeftSlotsGoRight = "ON"
+		ItemRackSettings.LeftSlotsGoRightDefaultSet = true
+	end
 	ItemRackSettings.LeftSlotsGoRight = ItemRackSettings.LeftSlotsGoRight or "ON" -- 4.28
 	ItemRackSettings.RightSlotsGoLeft = ItemRackSettings.RightSlotsGoLeft or "OFF" -- 4.27.3
 	ItemRackSettings.TinyTooltipsQuickAccess = ItemRackSettings.TinyTooltipsQuickAccess or "OFF"
@@ -1689,8 +1745,13 @@ function ItemRack.LocksChanged()
 	elseif ItemRackMenuFrame:IsVisible() and ItemRack.BankOpen and not ItemRack.AnythingLocked() then
 		ItemRackMenuFrame:Hide()
 		ItemRack.BuildMenu()
-	elseif #(ItemRack.SetsWaiting)>0 and not ItemRack.AnythingLocked() then
-		ItemRack.ProcessSetsWaiting()
+	else
+		if next(ItemRack.CombatQueue) and not ItemRack.AnythingLocked() and not ItemRack.NowCasting and not InCombatLockdown() then
+			ItemRack.ProcessCombatQueue()
+		end
+		if #(ItemRack.SetsWaiting)>0 and not ItemRack.AnythingLocked() then
+			ItemRack.ProcessSetsWaiting()
+		end
 	end
 end
 
@@ -1934,21 +1995,40 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 		local col,row,xpos,ypos = 0,0,ItemRack.DockInfo[ItemRack.currentDock].xstart,ItemRack.DockInfo[ItemRack.currentDock].ystart
 		local menuCount = #(ItemRack.Menu)
 		local max_cols, button, icon
-		if ItemRackUser.SetMenuWrap=="ON" then
-			local wrapValue = tonumber(ItemRackUser.SetMenuWrapValue) or 3
-			max_cols = math.max(1, math.min(wrapValue, menuCount))
-		else
-			-- Dynamic wrap based on count to keep popups compact but manageable
-			if menuCount > 24 then
-				max_cols = 6
-			elseif menuCount > 12 then
-				max_cols = 4
-			elseif menuCount > 8 then
-				max_cols = 3
-			elseif menuCount > 4 then
-				max_cols = 2
+		local isCharSheet = (masqueGroup == 3) or (ItemRack.menuDockedTo and string.find(ItemRack.menuDockedTo, "^Character"))
+		if isCharSheet then
+			if ItemRackUser.CharMenuWrap=="ON" then
+				max_cols = math.floor(tonumber(ItemRackUser.CharMenuWrapValue) or 3)
 			else
-				max_cols = 1
+				-- Dynamic wrap based on count to keep popups compact but manageable
+				if menuCount > 24 then
+					max_cols = 6
+				elseif menuCount > 12 then
+					max_cols = 4
+				elseif menuCount > 8 then
+					max_cols = 3
+				elseif menuCount > 4 then
+					max_cols = 2
+				else
+					max_cols = 1
+				end
+			end
+		else
+			if ItemRackUser.SetMenuWrap=="ON" then
+				max_cols = math.floor(tonumber(ItemRackUser.SetMenuWrapValue) or 3)
+			else
+				-- Dynamic wrap based on count to keep popups compact but manageable
+				if menuCount > 24 then
+					max_cols = 6
+				elseif menuCount > 12 then
+					max_cols = 4
+				elseif menuCount > 8 then
+					max_cols = 3
+				elseif menuCount > 4 then
+					max_cols = 2
+				else
+					max_cols = 1
+				end
 			end
 		end
 
@@ -1985,7 +2065,7 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 			if ItemRack.menuOrient=="VERTICAL" then
 				xpos = xpos + ItemRack.DockInfo[ItemRack.currentDock].xdir*40
 				col = col + 1
-				if col==max_cols then
+				if col>=max_cols then
 					xpos = ItemRack.DockInfo[ItemRack.currentDock].xstart
 					col = 0
 					ypos = ypos + ItemRack.DockInfo[ItemRack.currentDock].ydir*40
@@ -1995,7 +2075,7 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 			else
 				ypos = ypos + ItemRack.DockInfo[ItemRack.currentDock].ydir*40
 				col = col + 1
-				if col==max_cols then
+				if col>=max_cols then
 					ypos = ItemRack.DockInfo[ItemRack.currentDock].ystart
 					col = 0
 					xpos = xpos + ItemRack.DockInfo[ItemRack.currentDock].xdir*40
@@ -2805,15 +2885,15 @@ function ItemRack.AnchorTooltip(owner)
 					GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
 				elseif slot==1 or slot==2 or slot==3 or slot==15 or slot==5 or slot==4 or slot==19 or slot==9 then
 					if ItemRackSettings.LeftSlotsGoRight == "ON" then
-						GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+						GameTooltip:SetOwner(ItemRackMenuFrame, "ANCHOR_RIGHT")
 					else
-						GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
+						GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
 					end
 				else
 					if ItemRackSettings.RightSlotsGoLeft == "ON" then
-						GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
-					else
 						GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+					else
+						GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
 					end
 				end
 			end
@@ -3101,7 +3181,14 @@ function PaperDollItemSlotButton_OnEnter(self)
 	if isMenuOpen and slot then
 		local desiredOwner, desiredAnchor
 		
-		local menuOnRight = (ItemRackMenuFrame:GetLeft() or 0) >= (self:GetLeft() or 0)
+		local menuOnRight
+		if slot == 0 or (slot >= 16 and slot <= 18) then
+			menuOnRight = false
+		elseif slot==1 or slot==2 or slot==3 or slot==15 or slot==5 or slot==4 or slot==19 or slot==9 then
+			menuOnRight = (ItemRackSettings.LeftSlotsGoRight == "ON")
+		else
+			menuOnRight = (ItemRackSettings.RightSlotsGoLeft ~= "ON")
+		end
 		
 		if slot == 0 or (slot >= 16 and slot <= 18) then
 			-- Bottom slots: menu goes down. Tooltip to the right is fine.
@@ -3763,6 +3850,7 @@ function ItemRack.SlashHandler(arg1)
 				{ name = "ItemRackUser.Alpha", val = ItemRackUser.Alpha },
 				{ name = "ItemRackUser.MainScale", val = ItemRackUser.MainScale },
 				{ name = "ItemRackUser.MenuScale", val = ItemRackUser.MenuScale },
+				{ name = "ItemRackUser.OptScale", val = ItemRackUser.OptScale },
 				{ name = "ItemRackUser.SetMenuWrap", val = ItemRackUser.SetMenuWrap },
 				{ name = "ItemRackUser.SetMenuWrapValue", val = ItemRackUser.SetMenuWrapValue },
 				

@@ -3,8 +3,39 @@
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
 ## [Development]
-### Folder Structure Collapse
 - **Single-Folder Flattened Directory Structure**: Consolidated ItemRack, Libs, and ItemRackOptions into a single root-level flattened directory structure to simplify installation and packaging.
+- **Left-side Menus Off-screen Fix**: Fixed character sheet left-side popout menus rendering off-screen by default in the default WoW UI. Defaulted `LeftSlotsGoRight` to `"ON"` and added a one-time profile migration to update existing configurations.
+- **GameTooltip Taint Fix**: Fixed `ADDON_ACTION_BLOCKED` taint errors on Blizzard action buttons (`SetAttribute`) caused by calling `tooltip:Show()` inside `ListSetsHavingItem` under insecure hooks. Removed the redundant `Show()` call.
+- **Auto-Queue Stuck Slots Fix**: Resolved a bug where equipping an item set containing multiple items already on cooldown (with Auto-Queue enabled) only swapped the first slot. Subsequent slots were deferred to the combat queue and got stuck outside of combat. `ItemRack.LocksChanged()` now sequentially processes deferred combat queue swaps and waiting sets.
+- **Manual Swaps Combat Queue Fix**: Fixed a bug where manual item swaps or manual set swaps queued during combat were deleted from the combat queue if the currently equipped item in that slot was ready (had no active cooldown). `ProcessAutoQueue` now respects `ItemRack.AutoQueueFlag[slot]` and only removes auto-queued swaps.
+
+## [4.40-beta2] - 2026-06-15
+### Bug Fixes & Improvements
+- **Auto-Queue Stuck Slots Fix**: Resolved a bug where equipping an item set containing multiple items already on cooldown (with Auto-Queue enabled) only swapped the first slot. Subsequent slots were deferred to the combat queue and got stuck outside of combat. `ItemRack.LocksChanged()` now sequentially processes deferred combat queue swaps and waiting sets.
+- **Manual Swaps Combat Queue Fix**: Fixed a bug where manual item swaps or manual set swaps queued during combat were deleted from the combat queue if the currently equipped item in that slot was ready (had no active cooldown). `ProcessAutoQueue` now respects `ItemRack.AutoQueueFlag[slot]` and only removes auto-queued swaps.
+
+## [4.40-beta1] - 2026-06-14
+### Bug Fixes & Improvements
+- **Manual Swaps Combat Queue Fix**: Fixed a bug where manual item swaps or manual set swaps queued during combat were deleted from the combat queue if the currently equipped item in that slot was ready (had no active cooldown). `ProcessAutoQueue` now respects `ItemRack.AutoQueueFlag[slot]` and only removes auto-queued swaps.
+
+## [4.39.9] - 2026-06-14
+### Bug Fixes & Improvements
+- **Options Screen Clamping**: Enabled `clampedToScreen` and added runtime clamping updates for `ItemRackOptFrame` and `ItemRackFloatingEditor`. This prevents the options page and script editor from clipping off-screen when the frame scale is increased.
+
+## [4.39.8] - 2026-06-13
+### Accessibility & Layout Improvements
+- **Accessibility Options Sizing**: Replaced the options scale slider/editbox with three mutual-exclusive checkboxes (**Default size**, **Bigger**, and **Biggest**) to easily size the options frame for visually impaired players. Profile migration auto-maps existing custom slider scales onto the checkboxes on login.
+- **Separated Wrap Settings**: Split menu wrapping into two independent settings: **Quick menu wrap** (for quick-access and set-list dropdowns, wrapping horizontally) and **Char sheet wrap** (for character pane hover lists, wrapping vertically). This prevents layout conflicts arising from different default orientations.
+- **Set Menu Wrap Layout Bugfix**: Fixed a layout bug where floating-point numbers returned from WoW's slider API (e.g. `3.0000001` instead of `3`) caused wrapping logic (`col == max_cols`) to fail. Added `math.floor` cast and `>=` comparison to ensure correct wrapping on popout menus (like the sets menu).
+
+## [4.39.7] - 2026-06-12
+### Bug Fixes
+- **Tooltip Anchoring Overlap**: Fixed a bug where right-side character sheet slots (Gloves through Rings) would have their tooltips anchor to the left and overlap the popout menus due to a timing race condition with coordinate-based layout evaluations. Replaced coordinate lookups with a deterministic settings-based evaluation.
+
+## [4.39.6] - 2026-06-12
+### Bug Fixes
+- **Tooltip Anchoring Inconsistency**: Restored the tooltip default popout direction for right-side slots to the left (matching the behavior prior to version 4.39.4). Aligned the `AnchorTooltip` logic to match the slot-enter layout, resolving positioning conflicts and flickering during active cooldown updates.
+
 
 ## [4.39.5] - 2026-06-12
 ### Event Swapping & Instance Transitions

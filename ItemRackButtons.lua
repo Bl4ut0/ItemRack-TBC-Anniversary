@@ -1326,9 +1326,18 @@ function ItemRack.ResetButtons()
 	ItemRackUser.Locked = "OFF"
 	ItemRackUser.MainScale = 1
 	ItemRackUser.MenuScale = .85
+	ItemRackUser.OptScale = 1
+	ItemRackUser.OptSizeDefault = "ON"
+	ItemRackUser.OptSizeBigger = "OFF"
+	ItemRackUser.OptSizeBiggest = "OFF"
+	ItemRackUser.CharMenuWrap = "OFF"
+	ItemRackUser.CharMenuWrapValue = 3
 	if ItemRackOpt then
 		ItemRackOpt.UpdateSlider("Alpha")
 		ItemRackOpt.UpdateSlider("MenuScale")
 		ItemRackOpt.UpdateSlider("MainScale")
+		ItemRackOpt.UpdateSlider("CharMenuWrapValue")
+		ItemRackOpt.ReflectOptScale()
+		ItemRackOpt.ListScrollFrameUpdate()
 	end
 end
