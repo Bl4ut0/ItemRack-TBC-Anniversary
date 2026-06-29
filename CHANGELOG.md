@@ -3,6 +3,7 @@
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
 ## [Development]
+- **TBC PTR 2.5.6 Support**: Added interface version `20506` to `ItemRack.toc` to ensure compatibility with the Burning Crusade Classic 2.5.6 PTR client.
 - **Single-Folder Flattened Directory Structure**: Consolidated ItemRack, Libs, and ItemRackOptions into a single root-level flattened directory structure to simplify installation and packaging.
 - **Left-side Menus Off-screen Fix**: Fixed character sheet left-side popout menus rendering off-screen by default in the default WoW UI. Defaulted `LeftSlotsGoRight` to `"ON"` and added a one-time profile migration to update existing configurations.
 - **GameTooltip Taint Fix**: Fixed `ADDON_ACTION_BLOCKED` taint errors on Blizzard action buttons (`SetAttribute`) caused by calling `tooltip:Show()` inside `ListSetsHavingItem` under insecure hooks. Removed the redundant `Show()` call.
