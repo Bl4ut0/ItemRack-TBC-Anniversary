@@ -286,7 +286,16 @@ function ItemRack.InitButtons()
 	local button
 	for i=0,20 do
 		button = _G["ItemRackButton"..i]
-			if i<20 then
+		
+		-- Securely wrap Show to prevent external/Blizzard systems from showing inactive buttons
+		local origShow = button.Show
+		button.Show = function(self)
+			if ItemRackUser.Buttons and ItemRackUser.Buttons[self:GetID()] then
+				origShow(self)
+			end
+		end
+
+		if i<20 then
 			button:SetAttribute("type",nil)
 			button:SetAttribute("type1","item")
 			button:SetAttribute("slot",i)
