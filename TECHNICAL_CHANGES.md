@@ -404,3 +404,45 @@ When the player is in combat and triggers a manual item or set swap, the swap is
 - Updated the queue removal condition in `ItemRack.ProcessAutoQueue()` to verify the swap's origin.
 - Guarded the cleanup check with `ItemRack.AutoQueueFlag` and `ItemRack.AutoQueueFlag[slot]`.
 - This ensures that only auto-queued swaps (which have `AutoQueueFlag[slot] = true`) are removed from the queue when the equipped item is ready, while manual item/set swaps are safely preserved.
+
+---
+
+## Forced-Dismount & Mounted Zone Transition Recovery
+**File:** `ItemRack/ItemRackEvents.lua`, `ItemRack/ItemRack.lua`
+
+### Problem
+When teleported via portal, summoned, or entering instances while mounted, the client forcibly dismounts the player before or during the zone load. Previously, destination `Zone` events executed before the mount set was popped, causing the new `Zone` set to record `Mounted` as its `oldset` (previous gear history). This resulted in inactive mount entries trapped on `ItemRackUser.EventStack` and circular `Zone -> Mounted -> Zone` gear restoration loops.
+
+### Solution
+1. **Unwinding Invalid Mount Events:** Implemented `reconcileInvalidMountEvents(isMounted, instanceType)` which scans `EventStack` topmost-first and unwinds any invalid/excluded mount layers *before* any destination Zone event is evaluated.
+2. **Mounted Zone Re-Basing:** Implemented `prepareMountRebase(eventName)`: When moving between zones while remaining mounted, old mount layers unwind one step first so the destination Zone set records clean base gear history before the mount layer is re-applied.
+3. **Zone Placement Under Mount:** Implemented `ensureZoneEventBelowMount(zoneEventName, mountEventName)` to place matching Zone events underneath active mount layers without forcing redundant item swaps.
+4. **Transition Deferral Guards:** Added `mountZoneSwapBusy()` checks (combat, casting, death, active locks) and `scheduleMountZoneRecheck(...)` to safely defer transition processing when restrictions exist. `ProcessBuffEvent()` is paused while `ItemRack.MountZoneTransitionDeferred` is set.
+
+---
+
+## Live Set Restoration Cycle Prevention
+**File:** `ItemRack/ItemRackEquip.lua`
+
+### Problem
+If a user manually or automatically toggles back and forth between two sets during gameplay (e.g. `SetA` -> `SetB` -> `SetA`), `SetA.oldset` was recorded as `SetB` while `SetB.oldset` remained `SetA`. This created a live circular restoration loop (`SetA <-> SetB`) in the database during gameplay, causing `UnequipSet` to bounce infinitely between sets, freeze UI swaps, and require a UI reload or addon restart.
+
+### Solution
+Implemented `ItemRack.PreventLiveOldsetCycle(targetSet, proposedOldSet)` in `ItemRackEquip.lua`:
+- Executed before `set.oldset = ItemRackUser.CurrentSet` in `EquipSet`.
+- Traverses `proposedOldSet`'s `oldset` chain. If `targetSet` is already present anywhere in `proposedOldSet`'s chain, a cycle is detected.
+- Splices `targetSet` out of its previous position in the chain by updating `targetSet`'s ancestor to point to `targetSet`'s current `oldset`, and then places `targetSet` cleanly at the top of the linear chain.
+- Guarantees that the `oldset` chain remains strictly linear (`Base -> SetB -> SetA`) regardless of how many times the user toggles between sets back and forth.
+
+---
+
+## In-Combat Weapon Swapping
+**Files:** `ItemRack/ItemRackEquip.lua`, `ItemRack/ItemRack.lua`
+
+### Problem
+While WoW blocks armor slot swaps (slots 0–15, 19) in combat, weapon slot swaps (slots 16 Mainhand, 17 Offhand, 18 Ranged) are permitted by the game engine. Previously, `EquipSet` and `ProcessCombatQueue` deferred all item slots (including weapons) to `CombatQueue` until out of combat (`InCombatLockdown() == false`).
+
+### Solution
+- Updated `EquipSet` in `ItemRackEquip.lua`: When in combat, `canSwapWeaponInCombat` checks if a slot is a weapon slot (16, 17, 18). If the player is not spellcasting (`NowCasting`) and not dead, weapon slots bypass the `CombatQueue` deferral and execute **immediately in combat** via `IterateSwapList`. Non-weapon armor slots continue to defer safely to `CombatQueue`.
+- Updated `ProcessCombatQueue` in `ItemRack/ItemRack.lua`: Weapon slots (16, 17, 18) in `CombatQueue` evaluate `canSwap = (not inCombat) or (isWeaponSlot and not ItemRack.NowCasting and not ItemRack.IsPlayerReallyDead())`. If a weapon swap was queued while mid-cast, as soon as the spellcast finishes (`OnCastingStop`), `ProcessCombatQueue` executes the weapon swap mid-combat without waiting for combat to end.
+
