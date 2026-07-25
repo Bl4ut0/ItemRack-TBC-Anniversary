@@ -4,6 +4,9 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 
 ## [Development]
 
+### Improvements
+- **Classic Era 1.15.9 Support**: Updated interface version from 11508 to 11509 in TOC files for Classic Era 1.15.9 (build 68808) compatibility, while maintaining support for TBC Anniversary 2.5.5 and 2.5.6.
+
 ## [4.41] - 2026-07-25
 
 ### Bug Fixes & Improvements

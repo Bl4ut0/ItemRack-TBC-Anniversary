@@ -1,4 +1,5 @@
 __ Development __
+- Updated interface version from 11508 to 11509 in TOC files for Classic Era 1.15.9 (build 68808) support while retaining TBC Anniversary 2.5.5 and 2.5.6 support.
 
 __ New in 4.41 - By Bl4ut0 __
 - Fixed a bug where quick-access buttons that had been toggled off (removed) would reappear as empty grey squares on login or character reload. Securely wrapped the button's Show() method to prevent external addons (like Masque) or Blizzard's internal Action Bar system from showing buttons that are not currently active in the user's layout.
