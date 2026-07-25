@@ -1,4 +1,6 @@
 __ Development __
+
+__ New in 4.42 - By Bl4ut0 __
 - Updated interface version from 11508 to 11509 in TOC files for Classic Era 1.15.9 (build 68808) support while retaining TBC Anniversary 2.5.5 and 2.5.6 support.
 
 __ New in 4.41 - By Bl4ut0 __
