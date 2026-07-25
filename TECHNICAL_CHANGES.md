@@ -446,3 +446,23 @@ While WoW blocks armor slot swaps (slots 0–15, 19) in combat, weapon slot swap
 - Updated `EquipSet` in `ItemRackEquip.lua`: When in combat, `canSwapWeaponInCombat` checks if a slot is a weapon slot (16, 17, 18). If the player is not spellcasting (`NowCasting`) and not dead, weapon slots bypass the `CombatQueue` deferral and execute **immediately in combat** via `IterateSwapList`. Non-weapon armor slots continue to defer safely to `CombatQueue`.
 - Updated `ProcessCombatQueue` in `ItemRack/ItemRack.lua`: Weapon slots (16, 17, 18) in `CombatQueue` evaluate `canSwap = (not inCombat) or (isWeaponSlot and not ItemRack.NowCasting and not ItemRack.IsPlayerReallyDead())`. If a weapon swap was queued while mid-cast, as soon as the spellcast finishes (`OnCastingStop`), `ProcessCombatQueue` executes the weapon swap mid-combat without waiting for combat to end.
 
+---
+
+## Event Enable/Disable Spin-Down & Spin-Up
+**Files:** `ItemRack/ItemRackEvents.lua`, `ItemRackOptions/ItemRackOptions.lua`
+
+### Problem
+Previously, unchecking (disabling) an event in the Events Options menu or deleting an active event left its set equipped on the player if the event was currently active (`eventData.Active == true` or present on `ItemRackUser.EventStack`). The user had to manually unequip the set or re-log to revert back to their base gear. Conversely, enabling an event did not evaluate whether the event condition was currently true until the next game event (e.g. movement or stance change) fired.
+
+### Solution
+1. **Event Spin-Down (`ItemRack.SpinDownEvent`):**
+   - Implemented `ItemRack.SpinDownEvent(eventName)` in `ItemRackEvents.lua`.
+   - When an event is unchecked, deleted, or disabled in `ItemRackOptions.lua`, `SpinDownEvent` clears `eventData.Active`, `ManualOverride`, and zone signatures.
+   - If the event is on `ItemRackUser.EventStack` or currently equipped, it pops the event via `PopEvent(eventName)` or unequips the set, restoring the underlying gear layer.
+2. **Event Spin-Up (`ItemRack.SpinUpEvent`):**
+   - Implemented `ItemRack.SpinUpEvent(eventName)` in `ItemRackEvents.lua`.
+   - When an event is checked (enabled) or assigned a set, `SpinUpEvent` invokes `RunAllEvents`, immediately checking whether the event condition currently applies (e.g. player is mounted, in stance, or in zone) and equipping the set.
+3. **Global Toggle Spin-Down (`ItemRack.SpinDownAllEvents`):**
+   - Toggling events OFF globally via `ItemRack.ToggleEvents` invokes `SpinDownAllEvents()`, unwinding all active event stack layers and returning the player to their base gear.
+
+

@@ -922,6 +922,9 @@ function ItemRackOpt.SelectSetList(self)
 		end
 		ItemRackUser.Events.Set[event] = setname
 		ItemRackOpt.PopulateEventList()
+		if ItemRack.SpinUpEvent then
+			ItemRack.SpinUpEvent(event)
+		end
 	else
 		-- fill out set build info if picking a set (ItemRackOptSubFrame2)
 		local set = ItemRackUser.Sets[setname]
@@ -2298,18 +2301,24 @@ function ItemRackOpt.EventListEnabledOnClick(self)
 	local idx = FauxScrollFrame_GetOffset(ItemRackOptEventListScrollFrame) + self:GetParent():GetID()
 	ItemRackOpt.EventSelected = idx
 	local checked = self:GetChecked()
-	ItemRackUser.Events.Enabled[ItemRackOpt.EventList[idx][1]] = checked
+	local eventName = ItemRackOpt.EventList[idx][1]
+	ItemRackUser.Events.Enabled[eventName] = checked
 	if checked then
 		ItemRackUser.EnableEvents = "ON"
 		ItemRack.ReflectEventsRunning()
+		if ItemRack.SpinUpEvent then
+			ItemRack.SpinUpEvent(eventName)
+		end
+	else
+		ItemRackOpt.EventSelected = nil
+		ItemRackUser.Events.Enabled[eventName] = nil
+		if ItemRack.SpinDownEvent then
+			ItemRack.SpinDownEvent(eventName)
+		end
 	end
-	if checked and ItemRackOpt.EventList[idx][2]~="Script" and not ItemRackUser.Events.Set[ItemRackOpt.EventList[idx][1]] then
+	if checked and ItemRackOpt.EventList[idx][2]~="Script" and not ItemRackUser.Events.Set[eventName] then
 		-- if an event without a set is being checked, choose a set
 		ItemRackOpt.EventListIconOnClick(self)
-	end
-	if not checked then
-		ItemRackOpt.EventSelected = nil
-		ItemRackUser.Events.Enabled[ItemRackOpt.EventList[idx][1]] = nil
 	end
 	ItemRackOpt.PopulateEventList()
 end
@@ -2612,6 +2621,9 @@ end
 function ItemRackOpt.EventEditDelete(override)
 	local eventName = ItemRackOpt.EventList[ItemRackOpt.EventSelected][1]
 	if ItemRackUser.Events.Set[eventName] or ItemRackUser.Events.Enabled[eventName] then
+		if ItemRack.SpinDownEvent then
+			ItemRack.SpinDownEvent(eventName)
+		end
 		ItemRackUser.Events.Set[eventName] = nil
 		ItemRackUser.Events.Enabled[eventName] = nil
 		ItemRackOpt.EventSelected = nil

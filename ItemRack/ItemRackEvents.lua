@@ -457,8 +457,115 @@ function ItemRack.RegisterEvents()
 	ItemRack.ProcessSpecializationEvent()
 end
 
+function ItemRack.SpinDownEvent(eventName)
+	if not eventName then return end
+	local eventData = ItemRackEvents and ItemRackEvents[eventName]
+	
+	ItemRack.Debug("Events", "SpinDownEvent requested for:", eventName)
+	
+	if eventData then
+		eventData.Active = nil
+		eventData.LastZoneMatched = nil
+		eventData.LastZoneSignature = nil
+		eventData.ManualOverride = nil
+	end
+
+	local onStack = false
+	if ItemRackUser and ItemRackUser.EventStack then
+		for i = #ItemRackUser.EventStack, 1, -1 do
+			if ItemRackUser.EventStack[i] == eventName then
+				onStack = true
+				break
+			end
+		end
+	end
+
+	if onStack then
+		if eventData and eventData.Unequip then
+			ItemRack.PopEvent(eventName)
+		else
+			local stack = ItemRackUser.EventStack
+			if stack then
+				for i = #stack, 1, -1 do
+					if stack[i] == eventName then
+						table.remove(stack, i)
+					end
+				end
+			end
+			ItemRack.ClearScriptEventState(eventName)
+		end
+	elseif eventData and eventData.Unequip then
+		local setname = ItemRack.GetEventSet(eventName)
+		if setname and ItemRack.IsSetEquipped(setname) then
+			ItemRack.UnequipSet(setname)
+		end
+	end
+
+	if ItemRack.PendingOnMovementUnequip == eventName then
+		ItemRack.PendingOnMovementUnequip = nil
+		ItemRack.StopTimer("OnMovementUnequipTimer")
+	end
+
+	ItemRack.ScheduleEventRecheck("Event disabled: " .. eventName, 0.1)
+end
+
+function ItemRack.SpinUpEvent(eventName)
+	if not eventName then return end
+	ItemRack.Debug("Events", "SpinUpEvent requested for:", eventName)
+	if ItemRackUser.EnableEvents ~= "ON" then return end
+	ItemRack.RunAllEvents("Event enabled: " .. eventName)
+end
+
+function ItemRack.SpinDownAllEvents()
+	ItemRack.Debug("Events", "SpinDownAllEvents requested")
+	local stack = ItemRackUser.EventStack
+	if stack then
+		for i = #stack, 1, -1 do
+			local eventName = stack[i]
+			local eventData = ItemRackEvents and ItemRackEvents[eventName]
+			if eventData then
+				eventData.Active = nil
+				eventData.LastZoneMatched = nil
+				eventData.LastZoneSignature = nil
+				eventData.ManualOverride = nil
+				if eventData.Unequip then
+					ItemRack.PopEvent(eventName)
+				else
+					for k = #stack, 1, -1 do
+						if stack[k] == eventName then
+							table.remove(stack, k)
+						end
+					end
+					ItemRack.ClearScriptEventState(eventName)
+				end
+			end
+		end
+	end
+	if ItemRackEvents then
+		for eventName, eventData in pairs(ItemRackEvents) do
+			if eventData.Active then
+				eventData.Active = nil
+				eventData.LastZoneMatched = nil
+				eventData.LastZoneSignature = nil
+				eventData.ManualOverride = nil
+				if eventData.Unequip then
+					local setname = ItemRack.GetEventSet(eventName)
+					if setname and ItemRack.IsSetEquipped(setname) then
+						ItemRack.UnequipSet(setname)
+					end
+				end
+			end
+		end
+	end
+end
+
 function ItemRack.ToggleEvents(self)
 	ItemRackUser.EnableEvents = ItemRackUser.EnableEvents=="ON" and "OFF" or "ON"
+	if ItemRackUser.EnableEvents == "OFF" then
+		ItemRack.SpinDownAllEvents()
+	else
+		ItemRack.RunAllEvents("Global events enabled")
+	end
 	if not next(ItemRackUser.Events.Enabled) then
 		-- user is turning on events with no events enabled, go to events frame
 		LoadAddOn("ItemRackOptions")

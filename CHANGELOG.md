@@ -9,6 +9,7 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 - **Forced-Dismount Event Stack Recovery**: Fixed summon, portal, and instance transitions that dismount the player while a mount set is active. Mounted events are now unwound before destination Zone sets are applied, preventing inactive mount entries and `Zone -> Mounted` restoration chains. Still-mounted transitions preserve the mount layer above the matching Zone event, while combat/casting and in-progress swaps defer reconciliation safely.
 - **Live `oldset` Cycle Prevention**: Implemented `ItemRack.PreventLiveOldsetCycle` to detect and splice circular set restoration chains (`SetA -> SetB -> SetA`) in real-time when users manually or automatically toggle between gear sets during live gameplay, preventing UI locks and infinite set restoration loops.
 - **In-Combat Weapon Swapping**: Updated `EquipSet` and `ProcessCombatQueue` to permit weapon slot swaps (slots 16 Mainhand, 17 Offhand, 18 Ranged) to execute immediately during combat when not spellcasting, while non-weapon armor slots continue to defer safely to `CombatQueue`.
+- **Event Enable/Disable Spin-Down & Spin-Up**: Added `ItemRack.SpinDownEvent` and `ItemRack.SpinUpEvent`. Unchecking or deleting an event in the Events Options menu now immediately unwinds/spins down the event if it is currently active, popping it off the event stack and restoring base gear. Checking an event immediately evaluates whether the event condition currently applies and spins it up.
 
 ## [4.40.1] - 2026-06-30
 ### Bug Fixes
