@@ -764,8 +764,12 @@ function ItemRack.RunAllEvents(reason)
 		return
 	end
 	ItemRack.Debug("Events", "RunAllEvents triggered by:", reason)
-	if ItemRack.ProcessZoneEvent then ItemRack.ProcessZoneEvent(reason) end
-	if ItemRack.ProcessBuffEvent then ItemRack.ProcessBuffEvent() end
+	local zoneDeferred = ItemRack.ProcessZoneEvent and ItemRack.ProcessZoneEvent(reason) == false
+	if zoneDeferred then
+		ItemRack.Debug("Events", "RunAllEvents paused while mount/zone transition is deferred:", reason)
+	else
+		if ItemRack.ProcessBuffEvent then ItemRack.ProcessBuffEvent() end
+	end
 	if ItemRack.ProcessStanceEvent then ItemRack.ProcessStanceEvent() end
 	if ItemRack.ProcessSpecializationEvent then ItemRack.ProcessSpecializationEvent() end
 end
@@ -1008,7 +1012,8 @@ function ItemRack.ProcessCombatQueue()
 			combat[i] = nil
 		end
 		for i in pairs(queue) do
-			local canSwap = not inCombat
+			local isWeaponSlot = (i >= 16 and i <= 18)
+			local canSwap = (not inCombat) or (isWeaponSlot and not ItemRack.NowCasting and not ItemRack.IsPlayerReallyDead())
 			ItemRack.Debug("CombatQueue", "  ProcessCQ slot="..tostring(i).." canSwap="..tostring(canSwap))
 			if canSwap then
 				local discard = false
@@ -1149,9 +1154,14 @@ do
 				end
 			end
 		end
+		local added = false
 		for name in pairs(data) do
 			tooltip:AddDoubleLine("ItemRack Set: ", name, 0,.6,1, 0,.6,1)
 			data[name] = nil
+			added = true
+		end
+		if added then
+			tooltip:Show()
 		end
 	end
 end

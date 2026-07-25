@@ -4,6 +4,12 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 
 ## [Development]
 
+### Bug Fixes & Improvements
+- **Tooltip Set Info Containment Fix**: Fixed a bug where enabling "Show set info in tooltips" caused appended set lines to fall outside the bottom boundary of the tooltip window. Restored `tooltip:Show()` inside `ListSetsHavingItem` after set lines are added so that `GameTooltip` recalculates its height and correctly contains the set names within the tooltip backdrop.
+- **Forced-Dismount Event Stack Recovery**: Fixed summon, portal, and instance transitions that dismount the player while a mount set is active. Mounted events are now unwound before destination Zone sets are applied, preventing inactive mount entries and `Zone -> Mounted` restoration chains. Still-mounted transitions preserve the mount layer above the matching Zone event, while combat/casting and in-progress swaps defer reconciliation safely.
+- **Live `oldset` Cycle Prevention**: Implemented `ItemRack.PreventLiveOldsetCycle` to detect and splice circular set restoration chains (`SetA -> SetB -> SetA`) in real-time when users manually or automatically toggle between gear sets during live gameplay, preventing UI locks and infinite set restoration loops.
+- **In-Combat Weapon Swapping**: Updated `EquipSet` and `ProcessCombatQueue` to permit weapon slot swaps (slots 16 Mainhand, 17 Offhand, 18 Ranged) to execute immediately during combat when not spellcasting, while non-weapon armor slots continue to defer safely to `CombatQueue`.
+
 ## [4.40.1] - 2026-06-30
 ### Bug Fixes
 - **Ghost Buttons Visibility Fix**: Fixed a bug where quick-access buttons that had been toggled off (removed) would reappear as empty grey squares on login or character reload. Securely wrapped the button's `Show()` method to prevent external addons (like Masque) or Blizzard's internal Action Bar system from showing buttons that are not currently active in the user's layout.

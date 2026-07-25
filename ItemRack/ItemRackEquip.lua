@@ -196,6 +196,48 @@ function ItemRack.IsWeaponOnlySet(setname)
 	return hasWeapons
 end
 
+function ItemRack.PreventLiveOldsetCycle(targetSet, proposedOldSet)
+	if not targetSet or not proposedOldSet or targetSet == proposedOldSet then
+		return
+	end
+	if not ItemRackUser or not ItemRackUser.Sets then
+		return
+	end
+
+	-- Search proposedOldSet's oldset chain to see if targetSet is already present.
+	-- If proposedOldSet (or an ancestor in its chain) points to targetSet,
+	-- setting targetSet.oldset = proposedOldSet would create a live circular loop (e.g. SetA -> SetB -> SetA).
+	local current = proposedOldSet
+	local parentPointingToTarget = nil
+	local visited = { [targetSet] = true }
+
+	while current do
+		if visited[current] then
+			break
+		end
+		visited[current] = true
+
+		local nextOld = ItemRackUser.Sets[current] and ItemRackUser.Sets[current].oldset
+		if nextOld == targetSet then
+			parentPointingToTarget = current
+			break
+		end
+		current = nextOld
+	end
+
+	if parentPointingToTarget and ItemRackUser.Sets[parentPointingToTarget] then
+		-- Splice targetSet out of the chain: point parentPointingToTarget to targetSet's current oldset
+		local targetOldSet = ItemRackUser.Sets[targetSet] and ItemRackUser.Sets[targetSet].oldset
+		if targetOldSet == parentPointingToTarget then
+			targetOldSet = nil
+		end
+		ItemRackUser.Sets[parentPointingToTarget].oldset = targetOldSet
+		ItemRack.Debug("Equip", "Live cycle prevented: spliced '" .. tostring(targetSet) .. "' out of '" .. tostring(parentPointingToTarget) .. "' oldset chain.")
+	elseif proposedOldSet == targetSet then
+		ItemRackUser.Sets[proposedOldSet].oldset = nil
+	end
+end
+
 function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	ItemRack.Debug("Equip", "EquipSet invoked for set:", setname or "nil")
 	if not setname or not ItemRackUser.Sets[setname] then
@@ -268,7 +310,11 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 			for i in pairs(set.old) do
 				set.old[i] = nil -- wipe old items
 			end
-			set.oldset = ItemRackUser.CurrentSet
+			local proposedOldSet = ItemRackUser.CurrentSet
+			if proposedOldSet and proposedOldSet ~= setname then
+				ItemRack.PreventLiveOldsetCycle(setname, proposedOldSet)
+			end
+			set.oldset = proposedOldSet
 			-- Pre-populate old with current gear for every slot this set defines.
 			for i in pairs(set.equip) do
 				if type(i) == "number" then
@@ -289,17 +335,21 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	for k,v in pairs(swap) do swapStr = swapStr .. k..":"..v.." " end
 	ItemRack.Debug("Equip", "EquipSet swap list generated:", swapStr)
  
-	-- if in combat, dead, or casting, queue ALL items for later
-	-- PickupInventoryItem is blocked by the game during InCombatLockdown() for all items including weapons
+	-- if in combat, dead, or casting, queue non-weapon items for later
+	-- PickupInventoryItem is blocked by the game during InCombatLockdown() for armor, but weapons (16, 17, 18) can swap in combat if not casting/dead
 	if InCombatLockdown() or ItemRack.IsPlayerReallyDead() or ItemRack.NowCasting then
 		local reason = InCombatLockdown() and "combat" or (ItemRack.NowCasting and "casting" or "dead")
-		ItemRack.Debug("Equip", "EquipSet DEFERRED to CombatQueue: set=" .. tostring(setname) .. " reason=" .. reason .. " slots queued:")
+		ItemRack.Debug("Equip", "EquipSet checking swap deferrals: set=" .. tostring(setname) .. " reason=" .. reason .. " slots queued:")
 		local isWeaponOnly = InCombatLockdown() and ItemRack.IsWeaponOnlySet(setname)
 		for i in pairs(swap) do
+			local isWeaponSlot = (i >= 16 and i <= 18)
+			local canSwapWeaponInCombat = InCombatLockdown() and isWeaponSlot and not ItemRack.NowCasting and not ItemRack.IsPlayerReallyDead()
 			if isWeaponOnly and isSecureKeybind then
 				swap[i] = nil
+			elseif canSwapWeaponInCombat then
+				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> weapon swap allowed in combat")
 			else
-				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
+				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]) .. " DEFERRED to CombatQueue")
 				ItemRack.AddToCombatQueue(i,swap[i])
 				swap[i] = nil
 				if set.old then

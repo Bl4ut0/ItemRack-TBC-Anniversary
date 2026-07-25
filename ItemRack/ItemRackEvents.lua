@@ -778,6 +778,232 @@ function ItemRack.ProcessStanceEvent()
 	end
 end
 
+local mountZoneRecheckPending
+local mountZoneRebasePending
+
+local function scheduleMountZoneRecheck(reason)
+	if mountZoneRecheckPending then
+		return
+	end
+	mountZoneRecheckPending = true
+	C_Timer.After(0.5, function()
+		mountZoneRecheckPending = nil
+		if ItemRack.RunAllEvents then
+			ItemRack.RunAllEvents(reason or "mount/zone transition retry")
+		end
+	end)
+end
+
+local function removeEventFromStack(eventName)
+	local stack = ItemRackUser.EventStack
+	if not stack then return end
+	for i = #stack, 1, -1 do
+		if stack[i] == eventName then
+			table.remove(stack, i)
+		end
+	end
+end
+
+local function getActiveMountEvents()
+	local activeMountEvents = {}
+	local stack = ItemRackUser.EventStack
+	if not stack then return activeMountEvents end
+	for i = #stack, 1, -1 do
+		local eventName = stack[i]
+		local eventData = ItemRackEvents[eventName]
+		if eventData and eventData.Anymount and eventData.Active then
+			table.insert(activeMountEvents, eventName)
+		end
+	end
+	return activeMountEvents
+end
+
+local function hasNonRestoringMountLayer(activeMountEvents)
+	for _, eventName in ipairs(activeMountEvents) do
+		local eventData = ItemRackEvents[eventName]
+		if eventData and not eventData.Unequip then
+			return true
+		end
+	end
+	return false
+end
+
+local function hasNonRestoringMountStackLayer()
+	for _, eventName in ipairs(ItemRackUser.EventStack or {}) do
+		local eventData = ItemRackEvents[eventName]
+		if eventData and eventData.Anymount and not eventData.Unequip then
+			return true
+		end
+	end
+	return false
+end
+
+local function isSetPendingOrSwapping(setname)
+	if not setname then return false end
+	if ItemRack.SetSwapping == setname then
+		return true
+	end
+	for _, waiting in ipairs(ItemRack.SetsWaiting or {}) do
+		if waiting[1] == setname then
+			return true
+		end
+	end
+	if ItemRack.CombatSet == setname and next(ItemRack.CombatQueue) then
+		return true
+	end
+	local combatSet = ItemRackUser.Sets and ItemRackUser.Sets["~CombatQueue"]
+	return combatSet and combatSet.oldset == setname and ItemRack.SetSwapping == "~CombatQueue" or false
+end
+
+local function mountZoneSwapBusy()
+	return InCombatLockdown()
+		or ItemRack.NowCasting
+		or ItemRack.IsPlayerReallyDead()
+		or ItemRack.SetSwapping
+		or next(ItemRack.CombatQueue)
+		or #ItemRack.SetsWaiting > 0
+		or ItemRack.AnythingLocked()
+end
+
+-- A forced dismount or destination exclusion must unwind mounted gear before a
+-- destination Zone event snapshots its history. Otherwise the Zone set records
+-- Mounted as its oldset and the inactive mount entry remains stuck in EventStack.
+-- Return true when zone processing must wait for combat/casting/another swap.
+local function reconcileInvalidMountEvents(isMounted, instanceType)
+	-- A prior unwind may still be moving items. Keep Zone and Buff processing
+	-- paused until that single layer has fully restored, then handle the next
+	-- layer (if any) on the following pass.
+	if ItemRack.MountZoneTransitionDeferred and mountZoneSwapBusy() then
+		scheduleMountZoneRecheck("mount/zone unwind in progress")
+		return true
+	end
+
+	local invalidMountEvents = {}
+	local seen = {}
+	local stack = ItemRackUser.EventStack or {}
+
+	-- Collect topmost-first so nested custom mount events unwind in stack order.
+	for i = #stack, 1, -1 do
+		local eventName = stack[i]
+		local eventData = ItemRackEvents[eventName]
+		if eventData and eventData.Anymount then
+			local excluded = (eventData.NotInPVP and (instanceType == "arena" or instanceType == "pvp"))
+				or (eventData.NotInPVE and (instanceType == "party" or instanceType == "raid"))
+			if not isMounted or excluded then
+				table.insert(invalidMountEvents, eventName)
+				seen[eventName] = true
+			end
+		end
+	end
+
+	-- Also repair an active mount event that was already lost from EventStack by
+	-- an earlier interrupted transition.
+	for eventName in pairs(ItemRackUser.Events.Enabled or {}) do
+		local eventData = ItemRackEvents[eventName]
+		if eventData and eventData.Anymount and eventData.Active and not seen[eventName] then
+			local excluded = (eventData.NotInPVP and (instanceType == "arena" or instanceType == "pvp"))
+				or (eventData.NotInPVE and (instanceType == "party" or instanceType == "raid"))
+			if not isMounted or excluded then
+				table.insert(invalidMountEvents, eventName)
+				seen[eventName] = true
+			end
+		end
+	end
+
+	if #invalidMountEvents == 0 then
+		ItemRack.MountZoneTransitionDeferred = nil
+		return false
+	end
+
+	if mountZoneSwapBusy() then
+		ItemRack.MountZoneTransitionDeferred = true
+		ItemRack.Debug("Events", "Deferring forced-dismount reconciliation until swap restrictions clear")
+		scheduleMountZoneRecheck("forced dismount before zone")
+		return true
+	end
+
+	local eventName = invalidMountEvents[1]
+	local eventData = ItemRackEvents[eventName]
+	if eventData then
+		ItemRack.Debug("Events", "Unwinding invalid mount event before zone:", eventName, "mounted:", isMounted, "instance:", instanceType)
+		eventData.Active = nil
+		if eventData.Unequip then
+			ItemRack.PopEvent(eventName)
+		else
+			-- Unequip=false means keep the physical gear, but the event is no
+			-- longer active and must not remain as a restoration-stack layer.
+			removeEventFromStack(eventName)
+			ItemRack.ClearScriptEventState(eventName)
+		end
+		if ItemRack.PendingOnMovementUnequip == eventName then
+			ItemRack.PendingOnMovementUnequip = nil
+			ItemRack.StopTimer("OnMovementUnequipTimer")
+		end
+	end
+
+	-- Always yield after one layer. UnequipSet may complete asynchronously, and
+	-- popping another layer before it finishes can splice or overwrite history.
+	ItemRack.MountZoneTransitionDeferred = true
+	scheduleMountZoneRecheck("continue forced-dismount unwind")
+	return true
+end
+
+-- A matching Zone event is logically below a still-active mount event. If the
+-- Zone event was not already stacked (for example, the player mounted before
+-- entering the zone), insert it directly beneath the mount without equipping it.
+local function ensureZoneEventBelowMount(zoneEventName, mountEventName)
+	local stack = ItemRackUser.EventStack
+	if not stack then return end
+	local zoneIndex, mountIndex
+	for i, eventName in ipairs(stack) do
+		if eventName == zoneEventName then zoneIndex = i end
+		if eventName == mountEventName then mountIndex = i end
+	end
+	if zoneIndex then
+		-- Existing stack layers carry oldset/old item history that cannot be
+		-- safely reordered by moving the name alone.
+		return
+	end
+	if not mountIndex then
+		for i, eventName in ipairs(stack) do
+			if eventName == mountEventName then
+				mountIndex = i
+				break
+			end
+		end
+	end
+	table.insert(stack, mountIndex or (#stack + 1), zoneEventName)
+end
+
+-- When the player remains mounted but the destination needs a different
+-- underlying Zone set, unwind the old mount layer first. Zone and Buff processing
+-- then serialize the destination Zone set followed by a fresh mount layer,
+-- producing the correct Zone -> Mounted history without an oldset cycle.
+local function prepareMountRebase(eventName)
+	local eventData = eventName and ItemRackEvents[eventName]
+	if eventData then
+		eventData.Active = nil
+		if eventData.Unequip then
+			ItemRack.PopEvent(eventName)
+		else
+			removeEventFromStack(eventName)
+			ItemRack.ClearScriptEventState(eventName)
+		end
+	end
+	_refreshMountState = 4
+end
+
+local function getZoneMatch(eventData, currentZone, currentSubZone, instanceType)
+	if not eventData or not eventData.Zones then return end
+	if eventData.Zones[currentZone] then return currentZone end
+	if eventData.Zones[currentSubZone] then return currentSubZone end
+	if eventData.Zones[instanceType] then return instanceType end
+	if instanceType then
+		local displayType = instanceType:gsub("^%l", string.upper)
+		if eventData.Zones[displayType] then return displayType end
+	end
+end
+
 function ItemRack.ProcessZoneEvent(reason)
 	local enabled = ItemRackUser.Events.Enabled
 	local events = ItemRackEvents
@@ -788,12 +1014,80 @@ function ItemRack.ProcessZoneEvent(reason)
 	local isMounted = IsMounted() and not UnitOnTaxi("player")
 	local _, _, _, _, _, _, _, instanceID = GetInstanceInfo()
 
+	-- Resolve forced portal/summon dismounts (and PvP/PvE exclusions) before
+	-- any destination Zone set can capture Mounted as its previous set.
+	if reconcileInvalidMountEvents(isMounted, instanceType) then
+		return false
+	end
 	local zoneSignature = table.concat({
 		tostring(instanceType or "none"),
 		tostring(currentZone or ""),
 		tostring(currentSubZone or ""),
 		tostring(instanceID or "")
 	}, "\031")
+
+	-- Determine whether a still-valid mount must be temporarily unwound to
+	-- change the underlying Zone layer. Only an actual rebase is blocked by
+	-- unrelated inventory activity; an unchanged mounted state remains usable.
+	local activeMountEvents = getActiveMountEvents()
+	if hasNonRestoringMountStackLayer() then
+		-- Unequip=false intentionally leaves that event's physical gear in place.
+		-- A destination Zone cannot be inserted beneath it with valid history, so
+		-- leave existing Zone state untouched and evaluate it after the mount stack
+		-- is removed by a real dismount or exclusion.
+		ItemRack.Debug("Events", "Zone processing held behind a non-restoring mount layer")
+		return true
+	end
+	local topMountEvent = activeMountEvents[1]
+	local baseMountEvent = activeMountEvents[#activeMountEvents]
+	local mountNeedsRebase = false
+	local allMountLayersRestore = #activeMountEvents > 0 and not hasNonRestoringMountLayer(activeMountEvents)
+	if allMountLayersRestore and baseMountEvent then
+		local baseMountSet = ItemRack.GetEventSet(baseMountEvent)
+		local mountSetData = baseMountSet and ItemRackUser.Sets[baseMountSet]
+		for eventName in pairs(enabled) do
+			local zoneData = events[eventName]
+			if zoneData and zoneData.Type == "Zone" then
+				local setname = ItemRackUser.Events.Set[eventName]
+				local matchedZone = getZoneMatch(zoneData, currentZone, currentSubZone, instanceType)
+				if matchedZone then
+					local signatureChanged = not zoneData.LastZoneSignature or zoneData.LastZoneSignature ~= zoneSignature
+					-- An inactive Zone is not established beneath the mount merely
+					-- because its items happen to match the visible mounted gear.
+					-- It still needs a real history layer before the mount is reapplied.
+					local willEquip = (signatureChanged and zoneData.Active) or not zoneData.Active
+					if willEquip and (not mountSetData or mountSetData.oldset ~= setname) then
+						mountNeedsRebase = true
+						break
+					end
+				elseif zoneData.Active and zoneData.Unequip then
+					-- Leaving the underlying Zone while mounted must also unwind the
+					-- mount first so the buried Zone event can restore safely.
+					mountNeedsRebase = true
+					break
+				end
+			end
+		end
+	end
+	if mountNeedsRebase then
+		if mountZoneSwapBusy() then
+			ItemRack.MountZoneTransitionDeferred = true
+			ItemRack.Debug("Events", "Deferring mounted zone rebase until swap restrictions clear")
+			scheduleMountZoneRecheck("mounted zone rebase")
+			return false
+		end
+		ItemRack.MountZoneTransitionDeferred = nil
+		-- Custom Anymount events can coexist. Unwind exactly one layer at a time,
+		-- topmost-first, and wait for its item swap to finish before reconsidering
+		-- the next layer or applying the destination Zone set.
+		mountZoneRebasePending = true
+		prepareMountRebase(topMountEvent)
+		ItemRack.MountZoneTransitionDeferred = true
+		scheduleMountZoneRecheck("continue mounted zone rebase")
+		return false
+	else
+		ItemRack.MountZoneTransitionDeferred = nil
+	end
 
 	if ItemRack.DebugAll or ItemRack.DebugTags.Events then
 		ItemRack.Debug("Events", "ProcessZoneEvent called. Reason:", reason or "timer", "Zone:", currentZone, "SubZone:", currentSubZone, "InstanceType:", instanceType, "InstanceID:", instanceID, "Signature:", zoneSignature)
@@ -806,14 +1100,7 @@ function ItemRack.ProcessZoneEvent(reason)
 		local eventData = events[eventName]
 		if eventData and eventData.Type=="Zone" then
 			local setname = ItemRackUser.Events.Set[eventName]
-			local matchedZone = nil
-			if eventData.Zones then
-				if eventData.Zones[currentZone] then matchedZone = currentZone
-				elseif eventData.Zones[currentSubZone] then matchedZone = currentSubZone
-				elseif eventData.Zones[instanceType] then matchedZone = instanceType
-				elseif eventData.Zones[instanceType:gsub("^%l", string.upper)] then matchedZone = instanceType:gsub("^%l", string.upper)
-				end
-			end
+			local matchedZone = getZoneMatch(eventData, currentZone, currentSubZone, instanceType)
 			
 			if matchedZone then
 				local currentSignature = eventData.LastZoneSignature
@@ -825,86 +1112,52 @@ function ItemRack.ProcessZoneEvent(reason)
 						eventData.ManualOverride = nil
 						
 						-- Clear active mount if needed
-						local keepMount = true
-						local activeMountEvent = nil
-						for _, activeEventName in ipairs(ItemRackUser.EventStack) do
-							local mEventData = events[activeEventName]
-							if mEventData and mEventData.Anymount then
-								activeMountEvent = activeEventName
-								break
+						local keepMount = false
+						local activeMountEvents = getActiveMountEvents()
+						local topMountEvent = activeMountEvents[1]
+						local baseMountEvent = activeMountEvents[#activeMountEvents]
+						if topMountEvent and baseMountEvent and isMounted and events[topMountEvent] and events[topMountEvent].Active then
+							local baseMountSet = ItemRack.GetEventSet(baseMountEvent)
+							if hasNonRestoringMountLayer(activeMountEvents)
+							or not events[baseMountEvent].Unequip
+							or (baseMountSet and ItemRackUser.Sets[baseMountSet] and ItemRackUser.Sets[baseMountSet].oldset == setname) then
+								keepMount = true
 							end
 						end
-						if activeMountEvent and isMounted and events[activeMountEvent] and events[activeMountEvent].Active then
-							local activeMountSet = ItemRack.GetEventSet(activeMountEvent)
-							if activeMountSet and ItemRackUser.Sets[activeMountSet] and ItemRackUser.Sets[activeMountSet].oldset == setname then
-								if events[activeMountEvent].NotInPVP and (instanceType=="arena" or instanceType=="pvp") then
-									keepMount = false
-									if events[activeMountEvent].Unequip then
-										ItemRack.PopEvent(activeMountEvent)
-									end
-								elseif events[activeMountEvent].NotInPVE and (instanceType=="party" or instanceType=="raid") then
-									keepMount = false
-									if events[activeMountEvent].Unequip then
-										ItemRack.PopEvent(activeMountEvent)
-									end
-								end
-							else
-								keepMount = false
-							end
+
+						if keepMount then
+							ensureZoneEventBelowMount(eventName, baseMountEvent)
+							ItemRack.Debug("Events", "  Zone event transition kept beneath active mount:", eventName)
 						else
-							keepMount = false
-						end
-
-						if not keepMount and activeMountEvent and events[activeMountEvent] then
-							events[activeMountEvent].Active = false
-							_refreshMountState = 4
-						end
-
-						-- Equip set
-						table.insert(eventsToEquip, eventName)
-						if ItemRack.DebugAll or ItemRack.DebugTags.Events then
-							ItemRack.Debug("Events", "  Zone event transition to new signature for:", eventName, "action: equip")
-						end
-					elseif not ItemRack.IsSetEquipped(setname) then
-						-- First entry into the zone (not active yet) and set is not equipped
-						local keepMount = true
-						local activeMountEvent = nil
-						for _, activeEventName in ipairs(ItemRackUser.EventStack) do
-							local mEventData = events[activeEventName]
-							if mEventData and mEventData.Anymount then
-								activeMountEvent = activeEventName
-								break
+							table.insert(eventsToEquip, eventName)
+							if ItemRack.DebugAll or ItemRack.DebugTags.Events then
+								ItemRack.Debug("Events", "  Zone event transition to new signature for:", eventName, "action: equip")
 							end
 						end
-						if activeMountEvent and isMounted and events[activeMountEvent] and events[activeMountEvent].Active then
-							local activeMountSet = ItemRack.GetEventSet(activeMountEvent)
-							if activeMountSet and ItemRackUser.Sets[activeMountSet] and ItemRackUser.Sets[activeMountSet].oldset == setname then
-								if events[activeMountEvent].NotInPVP and (instanceType=="arena" or instanceType=="pvp") then
-									keepMount = false
-									if events[activeMountEvent].Unequip then
-										ItemRack.PopEvent(activeMountEvent)
-									end
-								elseif events[activeMountEvent].NotInPVE and (instanceType=="party" or instanceType=="raid") then
-									keepMount = false
-									if events[activeMountEvent].Unequip then
-										ItemRack.PopEvent(activeMountEvent)
-									end
-								end
-							else
-								keepMount = false
+					elseif (mountZoneRebasePending or #getActiveMountEvents() > 0 or not ItemRack.IsSetEquipped(setname)) and not isSetPendingOrSwapping(setname) then
+						-- First entry needs either an equip or an explicit history layer
+						-- beneath mounted gear, even if the visible items happen to match.
+						local keepMount = false
+						local activeMountEvents = getActiveMountEvents()
+						local topMountEvent = activeMountEvents[1]
+						local baseMountEvent = activeMountEvents[#activeMountEvents]
+						if topMountEvent and baseMountEvent and isMounted and events[topMountEvent] and events[topMountEvent].Active then
+							local baseMountSet = ItemRack.GetEventSet(baseMountEvent)
+							if hasNonRestoringMountLayer(activeMountEvents)
+							or not events[baseMountEvent].Unequip
+							or (baseMountSet and ItemRackUser.Sets[baseMountSet] and ItemRackUser.Sets[baseMountSet].oldset == setname) then
+								keepMount = true
 							end
+						end
+
+						if keepMount then
+							ensureZoneEventBelowMount(eventName, baseMountEvent)
+							ItemRack.Debug("Events", "  Zone event first entry kept beneath active mount:", eventName)
 						else
-							keepMount = false
-						end
-
-						if not keepMount and activeMountEvent and events[activeMountEvent] then
-							events[activeMountEvent].Active = false
-							_refreshMountState = 4
-						end
-
-						table.insert(eventsToEquip, eventName)
-						if ItemRack.DebugAll or ItemRack.DebugTags.Events then
-							ItemRack.Debug("Events", "  Zone event first entry for:", eventName, "action: equip")
+							table.insert(eventsToEquip, eventName)
+							if ItemRack.DebugAll or ItemRack.DebugTags.Events then
+								ItemRack.Debug("Events", "  Zone event first entry for:", eventName, "action: equip")
+							end
 						end
 					end
 					
@@ -913,7 +1166,24 @@ function ItemRack.ProcessZoneEvent(reason)
 					eventData.LastZoneSignature = zoneSignature
 				else
 					-- Active and same signature
-					if not ItemRack.IsSetEquipped(setname) then
+					local zoneCoveredByMount = false
+					local activeMountEvents = getActiveMountEvents()
+					local topMountEvent = activeMountEvents[1]
+					local baseMountEvent = activeMountEvents[#activeMountEvents]
+					if topMountEvent and baseMountEvent then
+						local topMountSet = ItemRack.GetEventSet(topMountEvent)
+						local baseMountSet = ItemRack.GetEventSet(baseMountEvent)
+						local mountSetData = baseMountSet and ItemRackUser.Sets[baseMountSet]
+						zoneCoveredByMount = (hasNonRestoringMountLayer(activeMountEvents)
+							or not events[baseMountEvent].Unequip
+							or (mountSetData and mountSetData.oldset == setname))
+							and (ItemRackUser.CurrentSet == topMountSet or ItemRack.IsSetEquipped(topMountSet))
+					end
+					if zoneCoveredByMount then
+						-- The Zone set is intentionally hidden beneath mounted gear; this is
+						-- not a manual override. Clear stale override state from older builds.
+						eventData.ManualOverride = nil
+					elseif not ItemRack.IsSetEquipped(setname) and not isSetPendingOrSwapping(setname) then
 						-- Same zone, set is not equipped, but event is active: user manually changed gear.
 						if not eventData.ManualOverride then
 							eventData.ManualOverride = true
@@ -961,6 +1231,8 @@ function ItemRack.ProcessZoneEvent(reason)
 	for _, en in ipairs(eventsToEquip) do
 		ItemRack.PushEvent(en)
 	end
+	mountZoneRebasePending = nil
+	return true
 end
 
 function ItemRack.ProcessSpecializationEvent()
@@ -1141,6 +1413,10 @@ function ItemRack.ProcessOnMovementUnequip()
 	end
 end
 function ItemRack.ProcessBuffEvent()
+	if ItemRack.MountZoneTransitionDeferred then
+		ItemRack.Debug("Events", "ProcessBuffEvent paused while mount/zone transition is deferred")
+		return
+	end
 	local enabled = ItemRackUser.Events.Enabled
 	local events = ItemRackEvents
 
