@@ -1,4 +1,6 @@
 __ Development __
+
+__ New in 4.43-beta1 - By Bl4ut0 __
 - Gated queue evaluation behind ItemRack.QueueStateReady to prevent queue checks during loading screens or before item data is resolved.
 - Implemented TryInitializeQueueState to safely scan all 20 equipment slots via native GetInventoryItemID, deferring initialization if any occupied slot has unresolved item data (GetID == 0).
 - Validated persisted EquipTimers on UI reload/login against table schemas, numeric timestamps, exact item IDs, and the 0-30s elapsed time window.

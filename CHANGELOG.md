@@ -3,6 +3,9 @@
 All notable changes to the TBC Anniversary port of ItemRack will be documented in this file.
 
 ## [Development]
+
+## [4.43-beta1] - 2026-07-26
+### Bug Fixes & Improvements
 - **Readiness-Safe AutoQueue Initialization**: Gated queue evaluation (`PeriodicQueueCheck`, `ProcessAutoQueue`, `AutoQueueItemToEquip`) behind `ItemRack.QueueStateReady` to prevent queue evaluation during loading screens or incomplete addon loading.
 - **Item Resolution Safety (`TryInitializeQueueState`)**: Scans equipment slots via native `GetInventoryItemID`, deferring initialization gracefully if any occupied slot's item data is unresolved (`GetID == 0`) without publishing partial snapshots or falsely treating occupied slots as empty.
 - **Persisted Schema & Stale Timer Sanitization**: Validates saved `EquipTimers` records on UI reload/login, checking table schemas, numeric timestamps, exact item IDs, and enforcing the 0-30s elapsed window.
