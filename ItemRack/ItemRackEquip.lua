@@ -244,6 +244,32 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 		ItemRack.Print("Set \""..tostring(setname).."\" doesn't exist.")
 		return
 	end
+	local unresolvedSetSlot
+	if ItemRackUser.EnableQueues == "ON" and ItemRack.QueueStateReady == true then
+		for slot in pairs(ItemRackUser.Sets[setname].equip) do
+			if type(slot) == "number" and not ItemRack.IsEquippedSlotStateReady(slot) then
+				unresolvedSetSlot = slot
+				break
+			end
+		end
+	end
+	if (ItemRackUser.EnableQueues == "ON" and ItemRack.QueueStateReady ~= true) or unresolvedSetSlot then
+		ItemRack.PendingQueueEquipSet = {
+			setname = setname,
+			disableSound = disableSound,
+			isSecureKeybind = isSecureKeybind
+		}
+		ItemRack.PendingQueueStateEventReason = "Deferred EquipSet"
+		if ItemRack.ScheduleQueueStateRetry then
+			ItemRack.ScheduleQueueStateRetry()
+		end
+		if unresolvedSetSlot and ItemRack.ScheduleEquippedStateRetry then
+			ItemRack.ScheduleEquippedStateRetry()
+		end
+		ItemRack.Debug("Equip", "EquipSet deferred until exact equipped state is ready:", setname, unresolvedSetSlot or "")
+		return
+	end
+	ItemRack.PendingQueueEquipSet = nil
 	if ItemRack.AnythingLocked() then
 		ItemRack.Debug("Equip", "EquipSet deferred set:", setname, "- locked item:", ItemRack.GetLockedReason())
 		-- a swap is in progress, add this set to the wait list and leave
@@ -267,10 +293,10 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 			end
 		end
 	end
-	if ItemRack.BurntQueueItems and not isInternalSet then
+	if not isInternalSet then
 		for i in pairs(set.equip) do
-			if type(i) == "number" then
-				ItemRack.BurntQueueItems[i] = nil
+			if type(i) == "number" and ItemRack.ClearBurntQueueItems then
+				ItemRack.ClearBurntQueueItems(i)
 			end
 		end
 	end
@@ -766,6 +792,10 @@ function ItemRack.IsSetEquipped(setname,exact)
 		local anyChecked = false
 		for i in pairs(set) do
 			if type(i) == "number" then
+				if ItemRackUser.EnableQueues == "ON"
+				and (ItemRack.QueueStateReady ~= true or not ItemRack.IsEquippedSlotStateReady(i)) then
+					return false
+				end
 				anyChecked = true
 				id = ItemRack.GetID(i)
 				local match = false
@@ -806,7 +836,7 @@ function ItemRack.IsSetEquipped(setname,exact)
 							end
 						end
 						local start,duration,enable = GetInventoryItemCooldown("player",i)
-						local ready = ItemRack.ItemNearReady(currentBaseID, i, currentCustomTime)
+						local ready = ItemRack.ShouldHoldEquippedItem and ItemRack.ShouldHoldEquippedItem(i, id, currentBaseID, currentCustomTime) or ItemRack.ItemNearReady(currentBaseID, i, currentCustomTime)
 						local active = ItemRack.AutoQueueItemToEquip(i, currentBaseID, enable, ready, setname)
 						if currentInQueue then
 							match = not active or same(active, id)

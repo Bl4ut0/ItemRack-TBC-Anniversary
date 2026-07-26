@@ -13,6 +13,9 @@ local IsEquippedItem = _G.IsEquippedItem or (C_Item and C_Item.IsEquippedItem)
 -- Disable: /script ItemRack.DebugTags.Queue = false
 
 function ItemRack.PeriodicQueueCheck()
+	if ItemRack.QueueStateReady ~= true then
+		return
+	end
 	if SpellIsTargeting() then
 		ItemRack.Debug("Queue","SpellIsTargeting - skipping queue check")
 		return
@@ -80,6 +83,10 @@ end
 
 function ItemRack.IsQueueItemBurnt(slot, id, baseID)
 	local burnKey = ItemRack.GetQueueBurnKey(id, baseID)
+	if not burnKey or not slot then return false end
+	if ItemRackUser and ItemRackUser.BurntQueueItems and ItemRackUser.BurntQueueItems[slot] and ItemRackUser.BurntQueueItems[slot][burnKey] then
+		return true
+	end
 	return burnKey and ItemRack.BurntQueueItems and ItemRack.BurntQueueItems[slot] and ItemRack.BurntQueueItems[slot][burnKey]
 end
 
@@ -88,9 +95,12 @@ function ItemRack.SetQueueItemBurnt(slot, id, baseID)
 	if not slot or not burnKey then
 		return
 	end
-	ItemRack.BurntQueueItems = ItemRack.BurntQueueItems or {}
-	ItemRack.BurntQueueItems[slot] = ItemRack.BurntQueueItems[slot] or {}
-	ItemRack.BurntQueueItems[slot][burnKey] = true
+	ItemRackUser = ItemRackUser or {}
+	ItemRackUser.BurntQueueItems = ItemRackUser.BurntQueueItems or {}
+	ItemRackUser.BurntQueueItems[slot] = ItemRackUser.BurntQueueItems[slot] or {}
+	ItemRackUser.BurntQueueItems[slot][burnKey] = true
+
+	ItemRack.BurntQueueItems = ItemRackUser.BurntQueueItems
 end
 
 function ItemRack.MarkEquippedQueueItemBurnt(slot, exactID, baseID, list)
@@ -108,6 +118,9 @@ function ItemRack.MarkEquippedQueueItemBurnt(slot, exactID, baseID, list)
 		if ItemRack.SameExactID(list[i].id, exactID) then
 			if list[i].swapOnUse then
 				ItemRack.SetQueueItemBurnt(slot, list[i].id, baseID)
+				if ItemRack.QueueDiagnostic then
+					ItemRack.QueueDiagnostic("queue_item_burnt", { baseID = baseID, slot = slot })
+				end
 			end
 			break
 		end
@@ -117,6 +130,7 @@ end
 -- Helper: Find next valid item in queue for a slot
 function ItemRack.GetNextItemInQueue(slot)
 	if not slot or IsInventoryItemLocked(slot) then return end
+	if not ItemRack.IsEquippedSlotStateReady(slot) then return end
 	if slot == 17 and ItemRack.IsOffhandBlocked() then return end
 
 	local list = ItemRack.GetQueues()[slot]
@@ -196,7 +210,16 @@ function ItemRack.ManualQueueAdvance(slot)
 	-- Get currently equipped item's exact ID and base ID
 	-- In combat, we might already have an item pending organically. Evaluate from the pending item first.
 	local pendingID = ItemRack.CombatQueue[slot]
-	local equippedExactID = pendingID or ItemRack.GetID(slot)
+	local equippedExactID
+	if pendingID then
+		equippedExactID = pendingID
+	else
+		if not ItemRack.IsEquippedSlotStateReady(slot) then
+			ItemRack.Debug("Queue", "ManualAdvance: equipped item data is unresolved")
+			return
+		end
+		equippedExactID = ItemRack.EquippedSnapshot[slot]
+	end
 	local equippedBaseID = ItemRack.GetIRString(equippedExactID, true)
 	ItemRack.Debug("Queue", "ManualAdvance slot", slot, "equipped:", equippedBaseID)
 	
@@ -259,11 +282,215 @@ function ItemRack.ManualQueueAdvance(slot)
 	return false
 end
 
+-- Slot-aware default swap-in threshold helper:
+-- Default overlap is 30 seconds for trinket slots (13, 14), and 0 seconds for all other equipment slots.
+function ItemRack.GetDefaultSwapIn(slot)
+	if slot == 13 or slot == 14 then
+		return 30
+	end
+	return 0
+end
+
+function ItemRack.ClearBurntQueueItems(slot)
+	ItemRackUser = ItemRackUser or {}
+	ItemRackUser.BurntQueueItems = ItemRackUser.BurntQueueItems or {}
+	if slot then
+		ItemRackUser.BurntQueueItems[slot] = nil
+	else
+		ItemRackUser.BurntQueueItems = {}
+	end
+	ItemRack.BurntQueueItems = ItemRackUser.BurntQueueItems
+	if ItemRack.QueueDiagnostic then
+		ItemRack.QueueDiagnostic("burnt_items_cleared", { slot = slot or "all" })
+	end
+end
+
+function ItemRack.RecordEquipTime(slot, exactID, transitionTime, attempt)
+	if not slot or not exactID or exactID == 0 then return end
+	ItemRackUser = ItemRackUser or {}
+	ItemRackUser.EquipTimers = ItemRackUser.EquipTimers or {}
+	local start, duration = GetInventoryItemCooldown("player", slot)
+	start = tonumber(start)
+	duration = tonumber(duration)
+	local now = GetTime()
+	local referenceTime = tonumber(transitionTime) or now
+	attempt = tonumber(attempt) or 0
+	local pendingUse = ItemRack.PendingReflectItemUse
+	and ItemRack.PendingReflectItemUse[slot]
+	local exactBaseID = tonumber(ItemRack.GetIRString(exactID, true))
+	local pendingUseMatches = pendingUse and (
+		(pendingUse.exactID and ItemRack.SameExactID(pendingUse.exactID, exactID))
+		or (not pendingUse.exactID and pendingUse.baseID and pendingUse.baseID == exactBaseID)
+	)
+	local useCheckPending = pendingUseMatches
+	and type(pendingUse.deadline) == "number" and now <= pendingUse.deadline
+	and duration and duration >= 29 and duration <= 31
+
+	-- Blizzard can publish UNIT_INVENTORY_CHANGED before the new inventory
+	-- cooldown is visible. Keep this transition protected while the cooldown
+	-- settles; treating 0/nil as "no penalty" here can make AutoQueue undo a
+	-- valid equip before its 30-second penalty appears. If an item-use hook is
+	-- simultaneously resolving the same ambiguous 30-second cooldown, let the
+	-- hook compare its start against the transition before classifying it.
+	if (not start or not duration or (start == 0 and duration == 0) or useCheckPending)
+	and attempt < 12 then
+		local pendingRecord = {
+			id = exactID,
+			time = referenceTime,
+			transitionTime = referenceTime,
+			hasPenalty = nil,
+			pending = true,
+			used = false
+		}
+		ItemRackUser.EquipTimers[slot] = pendingRecord
+		ItemRack.EquipTimers = ItemRackUser.EquipTimers
+		if ItemRack.QueueDiagnostic then
+			ItemRack.QueueDiagnostic("equip_timer_pending", { attempt = attempt, slot = slot })
+		end
+
+		local generation = ItemRack.QueueStateGeneration
+		local deadline = now + 0.75
+		local retry
+		retry = function()
+			if generation ~= ItemRack.QueueStateGeneration
+			or not ItemRack.EquipTimers
+			or ItemRack.EquipTimers[slot] ~= pendingRecord
+			or not pendingRecord.pending
+			or pendingRecord.used then
+				return
+			end
+
+			local state, currentExactID = ItemRack.GetEquippedSlotState(slot)
+			if state == "resolved" then
+				if ItemRack.SameExactID(currentExactID, exactID) then
+					ItemRack.RecordEquipTime(slot, exactID, referenceTime, attempt + 1)
+				else
+					ItemRack.ClearEquipTimer(slot)
+				end
+			elseif state == "empty" then
+				ItemRack.ClearEquipTimer(slot)
+			elseif GetTime() < deadline then
+				C_Timer.After(0.05, retry)
+			elseif ItemRack.ScheduleEquippedStateRetry then
+				-- Leave the protective pending record in place. Reconciliation
+				-- will restart classification once the exact slot resolves.
+				ItemRack.ScheduleEquippedStateRetry()
+			end
+		end
+		C_Timer.After(0.05, retry)
+		return
+	end
+
+	local hasPenalty = false
+	local cooldownOffset = start and start > 0 and math.abs(referenceTime - start)
+	if cooldownOffset and cooldownOffset <= 1
+	and duration and duration >= 29 and duration <= 31 then
+		hasPenalty = true
+	end
+	ItemRackUser.EquipTimers[slot] = {
+		id = exactID,
+		time = hasPenalty and start or now,
+		hasPenalty = hasPenalty,
+		used = not hasPenalty -- Items without an equip penalty are unheld immediately
+	}
+	ItemRack.EquipTimers = ItemRackUser.EquipTimers
+	if ItemRack.QueueDiagnostic then
+		ItemRack.QueueDiagnostic("equip_timer_recorded", {
+			hasPenalty = hasPenalty,
+			slot = slot,
+			used = ItemRackUser.EquipTimers[slot].used and true or false
+		})
+	end
+end
+
+function ItemRack.MarkEquippedItemUsed(slot)
+	if not slot then return end
+	ItemRackUser = ItemRackUser or {}
+	ItemRackUser.EquipTimers = ItemRackUser.EquipTimers or {}
+	if ItemRackUser.EquipTimers[slot] then
+		ItemRackUser.EquipTimers[slot].used = true
+		ItemRackUser.EquipTimers[slot].pending = nil
+	end
+	ItemRack.EquipTimers = ItemRackUser.EquipTimers
+	if ItemRack.QueueDiagnostic then
+		ItemRack.QueueDiagnostic("equipped_item_marked_used", { slot = slot })
+	end
+end
+
+function ItemRack.IsRecentEquip(slot, exactID)
+	if not slot or not exactID then return false end
+	local record = ItemRack.EquipTimers and ItemRack.EquipTimers[slot]
+	if not record then return false end
+	if record.used then return false end -- Released immediately if used or if no equip penalty exists
+	if ItemRack.SameExactID(record.id, exactID) then
+		local baseID = ItemRack.GetIRString(exactID, true)
+		if not ItemRack.IsQueueItemBurnt(slot, exactID, baseID) then
+			return (GetTime() - record.time) < 30
+		end
+	end
+	return false
+end
+
+function ItemRack.GetItemCooldownLeft(itemID)
+	if not itemID or itemID == 0 or not GetItemCooldown then return nil end
+	local numericID = tonumber(itemID) or tonumber(string.match(tostring(itemID), "^(%d+)"))
+	if not numericID then return nil end
+	local start, duration = GetItemCooldown(numericID)
+	start = tonumber(start)
+	duration = tonumber(duration)
+	if not start or not duration then return nil end -- nil-safe
+	if start == 0 or duration == 0 then return 0 end
+	return math.max(start + duration - GetTime(), 0)
+end
+
+function ItemRack.IsCandidateReady(slot, candidateID, customReadyTime)
+	local threshold = tonumber(customReadyTime)
+	if threshold == nil then threshold = ItemRack.GetDefaultSwapIn(slot) end
+	local timeLeft = ItemRack.GetItemCooldownLeft(candidateID)
+	if timeLeft == nil then return false end -- nil-safe: unknown cooldown state -> retry later (not ready)
+	return timeLeft <= threshold
+end
+
+function ItemRack.ShouldHoldEquippedItem(slot, exactID, baseID, customReadyTime)
+	if ItemRack.IsQueueItemBurnt(slot, exactID, baseID) then
+		if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("hold_decision", { hold = false, reason = "burnt", slot = slot }) end
+		return false
+	end
+	if ItemRack.IsRecentEquip(slot, exactID) then
+		if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("hold_decision", { hold = true, reason = "equip_penalty", slot = slot }) end
+		return true
+	end
+	local threshold = tonumber(customReadyTime)
+	if threshold == nil then threshold = ItemRack.GetDefaultSwapIn(slot) end
+	local timeLeft = ItemRack.GetItemCooldownLeft(exactID or baseID)
+	if timeLeft == nil then
+		if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("hold_decision", { hold = true, reason = "unknown_cooldown", slot = slot }) end
+		return true
+	end -- nil-safe: unknown cooldown state -> hold current gear safely
+	local hold = timeLeft <= threshold
+	if ItemRack.QueueDiagnostic then
+		ItemRack.QueueDiagnostic("hold_decision", { hold = hold, remaining = string.format("%.2f", timeLeft), slot = slot, threshold = threshold })
+	end
+	return hold
+end
+
 function ItemRack.ProcessAutoQueue(slot)
-	if not slot or IsInventoryItemLocked(slot) then return end
+	if ItemRack.QueueStateReady ~= true then
+		if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("autoqueue_skipped", { reason = "state_not_ready", slot = slot }) end
+		return
+	end
+	if not slot then return end
+	if not ItemRack.IsEquippedSlotStateReady(slot) then
+		if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("autoqueue_skipped", { reason = "slot_unresolved", slot = slot }) end
+		return
+	end
+	if IsInventoryItemLocked(slot) then return end
 	if slot == 17 and ItemRack.IsOffhandBlocked() then return end
 
 	local start,duration,enable = GetInventoryItemCooldown("player",slot)
+	start = tonumber(start)
+	duration = tonumber(duration)
+	if not start or not duration then return end -- Top-level nil guard
 	local timeLeft = math.max(start + duration - GetTime(),0)
 	local exactID = ItemRack.GetID(slot)
 	local baseID = ItemRack.GetIRString(exactID,true)
@@ -323,7 +550,7 @@ function ItemRack.ProcessAutoQueue(slot)
 	end
 	
 	if delayValue and delayValue > 0 then
-		if start>0 and (GetTime() - start) <= delayValue then
+		if start > 0 and (GetTime() - start) <= delayValue then
 			if icon then icon:SetDesaturated(true) end
 			return
 		end
@@ -359,25 +586,23 @@ function ItemRack.ProcessAutoQueue(slot)
 			equippedCustomTime = list[matchIdx].swapInEnabled and list[matchIdx].swapIn or nil
 		end
 	end
-	local ready = ItemRack.ItemNearReady(baseID, slot, equippedCustomTime)
+	local ready = ItemRack.ShouldHoldEquippedItem(slot, exactID, baseID, equippedCustomTime)
 	if ready and ItemRack.CombatQueue[slot] and ItemRack.AutoQueueFlag and ItemRack.AutoQueueFlag[slot] then
 		ItemRack.RemoveFromCombatQueue(slot)
 	end
 
 	if not list then return end
 
-	ItemRack.BurntQueueItems = ItemRack.BurntQueueItems or {}
-	ItemRack.BurntQueueItems[slot] = ItemRack.BurntQueueItems[slot] or {}
-	local start, duration = GetItemCooldown(tonumber(baseID))
-	if start and start > 0 and duration > 30 then
-		ItemRack.MarkEquippedQueueItemBurnt(slot, exactID, baseID, list)
-	end
+	-- NOTE: Legacy duration > 30 auto-burn inference REMOVED completely.
+	-- Burn-on-use is 100% event-driven via ReflectItemUse() upon actual player activation.
 
 	local nextItem, nextItemID = ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready)
 	if nextItem then
+		if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("autoqueue_candidate", { current = baseID, next = nextItemID, ready = ready and true or false, slot = slot }) end
 		if GetItemCount(tonumber(nextItem) or nextItem)>0 and not ItemRack.SameExactID(exactID, nextItemID) then
 			local _,bag = ItemRack.FindItem(nextItemID)
 			if bag and not (ItemRack.CombatQueue[slot]==nextItemID) then
+				if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("autoqueue_equip_requested", { item = nextItemID, slot = slot }) end
 				ItemRack.EquipItemByID(nextItemID,slot,true)
 			end
 		end
@@ -386,6 +611,12 @@ function ItemRack.ProcessAutoQueue(slot)
 end
 
 function ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready, setname)
+	if ItemRack.QueueStateReady ~= true then
+		return nil
+	end
+	if not ItemRack.IsEquippedSlotStateReady(slot) then
+		return nil
+	end
 	local list = ItemRack.GetQueues(setname)[slot]
 	local candidate
 
@@ -464,7 +695,7 @@ function ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready, setname)
 			end
 			if canSwap then
 				local candidateCustomTime = list[i].swapInEnabled and list[i].swapIn or nil
-				if ItemRack.ItemNearReady(candidate, slot, candidateCustomTime) then
+				if ItemRack.IsCandidateReady(slot, list[i].id, candidateCustomTime) then
 					return candidate, list[i].id
 				end
 			end
@@ -475,21 +706,14 @@ function ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready, setname)
 end
 
 function ItemRack.ItemNearReady(id, slot, customReadyTime)
-	local start,duration = GetItemCooldown(id)
-	if not tonumber(start) then return end -- can return nil shortly after loading screen
-	if start==0 then return true end
-
-	-- If the total cooldown duration is 30 seconds or less, it's almost certainly an equip cooldown
-	-- (or a very short ability CD), so we consider it "ready" to prevent it from swapping out instantly upon equip.
-	if duration <= 30 then return true end
-
-	local overlap = 30
-	if customReadyTime then
-		overlap = customReadyTime
-	end
-
-	if math.max(start + duration - GetTime(),0) <= overlap then
-		return true
+	if not id or id == 0 then return true end
+	if not ItemRack.IsEquippedSlotStateReady(slot) then return true end
+	local exactID = ItemRack.EquippedSnapshot[slot]
+	local baseID = ItemRack.GetIRString(id, true)
+	if exactID and ItemRack.SameExactID(exactID, id) then
+		return ItemRack.ShouldHoldEquippedItem(slot, exactID, baseID, customReadyTime)
+	else
+		return ItemRack.IsCandidateReady(slot, id, customReadyTime)
 	end
 end
 

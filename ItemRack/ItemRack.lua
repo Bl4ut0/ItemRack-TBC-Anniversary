@@ -725,6 +725,39 @@ function ItemRack.AuditSavedVariables(printToChat)
 end
 
 function ItemRack.OnPlayerLogin()
+	ItemRack.ClearQueueDiagnostics()
+	ItemRack.QueueDiagnostic("login_reset", { generation = (ItemRack.QueueStateGeneration or 0) + 1 })
+	ItemRack.QueueStateReady = false
+	ItemRack.QueueLifecycleKnown = false
+	ItemRack.QueueStateGeneration = (ItemRack.QueueStateGeneration or 0) + 1
+	ItemRack.QueueStateRetryPending = nil
+	ItemRack.EquippedStateRetryPending = nil
+	ItemRack.QueueStateReadyNotified = nil
+	ItemRack.QueueInitWasReload = false
+	ItemRack.QueueFreshStateCleared = false
+	ItemRack.QueueStateInitStarted = nil
+	ItemRack.PendingQueueStateEventReason = nil
+	ItemRack.PendingQueueEquipSet = nil
+	ItemRack.UnresolvedEquippedSlots = {}
+	ItemRack.PendingEquipTransitionTimes = {}
+	ItemRack.PreReadyInventoryEventTime = nil
+	ItemRack.PreReadyEquippedObservations = {}
+	ItemRack.LastActivation = nil
+	ItemRack.LastProcessedItemUse = {}
+	ItemRack.PendingReflectItemUse = {}
+	ItemRack.ReflectItemUseRetrySequence = 0
+
+	ItemRackUser = ItemRackUser or {}
+	if type(ItemRackUser.EquipTimers) ~= "table" then
+		ItemRackUser.EquipTimers = {}
+	end
+	if type(ItemRackUser.BurntQueueItems) ~= "table" then
+		ItemRackUser.BurntQueueItems = {}
+	end
+
+	ItemRack.EquipTimers = ItemRackUser.EquipTimers
+	ItemRack.BurntQueueItems = ItemRackUser.BurntQueueItems
+
 	-- Normally some of these methods cannot be called in combat without causing errors, but since we run these IMMEDIATELY
 	-- on PLAYER_LOGIN event we get a grace period where it allows us to run secure code in combat.
 	ItemRack.InitBroker()
@@ -756,6 +789,14 @@ function ItemRack.RunAllEvents(reason)
 		ItemRack.Debug("Events", "RunAllEvents skipped (events disabled):", reason)
 		return
 	end
+	if ItemRackUser.EnableQueues == "ON" and ItemRack.QueueLifecycleKnown and ItemRack.QueueStateReady ~= true then
+		ItemRack.PendingQueueStateEventReason = reason or "Queue state ready"
+		if ItemRack.ScheduleQueueStateRetry then
+			ItemRack.ScheduleQueueStateRetry()
+		end
+		ItemRack.Debug("Events", "RunAllEvents deferred until queue state is ready:", reason)
+		return
+	end
 	local getSlots = C_Container and C_Container.GetContainerNumSlots or _G.GetContainerNumSlots
 	local numSlots = getSlots and getSlots(0)
 	if not numSlots or numSlots == 0 then
@@ -782,9 +823,490 @@ function ItemRack.ScheduleEventRecheck(reason, delay)
 	end)
 end
 
+-- AutoQueue is driven by asynchronous inventory and cooldown updates. Keep a
+-- bounded, runtime-only flight recorder so /itemrack dump remains useful even
+-- when debug logging was not enabled before a failure.
+function ItemRack.QueueDiagnostic(event, details)
+	ItemRack.QueueDiagnosticBuffer = ItemRack.QueueDiagnosticBuffer or {}
+	local parts = {}
+	if type(details) == "table" then
+		local keys = {}
+		for key in pairs(details) do
+			table.insert(keys, key)
+		end
+		table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+		for _, key in ipairs(keys) do
+			table.insert(parts, tostring(key) .. "=" .. tostring(details[key]))
+		end
+	elseif details ~= nil then
+		table.insert(parts, tostring(details))
+	end
+
+	local text = "[IR-Queue] " .. tostring(event)
+	if #parts > 0 then
+		text = text .. " " .. table.concat(parts, " ")
+	end
+	table.insert(ItemRack.QueueDiagnosticBuffer, date("[%H:%M:%S] ") .. text)
+	if #ItemRack.QueueDiagnosticBuffer > 250 then
+		table.remove(ItemRack.QueueDiagnosticBuffer, 1)
+	end
+
+	-- The normal Queue tag remains the opt-in live trace mechanism.
+	ItemRack.Debug("Queue", "DIAG", event, table.concat(parts, " "))
+end
+
+function ItemRack.ClearQueueDiagnostics()
+	ItemRack.QueueDiagnosticBuffer = {}
+end
+
+function ItemRack.GetEquippedSlotState(slot)
+	local exactID = ItemRack.GetID(slot)
+	local inventoryID = GetInventoryItemID and GetInventoryItemID("player", slot)
+	local texture = GetInventoryItemTexture and GetInventoryItemTexture("player", slot)
+
+	if exactID and exactID ~= 0 then
+		-- During an asynchronous inventory update, the item link can briefly
+		-- describe the previous item while the numeric inventory ID is already
+		-- current. Never publish that mixed state as a resolved exact ID.
+		if inventoryID and inventoryID ~= 0 then
+			local exactBaseID = tonumber(ItemRack.GetIRString(exactID, true))
+			if not exactBaseID or exactBaseID ~= tonumber(inventoryID) then
+				return "unresolved"
+			end
+		elseif GetInventoryItemID and not texture then
+			return "unresolved"
+		end
+		return "resolved", exactID
+	end
+
+	if (inventoryID and inventoryID ~= 0) or texture then
+		return "unresolved"
+	end
+
+	return "empty", 0
+end
+
+function ItemRack.IsEquippedSlotStateReady(slot)
+	if ItemRack.QueueStateReady ~= true or type(ItemRack.EquippedSnapshot) ~= "table"
+	or ItemRack.EquippedSnapshot[slot] == false
+	or (ItemRack.UnresolvedEquippedSlots and ItemRack.UnresolvedEquippedSlots[slot]) then
+		return false
+	end
+
+	local state, currentID = ItemRack.GetEquippedSlotState(slot)
+	local snapshotID = ItemRack.EquippedSnapshot[slot]
+	local matchesSnapshot = (state == "resolved" and ItemRack.SameExactID(snapshotID, currentID))
+	or (state == "empty" and snapshotID == 0)
+	if matchesSnapshot then
+		return true
+	end
+
+	-- Quarantine a transition immediately, even if its inventory event has not
+	-- reached our handler yet. Reconciliation preserves the old ID/timer until
+	-- the new exact state is reliable.
+	ItemRack.UnresolvedEquippedSlots = ItemRack.UnresolvedEquippedSlots or {}
+	ItemRack.PendingEquipTransitionTimes = ItemRack.PendingEquipTransitionTimes or {}
+	ItemRack.UnresolvedEquippedSlots[slot] = true
+	ItemRack.PendingEquipTransitionTimes[slot] = ItemRack.PendingEquipTransitionTimes[slot] or GetTime()
+	if ItemRack.ScheduleEquippedStateRetry then
+		ItemRack.ScheduleEquippedStateRetry()
+	end
+	return false
+end
+
+function ItemRack.TryEquipPendingQueueSet()
+	local pendingSet = ItemRack.PendingQueueEquipSet
+	if not pendingSet or not ItemRack.EquipSet
+	or not ItemRackUser.Sets or not ItemRackUser.Sets[pendingSet.setname] then
+		return false
+	end
+
+	if ItemRackUser.EnableQueues == "ON" then
+		if ItemRack.QueueStateReady ~= true then
+			return false
+		end
+		for slot in pairs(ItemRackUser.Sets[pendingSet.setname].equip) do
+			if type(slot) == "number" and not ItemRack.IsEquippedSlotStateReady(slot) then
+				return false
+			end
+		end
+	end
+
+	ItemRack.PendingQueueEquipSet = nil
+	ItemRack.EquipSet(pendingSet.setname, pendingSet.disableSound, pendingSet.isSecureKeybind)
+	return true
+end
+
+function ItemRack.NotifyQueueStateReady()
+	if ItemRack.QueueStateReadyNotified or ItemRack.QueueStateReady ~= true then
+		return
+	end
+	ItemRack.QueueStateReadyNotified = true
+
+	local generation = ItemRack.QueueStateGeneration
+	C_Timer.After(0, function()
+		if generation ~= ItemRack.QueueStateGeneration or ItemRack.QueueStateReady ~= true then
+			return
+		end
+
+		ItemRack.TryEquipPendingQueueSet()
+
+		local reason = ItemRack.PendingQueueStateEventReason or "Queue state ready"
+		ItemRack.PendingQueueStateEventReason = nil
+		if ItemRack.RunAllEvents then
+			ItemRack.RunAllEvents(reason)
+		end
+		if ItemRack.PeriodicQueueCheck then
+			-- Give UNIT_INVENTORY_CHANGED one frame to record any equip penalty
+			-- produced by a deferred set before AutoQueue evaluates it.
+			C_Timer.After(0.05, function()
+				if generation == ItemRack.QueueStateGeneration and ItemRack.QueueStateReady == true then
+					ItemRack.PeriodicQueueCheck()
+				end
+			end)
+		end
+	end)
+end
+
+function ItemRack.TryInitializeQueueState(isLogin, isReload, inventoryEventTime)
+	if ItemRack.QueueStateReady then
+		return true
+	end
+	ItemRack.QueueDiagnostic("state_init_attempt", {
+		inventoryEvent = inventoryEventTime and true or false,
+		login = isLogin and true or false,
+		reload = isReload and true or false
+	})
+
+	ItemRackUser = ItemRackUser or {}
+
+	if isLogin and not ItemRack.QueueFreshStateCleared then
+		ItemRackUser.EquipTimers = {}
+		if ItemRack.ClearBurntQueueItems then
+			ItemRack.ClearBurntQueueItems()
+		end
+		ItemRack.QueueFreshStateCleared = true
+	end
+
+	if type(ItemRackUser.EquipTimers) ~= "table" then
+		ItemRackUser.EquipTimers = {}
+	end
+	ItemRack.EquipTimers = ItemRackUser.EquipTimers
+	if type(ItemRackUser.BurntQueueItems) ~= "table" then
+		ItemRackUser.BurntQueueItems = {}
+	end
+	ItemRack.BurntQueueItems = ItemRackUser.BurntQueueItems
+
+	local tempSnapshot = {}
+	local tempUnresolvedSlots = {}
+	local now = GetTime()
+	ItemRack.QueueStateInitStarted = ItemRack.QueueStateInitStarted or now
+	local hasUnresolvedSlot = false
+	ItemRack.PreReadyEquippedObservations = ItemRack.PreReadyEquippedObservations or {}
+
+	for i = 0, 19 do
+		local state, exactID = ItemRack.GetEquippedSlotState(i)
+		local observedID = ItemRack.PreReadyEquippedObservations[i]
+		if state == "unresolved" then
+			tempSnapshot[i] = false
+			tempUnresolvedSlots[i] = true
+			if observedID == nil then
+				ItemRack.PreReadyEquippedObservations[i] = false
+			end
+			if inventoryEventTime then
+				ItemRack.PendingEquipTransitionTimes[i] = ItemRack.PendingEquipTransitionTimes[i]
+				or inventoryEventTime
+			end
+			hasUnresolvedSlot = true
+		elseif state == "resolved" then
+			tempSnapshot[i] = exactID
+			if observedID == false and inventoryEventTime then
+				-- The slot was previously occupied but its exact item data was
+				-- unavailable. A resolution delivered by an inventory event may
+				-- be the completed equip transition, so preserve that event as
+				-- provenance and let RecordEquipTime verify the cooldown.
+				ItemRack.PendingEquipTransitionTimes[i] = ItemRack.PendingEquipTransitionTimes[i]
+				or inventoryEventTime
+			elseif observedID ~= nil and observedID ~= false
+			and (observedID == 0 or not ItemRack.SameExactID(observedID, exactID)) then
+				ItemRack.PendingEquipTransitionTimes[i] = ItemRack.PendingEquipTransitionTimes[i]
+				or inventoryEventTime or ItemRack.PreReadyInventoryEventTime
+			end
+			ItemRack.PreReadyEquippedObservations[i] = exactID
+		else
+			tempSnapshot[i] = 0
+			if observedID and observedID ~= false and observedID ~= 0 then
+				ItemRack.PendingEquipTransitionTimes[i] = ItemRack.PendingEquipTransitionTimes[i]
+				or inventoryEventTime or ItemRack.PreReadyInventoryEventTime
+			end
+			ItemRack.PreReadyEquippedObservations[i] = 0
+		end
+	end
+
+	-- Allow a short cache-settling window before degrading to per-slot
+	-- suspension. A permanently unresolved/unsupported item must not disable
+	-- every ItemRack set and event for the entire session.
+	if hasUnresolvedSlot and (now - ItemRack.QueueStateInitStarted) < 2 then
+		ItemRack.QueueDiagnostic("state_init_waiting_for_items", {
+			elapsed = string.format("%.2f", now - ItemRack.QueueStateInitStarted)
+		})
+		ItemRack.Debug("Queue", "TryInitializeQueueState: equipped item data is unresolved; retrying before partial initialization")
+		return false
+	end
+
+	-- Validate saved EquipTimers on reload / existing state. A pending record
+	-- means the reload interrupted its short cooldown-publication check, so
+	-- restart that check after validation.
+	local pendingTimerRestarts = {}
+	for slot, record in pairs(ItemRackUser.EquipTimers) do
+		local currentExactID = tempSnapshot[slot]
+		if currentExactID == false then
+			-- Preserve provenance until this one slot resolves.
+		elseif type(record) ~= "table" or not record.id or type(record.time) ~= "number" then
+			ItemRackUser.EquipTimers[slot] = nil
+		else
+			local elapsed = now - record.time
+			if elapsed < 0 or elapsed > 30 or not currentExactID or currentExactID == 0 or not ItemRack.SameExactID(record.id, currentExactID) then
+				ItemRackUser.EquipTimers[slot] = nil
+			elseif record.pending then
+				pendingTimerRestarts[slot] = {
+					id = currentExactID,
+					time = tonumber(record.transitionTime) or record.time
+				}
+			end
+		end
+	end
+	if ItemRack.RecordEquipTime then
+		for slot, pending in pairs(pendingTimerRestarts) do
+			ItemRack.RecordEquipTime(slot, pending.id, pending.time)
+		end
+	end
+
+	-- If an inventory event occurred before the first reliable baseline, retain
+	-- its per-slot transition provenance. RecordEquipTime briefly keeps an
+	-- unknown cooldown fail-closed while Blizzard publishes the final state.
+	if ItemRack.RecordEquipTime then
+		for slot = 0, 19 do
+			local currentExactID = tempSnapshot[slot]
+			local transitionTime = ItemRack.PendingEquipTransitionTimes[slot]
+			if currentExactID and currentExactID ~= false and currentExactID ~= 0
+			and transitionTime and not ItemRackUser.EquipTimers[slot] then
+				ItemRack.RecordEquipTime(slot, currentExactID, transitionTime)
+			end
+		end
+	end
+
+	for slot = 0, 19 do
+		if tempSnapshot[slot] ~= false then
+			ItemRack.PendingEquipTransitionTimes[slot] = nil
+		end
+	end
+
+	ItemRack.EquippedSnapshot = tempSnapshot
+	ItemRack.UnresolvedEquippedSlots = tempUnresolvedSlots
+	ItemRack.QueueStateReady = true
+	ItemRack.QueueStateInitStarted = nil
+	ItemRack.PreReadyInventoryEventTime = nil
+	ItemRack.PreReadyEquippedObservations = nil
+	if hasUnresolvedSlot then
+		ItemRack.QueueDiagnostic("state_ready_partial", { unresolved = true })
+		ItemRack.Debug("Queue", "TryInitializeQueueState: initialization complete with unresolved slots suspended")
+		ItemRack.ScheduleEquippedStateRetry()
+	else
+		ItemRack.QueueDiagnostic("state_ready", { unresolved = false })
+		ItemRack.Debug("Queue", "TryInitializeQueueState: initialization complete")
+	end
+	ItemRack.NotifyQueueStateReady()
+	return true
+end
+
+function ItemRack.ScheduleQueueStateRetry(delay)
+	if ItemRack.QueueStateReady == true or ItemRack.QueueStateRetryPending or not ItemRack.QueueLifecycleKnown then
+		return
+	end
+
+	delay = delay or 0.25
+	ItemRack.QueueStateRetryPending = true
+	local generation = ItemRack.QueueStateGeneration
+
+	C_Timer.After(delay, function()
+		if generation ~= ItemRack.QueueStateGeneration then
+			return
+		end
+		ItemRack.QueueStateRetryPending = nil
+		if ItemRack.QueueStateReady == true or not ItemRack.QueueLifecycleKnown then
+			return
+		end
+
+		if not ItemRack.TryInitializeQueueState(false, ItemRack.QueueInitWasReload) then
+			ItemRack.ScheduleQueueStateRetry(math.min(delay * 1.5, 1))
+		end
+	end)
+end
+
+function ItemRack.ClearEquipTimer(slot)
+	if ItemRack.EquipTimers then
+		ItemRack.EquipTimers[slot] = nil
+	end
+	if ItemRackUser and ItemRackUser.EquipTimers then
+		ItemRackUser.EquipTimers[slot] = nil
+	end
+end
+
+function ItemRack.ReconcileEquippedSnapshot(fromInventoryEvent)
+	if ItemRack.QueueStateReady ~= true or type(ItemRack.EquippedSnapshot) ~= "table" then
+		return false, false
+	end
+
+	local hasUnresolvedSlot = false
+	local stateChanged = false
+	local readinessRestored = false
+	local now = GetTime()
+	ItemRack.UnresolvedEquippedSlots = ItemRack.UnresolvedEquippedSlots or {}
+	ItemRack.PendingEquipTransitionTimes = ItemRack.PendingEquipTransitionTimes or {}
+
+	for i = 0, 19 do
+		local state, currentID = ItemRack.GetEquippedSlotState(i)
+		local previousID = ItemRack.EquippedSnapshot[i]
+		local wasUnresolved = ItemRack.UnresolvedEquippedSlots[i]
+
+		if state == "unresolved" then
+			hasUnresolvedSlot = true
+			if not wasUnresolved then
+				ItemRack.QueueDiagnostic("slot_unresolved", { inventoryEvent = fromInventoryEvent and true or false, slot = i })
+			end
+			ItemRack.UnresolvedEquippedSlots[i] = true
+			if fromInventoryEvent and not ItemRack.PendingEquipTransitionTimes[i] then
+				ItemRack.PendingEquipTransitionTimes[i] = now
+			end
+		elseif state == "resolved" then
+			ItemRack.UnresolvedEquippedSlots[i] = nil
+			if wasUnresolved then
+				ItemRack.QueueDiagnostic("slot_resolved", { current = currentID, previous = previousID, slot = i })
+				stateChanged = true
+				readinessRestored = true
+			end
+			local transitionTime = ItemRack.PendingEquipTransitionTimes[i]
+			ItemRack.PendingEquipTransitionTimes[i] = nil
+			if previousID == false then
+				-- This slot was unresolved when the baseline was committed. Adopt
+				-- its first reliable exact ID without inventing an equip event.
+				local record = ItemRack.EquipTimers and ItemRack.EquipTimers[i]
+				local validRecord
+				if record then
+					validRecord = type(record) == "table"
+					and record.id
+					and type(record.time) == "number"
+					local elapsed = validRecord and (now - record.time)
+					if not validRecord or elapsed < 0 or elapsed > 30 or not ItemRack.SameExactID(record.id, currentID) then
+						ItemRack.ClearEquipTimer(i)
+						validRecord = false
+					end
+				end
+				if not validRecord and ItemRack.RecordEquipTime then
+					-- A known transition is checked against the published
+					-- cooldown; an unknown transition is held only while the
+					-- cooldown settles.
+					ItemRack.RecordEquipTime(i, currentID, transitionTime)
+				elseif validRecord and record.pending and ItemRack.RecordEquipTime then
+					ItemRack.RecordEquipTime(i, currentID, record.transitionTime or record.time)
+				end
+				ItemRack.EquippedSnapshot[i] = currentID
+				stateChanged = true
+			else
+				if not previousID or previousID == 0 or not ItemRack.SameExactID(previousID, currentID) then
+					ItemRack.QueueDiagnostic("equip_transition", { current = currentID, previous = previousID, slot = i })
+					if ItemRack.RecordEquipTime then
+						ItemRack.RecordEquipTime(i, currentID, transitionTime)
+					end
+					stateChanged = true
+				end
+				ItemRack.EquippedSnapshot[i] = currentID
+				local record = ItemRack.EquipTimers and ItemRack.EquipTimers[i]
+				if record and record.pending and ItemRack.SameExactID(record.id, currentID)
+				and ItemRack.RecordEquipTime then
+					ItemRack.RecordEquipTime(i, currentID, record.transitionTime or record.time)
+				end
+			end
+		else
+			ItemRack.UnresolvedEquippedSlots[i] = nil
+			if wasUnresolved then
+				stateChanged = true
+				readinessRestored = true
+			end
+			ItemRack.PendingEquipTransitionTimes[i] = nil
+			if previousID ~= 0 then
+				ItemRack.QueueDiagnostic("slot_emptied", { previous = previousID, slot = i })
+				stateChanged = true
+			end
+			ItemRack.EquippedSnapshot[i] = 0
+			ItemRack.ClearEquipTimer(i)
+		end
+	end
+
+	return hasUnresolvedSlot, stateChanged, readinessRestored
+end
+
+function ItemRack.ScheduleEquippedStateRetry(delay)
+	if ItemRack.EquippedStateRetryPending or ItemRack.QueueStateReady ~= true then
+		return
+	end
+
+	delay = delay or 0.2
+	ItemRack.EquippedStateRetryPending = true
+	local generation = ItemRack.QueueStateGeneration
+
+	C_Timer.After(delay, function()
+		if generation ~= ItemRack.QueueStateGeneration then
+			return
+		end
+		ItemRack.EquippedStateRetryPending = nil
+		if ItemRack.QueueStateReady == true and ItemRack.ReconcileEquippedSnapshot then
+			local unresolved, changed, readinessRestored = ItemRack.ReconcileEquippedSnapshot(false)
+			if changed then
+				ItemRack.UpdateButtons()
+				ItemRack.TryEquipPendingQueueSet()
+				ItemRack.UpdateCombatQueue()
+				if readinessRestored and ItemRack.RunAllEvents then
+					ItemRack.RunAllEvents("Equipped item data resolved")
+				end
+				if ItemRackMenuFrame:IsVisible() then
+					ItemRack.BuildMenu()
+				end
+				if ItemRackOptFrame and ItemRackOptFrame:IsVisible() then
+					for i = 0, 19 do
+						if not ItemRackOpt.Inv[i].selected then
+							ItemRackOpt.Inv[i].id = ItemRack.GetID(i)
+						end
+					end
+					ItemRackOpt.UpdateInv()
+				end
+				if ItemRack.PeriodicQueueCheck then
+					C_Timer.After(0.05, function()
+						if generation == ItemRack.QueueStateGeneration and ItemRack.QueueStateReady == true then
+							ItemRack.PeriodicQueueCheck()
+						end
+					end)
+				end
+			end
+			if unresolved then
+				ItemRack.ScheduleEquippedStateRetry(math.min(delay * 1.5, 1))
+			end
+		end
+	end)
+end
+
 function ItemRack.OnEnterWorld(self,event,...)
 	local isLogin,isReload = ...
 	ItemRack.UpdateArenaVisibilityState()
+	ItemRack.QueueLifecycleKnown = true
+	ItemRack.QueueInitWasReload = isReload and true or false
+
+	if isLogin or isReload or ItemRack.QueueStateReady == false then
+		if not ItemRack.TryInitializeQueueState(isLogin, isReload) then
+			ItemRack.ScheduleQueueStateRetry()
+		end
+	end
 
 	-- Schedule settled rechecks after entering world/instance
 	ItemRack.ScheduleEventRecheck("PLAYER_ENTERING_WORLD (0.5s)", 0.5)
@@ -932,13 +1454,41 @@ end
 function ItemRack.OnUnitInventoryChanged(self,event,unit)
 	if unit=="player" then
 		ItemRack.UpdateButtons()
+
+		local stateWasReady = ItemRack.QueueStateReady == true
+		ItemRack.QueueDiagnostic("inventory_changed", { stateReady = stateWasReady })
+		local preReadyEventTime
+		if not stateWasReady then
+			preReadyEventTime = GetTime()
+			ItemRack.PreReadyInventoryEventTime = preReadyEventTime
+		end
+		if not stateWasReady and ItemRack.QueueLifecycleKnown then
+			if not ItemRack.TryInitializeQueueState(false, ItemRack.QueueInitWasReload, preReadyEventTime) then
+				ItemRack.ScheduleQueueStateRetry()
+			end
+		end
+
+		local unresolvedSlot, readinessRestored
+		if stateWasReady then
+			local _
+			unresolvedSlot, _, readinessRestored = ItemRack.ReconcileEquippedSnapshot(true)
+		end
+		if unresolvedSlot then
+			ItemRack.ScheduleEquippedStateRetry()
+		end
+		if readinessRestored then
+			ItemRack.TryEquipPendingQueueSet()
+			if ItemRack.RunAllEvents then
+				ItemRack.RunAllEvents("Equipped item data resolved")
+			end
+		end
 		-- Clear any CombatQueue entries that have been fulfilled by the swap
 		if next(ItemRack.CombatQueue) then
 			ItemRack.Debug("CombatQueue", "OnUnitInventoryChanged: checking CombatQueue entries")
 			local dirty = false
 			for slot, queuedID in pairs(ItemRack.CombatQueue) do
-				local equippedID = ItemRack.GetID(slot)
-				local match = equippedID and queuedID and ItemRack.SameID(equippedID, queuedID)
+				local equippedState, equippedID = ItemRack.GetEquippedSlotState(slot)
+				local match = equippedState == "resolved" and queuedID and ItemRack.SameID(equippedID, queuedID)
 				ItemRack.Debug("CombatQueue", "  slot="..tostring(slot).." queued="..tostring(queuedID).." equipped="..tostring(equippedID).." match="..tostring(match))
 				if match then
 					ItemRack.CombatQueue[slot] = nil
@@ -964,6 +1514,8 @@ function ItemRack.OnUnitInventoryChanged(self,event,unit)
 		end
 	end
 end
+
+
 
 function ItemRack.OnUnitAura(self,event,unit)
 	if unit=="player" and ItemRack.PeriodicQueueCheck then
@@ -2611,23 +3163,400 @@ end
 
 --[[ Hooks to capture item use outside the mod ]]
 
-function ItemRack.ReflectItemUse(id)
-	local start, duration = GetInventoryItemCooldown("player", id)
-	if start and start > 0 and duration > 1.5 and (GetTime() - start) > 0.5 then
+function ItemRack.ScheduleReflectItemUseRetry(slot, exactID, baseID)
+	baseID = tonumber(baseID)
+	if not baseID and exactID then
+		baseID = tonumber(ItemRack.GetIRString(exactID, true))
+	end
+	if not slot or (not exactID and not baseID) then
 		return
 	end
+
+	ItemRack.PendingReflectItemUse = ItemRack.PendingReflectItemUse or {}
+	local existing = ItemRack.PendingReflectItemUse[slot]
+	if existing then
+		local sameExactID = exactID and existing.exactID
+		and ItemRack.SameExactID(existing.exactID, exactID)
+		local sameBaseID = not exactID and baseID and existing.baseID == baseID
+		if sameExactID or sameBaseID then
+			return
+		end
+	end
+
+	ItemRack.ReflectItemUseRetrySequence = (ItemRack.ReflectItemUseRetrySequence or 0) + 1
+	local created = GetTime()
+	local token = {
+		exactID = exactID,
+		baseID = baseID,
+		created = created,
+		settleDeadline = created + 0.5,
+		deadline = created + 0.75,
+		generation = ItemRack.QueueStateGeneration,
+		sequence = ItemRack.ReflectItemUseRetrySequence
+	}
+	if slot == 13 or slot == 14 then
+		local otherSlot = slot == 13 and 14 or 13
+		local otherStart, otherDuration = GetInventoryItemCooldown("player", otherSlot)
+		local otherState, otherExactID = ItemRack.GetEquippedSlotState(otherSlot)
+		token.otherSlot = otherSlot
+		token.otherStart = tonumber(otherStart)
+		token.otherDuration = tonumber(otherDuration)
+		token.otherState = otherState
+		token.otherExactID = otherState == "resolved" and otherExactID or nil
+	end
+	ItemRack.PendingReflectItemUse[slot] = token
+
+	local function clearToken()
+		if ItemRack.PendingReflectItemUse[slot] == token then
+			ItemRack.PendingReflectItemUse[slot] = nil
+		end
+	end
+
+	local retry
+	retry = function()
+		if ItemRack.PendingReflectItemUse[slot] ~= token
+		or token.generation ~= ItemRack.QueueStateGeneration then
+			return
+		end
+
+		local now = GetTime()
+		local isTrinket = slot == 13 or slot == 14
+		if isTrinket then
+			-- Preserve hook order while the paired cooldowns settle. This makes
+			-- /use 13 + /use 14 deterministic even when Blizzard publishes the
+			-- shared follower cooldown one frame after the primary hook.
+			local otherSlot = slot == 13 and 14 or 13
+			local earlier = ItemRack.PendingReflectItemUse[otherSlot]
+			if earlier and earlier.sequence < token.sequence then
+				if now < earlier.deadline then
+					C_Timer.After(0.05, retry)
+					return
+				elseif ItemRack.PendingReflectItemUse[otherSlot] == earlier then
+					ItemRack.PendingReflectItemUse[otherSlot] = nil
+				end
+			end
+		end
+
+		local state, currentExactID = ItemRack.GetEquippedSlotState(slot)
+		if state == "resolved" then
+			local currentBaseID = tonumber(ItemRack.GetIRString(currentExactID, true))
+			local matchesExpected = token.exactID
+			and ItemRack.SameExactID(currentExactID, token.exactID)
+			or (not token.exactID and token.baseID and currentBaseID == token.baseID)
+			if not matchesExpected then
+				clearToken()
+				return
+			end
+
+			if ItemRack.QueueStateReady == true and ItemRack.IsEquippedSlotStateReady(slot) then
+				local start, duration = GetInventoryItemCooldown("player", slot)
+				start = tonumber(start)
+				duration = tonumber(duration)
+				if start and duration and start > 0 and duration > 1.5 then
+					local cooldownStartOffset = start - token.created
+					if cooldownStartOffset >= -0.1 and cooldownStartOffset <= 0.5 then
+						if isTrinket then
+							local otherSlot = slot == 13 and 14 or 13
+							local later = ItemRack.PendingReflectItemUse[otherSlot]
+							if later and later.sequence > token.sequence and now < token.settleDeadline then
+								local followerStart, followerDuration = GetInventoryItemCooldown("player", otherSlot)
+								followerStart = tonumber(followerStart)
+								followerDuration = tonumber(followerDuration)
+								if not followerStart or not followerDuration
+								or followerStart == 0 or followerDuration <= 1.5 then
+									C_Timer.After(0.05, retry)
+									return
+								end
+							end
+						end
+						ItemRack.ReflectItemUse(slot, token)
+						clearToken()
+						return
+					elseif cooldownStartOffset < -0.1 or cooldownStartOffset > 0.5 then
+						clearToken()
+						return
+					end
+				elseif isTrinket and now >= token.settleDeadline then
+					-- A first macro line that produced no cooldown must not hold
+					-- a genuine activation from the second trinket until its
+					-- cooldown is too old to verify.
+					clearToken()
+					return
+				end
+			end
+		elseif state == "empty" then
+			clearToken()
+			return
+		elseif token.baseID and GetInventoryItemID then
+			local inventoryBaseID = tonumber(GetInventoryItemID("player", slot))
+			if inventoryBaseID and inventoryBaseID ~= token.baseID then
+				clearToken()
+				return
+			end
+		end
+
+		if now < token.deadline then
+			C_Timer.After(0.05, retry)
+		else
+			clearToken()
+		end
+	end
+
+	C_Timer.After(0.05, retry)
+end
+
+function ItemRack.ReflectItemUse(id, isRetry)
+	local retryToken = type(isRetry) == "table" and isRetry or nil
+	local slotState, exactID = ItemRack.GetEquippedSlotState(id)
+	if slotState ~= "resolved" then
+		ItemRack.QueueDiagnostic("use_ignored_unresolved_slot", { retry = isRetry and true or false, slot = id, state = slotState })
+		if not isRetry and slotState == "unresolved" then
+			local inventoryBaseID = GetInventoryItemID
+			and tonumber(GetInventoryItemID("player", id))
+			if inventoryBaseID and inventoryBaseID > 0 then
+				ItemRack.ScheduleReflectItemUseRetry(id, nil, inventoryBaseID)
+			end
+		end
+		return
+	end
+	local exactBaseID = tonumber(ItemRack.GetIRString(exactID, true))
+	if ItemRack.QueueStateReady ~= true or not ItemRack.IsEquippedSlotStateReady(id) then
+		ItemRack.QueueDiagnostic("use_deferred_queue_state", { ready = ItemRack.QueueStateReady == true, retry = isRetry and true or false, slot = id })
+		if not isRetry then
+			ItemRack.ScheduleReflectItemUseRetry(id, exactID, exactBaseID)
+		end
+		return
+	end
+
+	-- Defer trinket hooks by one settled sample. Paired macro hooks are queued
+	-- in call order, so the genuine primary establishes the shared-cooldown
+	-- token before the rejected follower is evaluated.
+	if not isRetry and (id == 13 or id == 14) then
+		ItemRack.QueueDiagnostic("use_deferred_trinket_sample", { slot = id })
+		ItemRack.ScheduleReflectItemUseRetry(id, exactID, exactBaseID)
+		return
+	end
+
+	local record = ItemRack.EquipTimers and ItemRack.EquipTimers[id]
+	if record and (type(record) ~= "table" or not record.id or type(record.time) ~= "number"
+	or not ItemRack.SameExactID(record.id, exactID)) then
+		ItemRack.ClearEquipTimer(id)
+		record = nil
+	end
+
+	local start, duration = GetInventoryItemCooldown("player", id)
+	start = tonumber(start)
+	duration = tonumber(duration)
+	if not start or not duration or start == 0 or duration <= 1.5 then
+		ItemRack.QueueDiagnostic("use_waiting_for_cooldown", { duration = duration, retry = isRetry and true or false, slot = id, start = start })
+		if not isRetry then
+			ItemRack.ScheduleReflectItemUseRetry(id, exactID, exactBaseID)
+		end
+		return
+	end
+
+	local now = GetTime()
+
+	-- Cooldown timing guard: If cooldown started more than 0.5s ago, it was not triggered by this click
+	local cooldownAge = now - start
+	if retryToken then
+		local cooldownStartOffset = start - retryToken.created
+		if cooldownStartOffset < -0.1 or cooldownStartOffset > 0.5
+		or now > retryToken.deadline then
+			ItemRack.QueueDiagnostic("use_ignored_cooldown_age", { offset = string.format("%.3f", cooldownStartOffset), retry = true, slot = id })
+			return
+		end
+	elseif cooldownAge < -0.1 or cooldownAge > 0.5 then
+		ItemRack.QueueDiagnostic("use_ignored_cooldown_age", { age = string.format("%.3f", cooldownAge), retry = false, slot = id })
+		return
+	end
+
+	-- A transition whose equip cooldown had not published yet remains
+	-- provisional. If this hook now exposes a fresh 29-31s cooldown aligned
+	-- with that transition, it is the equip penalty, not a successful use.
+	if record and record.pending and not record.used then
+		local transitionTime = tonumber(record.transitionTime) or record.time
+		local transitionOffset = transitionTime and math.abs(start - transitionTime)
+		local useObservationTime = retryToken and retryToken.created or now
+		local useOffset = type(useObservationTime) == "number"
+		and math.abs(start - useObservationTime)
+		local startedAtObservedUse = useOffset and useOffset <= 0.1
+		and transitionOffset and transitionOffset > useOffset + 0.05
+		if transitionTime and duration >= 29 and duration <= 31
+		and transitionOffset <= 1 and not startedAtObservedUse then
+			ItemRack.QueueDiagnostic("use_ignored_equip_penalty", { duration = duration, mode = "pending", slot = id })
+			record.time = start
+			record.hasPenalty = true
+			record.pending = nil
+			return
+		end
+	end
+
+	-- If an active equip penalty exists on this slot, verify click wasn't rejected by equip penalty
+	if record and record.hasPenalty and not record.used then
+		if (start <= record.time + 0.5) or ((now - record.time) < 30 and (now - start) > 0.5) then
+			ItemRack.QueueDiagnostic("use_ignored_equip_penalty", { duration = duration, mode = "active", slot = id })
+			return -- Rejected click during active equip penalty -> ignore!
+		end
+	end
+
+	-- A single game action can reach more than one secure hook. Do not process
+	-- the same exact cooldown signature twice.
+	ItemRack.LastProcessedItemUse = ItemRack.LastProcessedItemUse or {}
+	local processed = ItemRack.LastProcessedItemUse[id]
+	if processed and ItemRack.SameExactID(processed.id, exactID)
+	and math.abs(start - processed.start) < 0.1
+	and math.abs(duration - processed.duration) < 0.1
+	and (now - processed.time) >= 0 and (now - processed.time) <= 0.5 then
+		ItemRack.QueueDiagnostic("use_ignored_duplicate", { slot = id })
+		return
+	end
+
+	local isTrinket = id == 13 or id == 14
+	local otherSlot = isTrinket and (id == 13 and 14 or 13)
+
+	-- Shared cooldown guard for dual trinkets (slots 13 & 14). The previous
+	-- primary captures the follower's post-primary cooldown signature. If this
+	-- post-hook sees that signature unchanged, the current /use was rejected.
+	if isTrinket then
+		local act = ItemRack.LastActivation
+
+		if act and type(act.time) == "number" then
+			local elapsed = now - act.time
+			local primaryState, currentPrimaryExactID = ItemRack.GetEquippedSlotState(otherSlot)
+			if elapsed < 0 or elapsed > 0.5 then
+				ItemRack.LastActivation = nil
+			elseif act.primarySlot == otherSlot and act.followerSlot == id
+			and type(act.primaryStart) == "number" and type(act.primaryDuration) == "number"
+			and type(act.followerStart) == "number" and type(act.followerDuration) == "number"
+			and act.followerDuration >= 19 and act.followerDuration <= 31
+			and primaryState == "resolved"
+			and ItemRack.SameExactID(act.primaryExactID, currentPrimaryExactID)
+			and ItemRack.SameExactID(act.followerExactID, exactID)
+			and math.abs(start - act.followerStart) < (act.signatureTolerance or 0.001)
+			and math.abs(duration - act.followerDuration) < 0.001 then
+				local primaryStart, primaryDuration = GetInventoryItemCooldown("player", otherSlot)
+				primaryStart = tonumber(primaryStart)
+				primaryDuration = tonumber(primaryDuration)
+				if primaryStart and primaryDuration
+				and math.abs(primaryStart - act.primaryStart) < 0.001
+				and math.abs(primaryDuration - act.primaryDuration) < 0.001 then
+					ItemRack.LastActivation = nil
+					ItemRack.LastProcessedItemUse[id] = {
+						id = exactID,
+						start = start,
+						duration = duration,
+						time = now
+					}
+					ItemRack.QueueDiagnostic("use_ignored_shared_trinket_cooldown", { primarySlot = otherSlot, slot = id })
+					return -- Confirmed shared GCD follower: ignore without marking used or burnt.
+				end
+			elseif act.followerSlot == id then
+				-- The follower state changed, so this was an independent genuine use.
+				ItemRack.LastActivation = nil
+			end
+		end
+	end
+
+	ItemRack.LastProcessedItemUse[id] = {
+		id = exactID,
+		start = start,
+		duration = duration,
+		time = now
+	}
+
+	if isTrinket then
+		local followerStart, followerDuration, followerState, followerExactID
+		local followerStartTolerance = 0.001
+		if retryToken and retryToken.otherSlot == otherSlot then
+			followerStart = retryToken.otherStart
+			followerDuration = retryToken.otherDuration
+			followerState = retryToken.otherState
+			followerExactID = retryToken.otherExactID
+
+			local hookSnapshotHasSharedCooldown = followerStart and followerDuration
+			and followerStart > 0
+			and followerDuration >= 19 and followerDuration <= 31
+			and math.abs(followerStart - start) < followerStartTolerance
+			and followerState == "resolved"
+			if not hookSnapshotHasSharedCooldown then
+				followerStart = nil
+				followerDuration = nil
+				followerState = nil
+				followerExactID = nil
+				-- Some clients publish the paired shared cooldown one frame
+				-- after the primary hook. Accept that settled sample only when
+				-- its start is effectively identical to the verified primary
+				-- start; a merely nearby independent activation is not enough.
+				local settledStart, settledDuration = GetInventoryItemCooldown("player", otherSlot)
+				local settledState, settledExactID = ItemRack.GetEquippedSlotState(otherSlot)
+				settledStart = tonumber(settledStart)
+				settledDuration = tonumber(settledDuration)
+				if settledStart and settledDuration and settledStart > 0
+				and settledDuration >= 19 and settledDuration <= 31
+				and math.abs(settledStart - start) < 0.001
+				and settledState == "resolved" then
+					followerStart = settledStart
+					followerDuration = settledDuration
+					followerState = settledState
+					followerExactID = settledExactID
+					followerStartTolerance = 0.001
+				end
+			end
+		else
+			followerStart, followerDuration = GetInventoryItemCooldown("player", otherSlot)
+			followerStart = tonumber(followerStart)
+			followerDuration = tonumber(followerDuration)
+			followerState, followerExactID = ItemRack.GetEquippedSlotState(otherSlot)
+		end
+		if followerStart and followerDuration and followerStart > 0
+		and followerDuration >= 19 and followerDuration <= 31
+		and math.abs(followerStart - start) < followerStartTolerance
+		and followerState == "resolved" then
+			local token = {
+				time = now,
+				primarySlot = id,
+				primaryExactID = exactID,
+				primaryStart = start,
+				primaryDuration = duration,
+				followerSlot = otherSlot,
+				followerExactID = followerExactID,
+				followerStart = followerStart,
+				followerDuration = followerDuration,
+				signatureTolerance = followerStartTolerance
+			}
+			ItemRack.LastActivation = token
+			ItemRack.QueueDiagnostic("trinket_primary_with_shared_follower", { followerSlot = otherSlot, slot = id })
+			C_Timer.After(0.5, function()
+				if ItemRack.LastActivation == token then
+					ItemRack.LastActivation = nil
+				end
+			end)
+		else
+			ItemRack.LastActivation = nil
+			ItemRack.QueueDiagnostic("trinket_primary_without_shared_follower", { slot = id })
+		end
+	end
+
 	if ItemRackUser.Buttons[id] then
 		local btn = _G["ItemRackButton"..id]
 		if btn and btn.OriginalSetChecked then btn:OriginalSetChecked(true) end
 		ItemRack.ReflectClicked[id] = 1
 		ItemRack.StartTimer("ReflectClickedUpdate")
 	end
-	local baseID = ItemRack.GetIRString(GetInventoryItemLink("player",id),true,true)
-	if baseID then
+
+	local baseID = exactBaseID
+	if baseID and baseID ~= 0 then
+		ItemRackUser.ItemsUsed = ItemRackUser.ItemsUsed or {}
 		ItemRackUser.ItemsUsed[baseID] = 1
-		if ItemRack.MarkEquippedQueueItemBurnt and ItemRack.GetQueuesEnabled()[id] then
-			ItemRack.MarkEquippedQueueItemBurnt(id, ItemRack.GetID(id), baseID, ItemRack.GetQueues()[id])
+		if ItemRack.MarkEquippedItemUsed then
+			ItemRack.MarkEquippedItemUsed(id)
 		end
+		-- Burn on use for genuine active use cooldowns (> 1.5s duration)
+		if duration > 1.5 and ItemRack.MarkEquippedQueueItemBurnt and ItemRack.GetQueuesEnabled()[id] then
+			ItemRack.MarkEquippedQueueItemBurnt(id, exactID, baseID, ItemRack.GetQueues()[id])
+		end
+		ItemRack.QueueDiagnostic("use_accepted", { baseID = baseID, duration = duration, retry = isRetry and true or false, slot = id })
 	end
 end
 
@@ -2685,8 +3614,8 @@ function ItemRack.AddToCombatQueue(slot,id,isAutoQueue)
 	-- Skip if the item is already equipped (prevents oscillation from ID format mismatches
 	-- where strict ~= in EquipSet sees a difference but SameID correctly matches)
 	if id and id ~= 0 then
-		local equippedID = ItemRack.GetID(slot)
-		if equippedID and ItemRack.SameID(equippedID, id) then
+		local equippedState, equippedID = ItemRack.GetEquippedSlotState(slot)
+		if equippedState == "resolved" and ItemRack.SameID(equippedID, id) then
 			return
 		end
 	end
@@ -2720,11 +3649,14 @@ function ItemRack.RemoveFromCombatQueue(slot)
 end
 
 function ItemRack.UpdateCombatQueue()
+	if ItemRackUser.EnableQueues ~= "ON" and ItemRack.PendingQueueEquipSet then
+		ItemRack.TryEquipPendingQueueSet()
+	end
 	-- Clean up stale entries: if the queued item is already equipped, remove it
 	for slot, queuedID in pairs(ItemRack.CombatQueue) do
 		if queuedID and queuedID ~= 0 then
-			local equippedID = ItemRack.GetID(slot)
-			if equippedID and ItemRack.SameID(equippedID, queuedID) then
+			local equippedState, equippedID = ItemRack.GetEquippedSlotState(slot)
+			if equippedState == "resolved" and ItemRack.SameID(equippedID, queuedID) then
 				ItemRack.CombatQueue[slot] = nil
 				ItemRack.ClearCombatQueueMetadata(slot)
 			end
@@ -3661,7 +4593,8 @@ function ItemRack.SlashHandler(arg1)
 			ItemRack.Print("Diagnostic debug printing to chat is now "..(ItemRack.DebugChat and "ON" or "OFF"))
 		elseif subcmd == "clear" then
 			ItemRack.LogBuffer = {}
-			ItemRack.Print("Diagnostic log buffer cleared.")
+			ItemRack.ClearQueueDiagnostics()
+			ItemRack.Print("Diagnostic log and AutoQueue trace buffers cleared.")
 		elseif subcmd == "status" then
 			ItemRack.PrintDebugStatus()
 		elseif subcmd == "audit" then
@@ -3670,10 +4603,11 @@ function ItemRack.SlashHandler(arg1)
 			ItemRack.Print("ItemRack Debug Subcommands:")
 			ItemRack.Print("  /itemrack debug : Toggles all debugging (Silent Mode)")
 			ItemRack.Print("  /itemrack debug chat : Toggles printing logs directly to chat")
-			ItemRack.Print("  /itemrack debug clear : Clears the 5000-line diagnostic log buffer")
+			ItemRack.Print("  /itemrack debug clear : Clears the diagnostic log and AutoQueue trace buffers")
 			ItemRack.Print("  /itemrack debug status : Shows current status of all debug tags")
 			ItemRack.Print("  /itemrack debug audit : Scans and repairs SavedVariables issues")
 			ItemRack.Print("  /itemrack debug <tag> : Toggles specific tag (Available: events, equip, queue, combatqueue, api, ui, combat)")
+			ItemRack.Print("  /itemrack dump : Opens a support dump, including the AutoQueue flight recorder")
 		elseif subcmd then
 			-- Toggle specific tag (case insensitive match against known tags)
 			local foundTag
@@ -3802,6 +4736,13 @@ function ItemRack.SlashHandler(arg1)
 				table.insert(tempLog, ItemRack.LogBuffer[i])
 			end
 			local dumpText = "=== ITEMRACK LOG BUFFER (Last 500 lines) ===\n" .. table.concat(tempLog, "\n")
+			local queueTrace = ItemRack.QueueDiagnosticBuffer or {}
+			local traceStart = math.max(1, #queueTrace - 249)
+			local tempQueueTrace = {}
+			for i = traceStart, #queueTrace do
+				table.insert(tempQueueTrace, queueTrace[i])
+			end
+			dumpText = dumpText .. "\n\n=== AUTOQUEUE FLIGHT RECORDER (Last 250 entries) ===\n" .. table.concat(tempQueueTrace, "\n")
 			
 			dumpText = dumpText .. "\n\n=== RUNTIME STATE DUMP ===\n"
 			dumpText = dumpText .. "ItemRack.Version = " .. tostring(ItemRack.Version) .. "\n"
@@ -3818,7 +4759,28 @@ function ItemRack.SlashHandler(arg1)
 			dumpText = dumpText .. "ItemRackUser.Buttons = " .. ItemRackLogFrame.Serialize(ItemRackUser.Buttons) .. "\n"
 			dumpText = dumpText .. "ItemRackUser.CurrentSet = " .. tostring(ItemRackUser.CurrentSet) .. "\n"
 			dumpText = dumpText .. "ItemRackUser.EventStack = " .. ItemRackLogFrame.Serialize(ItemRackUser.EventStack) .. "\n"
+			dumpText = dumpText .. "ItemRackUser.Queues = " .. ItemRackLogFrame.Serialize(ItemRackUser.Queues) .. "\n"
 			dumpText = dumpText .. "ItemRackUser.QueuesEnabled = " .. ItemRackLogFrame.Serialize(ItemRackUser.QueuesEnabled) .. "\n"
+			dumpText = dumpText .. "\n=== AUTOQUEUE RUNTIME STATE ===\n"
+			dumpText = dumpText .. "ItemRack.QueueStateReady = " .. tostring(ItemRack.QueueStateReady) .. "\n"
+			dumpText = dumpText .. "ItemRack.QueueLifecycleKnown = " .. tostring(ItemRack.QueueLifecycleKnown) .. "\n"
+			dumpText = dumpText .. "ItemRack.QueueStateGeneration = " .. tostring(ItemRack.QueueStateGeneration) .. "\n"
+			dumpText = dumpText .. "ItemRack.QueueStateRetryPending = " .. tostring(ItemRack.QueueStateRetryPending) .. "\n"
+			dumpText = dumpText .. "ItemRack.EquippedStateRetryPending = " .. tostring(ItemRack.EquippedStateRetryPending) .. "\n"
+			dumpText = dumpText .. "ItemRack.QueueInitWasReload = " .. tostring(ItemRack.QueueInitWasReload) .. "\n"
+			dumpText = dumpText .. "ItemRack.QueueStateInitStarted = " .. tostring(ItemRack.QueueStateInitStarted) .. "\n"
+			dumpText = dumpText .. "ItemRack.PendingQueueStateEventReason = " .. tostring(ItemRack.PendingQueueStateEventReason) .. "\n"
+			dumpText = dumpText .. "ItemRack.EquippedSnapshot = " .. ItemRackLogFrame.Serialize(ItemRack.EquippedSnapshot) .. "\n"
+			dumpText = dumpText .. "ItemRack.UnresolvedEquippedSlots = " .. ItemRackLogFrame.Serialize(ItemRack.UnresolvedEquippedSlots) .. "\n"
+			dumpText = dumpText .. "ItemRack.PendingEquipTransitionTimes = " .. ItemRackLogFrame.Serialize(ItemRack.PendingEquipTransitionTimes) .. "\n"
+			dumpText = dumpText .. "ItemRack.PreReadyInventoryEventTime = " .. tostring(ItemRack.PreReadyInventoryEventTime) .. "\n"
+			dumpText = dumpText .. "ItemRack.PreReadyEquippedObservations = " .. ItemRackLogFrame.Serialize(ItemRack.PreReadyEquippedObservations) .. "\n"
+			dumpText = dumpText .. "ItemRack.PendingQueueEquipSet = " .. ItemRackLogFrame.Serialize(ItemRack.PendingQueueEquipSet) .. "\n"
+			dumpText = dumpText .. "ItemRack.EquipTimers = " .. ItemRackLogFrame.Serialize(ItemRack.EquipTimers) .. "\n"
+			dumpText = dumpText .. "ItemRack.BurntQueueItems = " .. ItemRackLogFrame.Serialize(ItemRack.BurntQueueItems) .. "\n"
+			dumpText = dumpText .. "ItemRack.LastActivation = " .. ItemRackLogFrame.Serialize(ItemRack.LastActivation) .. "\n"
+			dumpText = dumpText .. "ItemRack.LastProcessedItemUse = " .. ItemRackLogFrame.Serialize(ItemRack.LastProcessedItemUse) .. "\n"
+			dumpText = dumpText .. "ItemRack.PendingReflectItemUse = " .. ItemRackLogFrame.Serialize(ItemRack.PendingReflectItemUse) .. "\n"
 			dumpText = dumpText .. "ItemRackUser.Sets['~Unequip'] = " .. ItemRackLogFrame.Serialize(ItemRackUser.Sets["~Unequip"]) .. "\n"
 			if ItemRackUser.CurrentSet and ItemRackUser.Sets[ItemRackUser.CurrentSet] then
 				dumpText = dumpText .. "ItemRackUser.Sets['" .. ItemRackUser.CurrentSet .. "'] = " .. ItemRackLogFrame.Serialize(ItemRackUser.Sets[ItemRackUser.CurrentSet]) .. "\n"
