@@ -3531,6 +3531,7 @@ function ItemRack.SetSetBindings()
 			button = _G[buttonName] or CreateFrame("Button",buttonName,nil,"SecureActionButtonTemplate")
 
 			button:SetAttribute("type","macro")
+			button:SetAttribute("useOnKeyDown", false)
 			local macrotext = ""
 			for slot = 16, 18 do
 				local itemID = ItemRackUser.Sets[i].equip[slot]
