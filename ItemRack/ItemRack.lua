@@ -46,7 +46,15 @@ ItemRack.BuildID = "Dev"
 -- Enable:  /script ItemRack.DebugTags.Queue = true
 -- Disable: /script ItemRack.DebugTags.Queue = false
 -- Enable all: /script ItemRack.DebugAll = true
-ItemRack.DebugTags = {} -- per-tag toggles, e.g. { Queue = true, Events = true, UI = true, Combat = true }
+ItemRack.DebugTags = { -- per-tag toggles; explicit defaults allow /itemrack debug <tag> before master debug is enabled
+	Events = false,
+	Equip = false,
+	Queue = false,
+	CombatQueue = false,
+	API = false,
+	UI = false,
+	Combat = false
+}
 ItemRack.DebugAll = false -- master override to enable all tags
 ItemRack.DebugChat = false -- whether to print debug messages to the chat frame
 
@@ -824,9 +832,12 @@ function ItemRack.ScheduleEventRecheck(reason, delay)
 end
 
 -- AutoQueue is driven by asynchronous inventory and cooldown updates. Keep a
--- bounded, runtime-only flight recorder so /itemrack dump remains useful even
--- when debug logging was not enabled before a failure.
+-- bounded, runtime-only flight recorder only while the existing Queue debug
+-- tag is enabled; normal play should not allocate trace entries.
 function ItemRack.QueueDiagnostic(event, details)
+	if not ItemRack.DebugAll and not ItemRack.DebugTags.Queue then
+		return
+	end
 	ItemRack.QueueDiagnosticBuffer = ItemRack.QueueDiagnosticBuffer or {}
 	local parts = {}
 	if type(details) == "table" then
@@ -856,7 +867,9 @@ function ItemRack.QueueDiagnostic(event, details)
 end
 
 function ItemRack.ClearQueueDiagnostics()
-	ItemRack.QueueDiagnosticBuffer = {}
+	-- Release the table entirely when tracing is disabled rather than retaining
+	-- an empty buffer for the rest of the session.
+	ItemRack.QueueDiagnosticBuffer = nil
 end
 
 function ItemRack.GetEquippedSlotState(slot)
@@ -4473,6 +4486,7 @@ function ItemRack.SetSetBindings()
 			button = _G[buttonName] or CreateFrame("Button",buttonName,nil,"SecureActionButtonTemplate")
 
 			button:SetAttribute("type","macro")
+			button:SetAttribute("useOnKeyDown", false)
 			local macrotext = ""
 			for slot = 16, 18 do
 				local itemID = ItemRackUser.Sets[i].equip[slot]
@@ -4590,6 +4604,7 @@ function ItemRack.SlashHandler(arg1)
 				ItemRack.DebugTags.UI = true
 				ItemRack.DebugTags.Combat = true
 			end
+			ItemRack.QueueDiagnostic("tracking_enabled", { source = "debug_chat" })
 			ItemRack.Print("Diagnostic debug printing to chat is now "..(ItemRack.DebugChat and "ON" or "OFF"))
 		elseif subcmd == "clear" then
 			ItemRack.LogBuffer = {}
@@ -4607,7 +4622,7 @@ function ItemRack.SlashHandler(arg1)
 			ItemRack.Print("  /itemrack debug status : Shows current status of all debug tags")
 			ItemRack.Print("  /itemrack debug audit : Scans and repairs SavedVariables issues")
 			ItemRack.Print("  /itemrack debug <tag> : Toggles specific tag (Available: events, equip, queue, combatqueue, api, ui, combat)")
-			ItemRack.Print("  /itemrack dump : Opens a support dump, including the AutoQueue flight recorder")
+			ItemRack.Print("  /itemrack dump : Opens a support dump; the AutoQueue recorder is populated only while Queue debug is enabled")
 		elseif subcmd then
 			-- Toggle specific tag (case insensitive match against known tags)
 			local foundTag
@@ -4623,6 +4638,11 @@ function ItemRack.SlashHandler(arg1)
 				ItemRack.PrintDebugStatus()
 			else
 				ItemRack.DebugTags[foundTag] = not ItemRack.DebugTags[foundTag]
+				if foundTag == "Queue" and ItemRack.DebugTags[foundTag] then
+					ItemRack.QueueDiagnostic("tracking_enabled", { source = "debug_queue" })
+				elseif foundTag == "Queue" then
+					ItemRack.ClearQueueDiagnostics()
+				end
 				ItemRack.Print("Diagnostic tag [|cff00ff00" .. foundTag .. "|r] is now " .. (ItemRack.DebugTags[foundTag] and "|cff00ff00ENABLED|r" or "|cffff0000DISABLED|r"))
 			end
 		else
@@ -4635,6 +4655,7 @@ function ItemRack.SlashHandler(arg1)
 				ItemRack.DebugTags.API = true
 				ItemRack.DebugTags.UI = true
 				ItemRack.DebugTags.Combat = true
+				ItemRack.QueueDiagnostic("tracking_enabled", { source = "debug_all" })
 				ItemRack.Print("Diagnostic debugging ENABLED for all layers (Silent Mode). Use '/itemrack debug chat' to see traces in chat.")
 			else
 				ItemRack.DebugTags.Events = false
@@ -4644,6 +4665,7 @@ function ItemRack.SlashHandler(arg1)
 				ItemRack.DebugTags.API = false
 				ItemRack.DebugTags.UI = false
 				ItemRack.DebugTags.Combat = false
+				ItemRack.ClearQueueDiagnostics()
 				ItemRack.Print("Diagnostic debugging DISABLED.")
 			end
 		end

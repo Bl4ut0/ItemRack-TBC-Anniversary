@@ -4,6 +4,11 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 
 ## [Development]
 
+### Bug Fixes & Improvements
+- **In-Combat Set Keybindings (PR #20)**: Set an explicit key-up mode on ItemRack's secure set-binding buttons so bound weapon and gear-set swaps are no longer ignored during combat on Classic Era/Season of Discovery 1.15.9 and TBC Anniversary 2.5.6. Fix contributed by Hamdor.
+- **Opt-In AutoQueue Diagnostics**: The runtime AutoQueue flight recorder now allocates entries only while Queue diagnostics or the master debug mode is enabled, and releases its buffer when tracing is disabled to avoid unnecessary allocations during normal play.
+- **Reliable Per-Tag Debug Toggles**: Initialized every supported debug tag explicitly and added tracking markers when Queue or master diagnostics are enabled, keeping `/itemrack debug <tag>` behavior and support dumps consistent.
+
 ## [4.43-beta1] - 2026-07-26
 ### Bug Fixes & Improvements
 - **Readiness-Safe AutoQueue Initialization**: Gated queue evaluation (`PeriodicQueueCheck`, `ProcessAutoQueue`, `AutoQueueItemToEquip`) behind `ItemRack.QueueStateReady` to prevent queue evaluation during loading screens or incomplete addon loading.

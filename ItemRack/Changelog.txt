@@ -1,4 +1,7 @@
 __ Development __
+- Fixed bound set and weapon swaps being ignored during combat on Classic Era/Season of Discovery 1.15.9 and TBC Anniversary 2.5.6 by explicitly configuring secure set-binding buttons for key-up activation (PR #20, contributed by Hamdor).
+- Changed the AutoQueue diagnostic flight recorder to collect entries only while Queue diagnostics or master debugging is enabled, and to release its buffer when tracing is disabled.
+- Initialized all supported debug tags explicitly and added diagnostic tracking markers so per-tag toggles and support dumps remain consistent.
 
 __ New in 4.43-beta1 - By Bl4ut0 __
 - Gated queue evaluation behind ItemRack.QueueStateReady to prevent queue checks during loading screens or before item data is resolved.
