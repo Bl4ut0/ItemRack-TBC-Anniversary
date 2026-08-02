@@ -1,4 +1,7 @@
 __ Development __
+- AutoQueue now skips queue candidates that exist only in an equipped paired ring/trinket slot and continues to the next ready item carried in bags; additional matching bag copies remain eligible. Reported by Bloodasha on CurseForge.
+- Cleared the inherited ItemRackButton20Count action-button region so numeric counts can no longer cover the current set name. Reported by smackadack on CurseForge.
+- Restored the set button's Classic Era right-click behavior: with "Menu on right click" enabled, right-click toggles the gear-set list, while Alt+Right-click still opens the Sets options tab. Reported by gizmo22 on CurseForge.
 - Fixed bound set and weapon swaps being ignored during combat on Classic Era/Season of Discovery 1.15.9 and TBC Anniversary 2.5.6 by explicitly configuring secure set-binding buttons for key-up activation (PR #20, contributed by Hamdor).
 - Changed the AutoQueue diagnostic flight recorder to collect entries only while Queue diagnostics or master debugging is enabled, and to release its buffer when tracing is disabled.
 - Initialized all supported debug tags explicitly and added diagnostic tracking markers so per-tag toggles and support dumps remain consistent.

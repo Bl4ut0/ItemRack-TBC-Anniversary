@@ -186,7 +186,7 @@ function ItemRackOpt.OnLoad(self)
 
 		{type="label",label="Global Settings"},
 		{type="check",optset=ItemRackSettings,variable="MenuOnShift",label="Menu on Shift",tooltip="Only show menu while Shift is held down."},
-		{type="check",optset=ItemRackSettings,variable="MenuOnRight",label="Menu on right click",tooltip="Open menu by right clicking buttons.\nWhen unchecked, Alt+Right-Click opens the menu.",combatlock=1},
+		{type="check",optset=ItemRackSettings,variable="MenuOnRight",label="Menu on right click",tooltip="Open item and set flyout menus by right clicking buttons.\nWhen unchecked, flyout menus open on hover; Alt+Right-Click opens configuration.",combatlock=1},
 		{type="check",optset=ItemRackSettings,variable="RightClickUse",label="Use on Right-Click",tooltip="Right-clicking an item button uses the item instead of manually advancing its auto queue."},
 		{type="check",optset=ItemRackSettings,variable="HideOOC",label="Hide out of combat",tooltip="Hide the buttons while out of combat.",combatlock=1},
 		{type="check",optset=ItemRackSettings,variable="HidePetBattle",label="Hide during pet battles",tooltip="Hide the buttons during a pet battle."},

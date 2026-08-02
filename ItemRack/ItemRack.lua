@@ -2164,6 +2164,26 @@ function ItemRack.FindItem(id,lock)
 	end
 end
 
+-- Searches only carried bags for an ItemRack-style ID. Unlike FindItem, this
+-- deliberately ignores equipped slots and the bank so queue selection cannot
+-- stop on an item that is already worn in the opposite ring/trinket slot.
+-- Exact matches are preferred, with a base-ID fallback for migrated item data.
+function ItemRack.FindItemInBags(id)
+	id = ItemRack.UpdateIRString(id)
+	local fallbackBag,fallbackSlot
+	for bag=4,0,-1 do
+		for slot=1,GetContainerNumSlots(bag) do
+			local bagID = ItemRack.GetID(bag,slot)
+			if id==bagID then
+				return bag,slot
+			elseif not fallbackBag and ItemRack.SameID(id,bagID) then
+				fallbackBag,fallbackSlot = bag,slot
+			end
+		end
+	end
+	return fallbackBag,fallbackSlot
+end
+
 -- searches player's bank and returns bag,slot of a specific ItemRack-style ID (62384:0:4041:4041:0:0:0:0:85:146) or the first matching item with the same base id (62384) if specific id not found
 -- bag,slot = item found in a bank bag; nil, nil = item not found in bank
 function ItemRack.FindInBank(id,lock)
@@ -3077,7 +3097,7 @@ function ItemRack.UnmuteSwapSounds()
 	end
 end
 
-function ItemRack.EquipItemByID(id,slot,isAutoQueue)
+function ItemRack.EquipItemByID(id,slot,isAutoQueue,sourceBag,sourceSlot)
 	if not id then return end
 	if isAutoQueue then
 		if ItemRack.ClearManualQueueChoice then
@@ -3115,7 +3135,14 @@ function ItemRack.EquipItemByID(id,slot,isAutoQueue)
 		end
 		
 		if id~=0 then -- not an empty slot
-			local _,b,s = ItemRack.FindItem(id)
+			local b,s
+			if sourceBag and sourceSlot and ItemRack.SameID(id,ItemRack.GetID(sourceBag,sourceSlot)) then
+				b,s = sourceBag,sourceSlot
+			elseif isAutoQueue and ItemRack.FindItemInBags then
+				b,s = ItemRack.FindItemInBags(id)
+			else
+				_,b,s = ItemRack.FindItem(id)
+			end
 			if b then
 				local _,_,isLocked = GetContainerItemInfo(b,s)
 				if not isLocked and not IsInventoryItemLocked(slot) then

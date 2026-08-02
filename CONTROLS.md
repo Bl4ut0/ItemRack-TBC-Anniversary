@@ -34,10 +34,10 @@ A comprehensive guide to all mouse, keyboard, and command controls available in 
 | Action | Effect |
 |--------|--------|
 | **Left-Click** | Equips the current set (or toggles if "Equip Toggle" is ON). Manually equipping a set suppresses conflicting automated background events. |
-| **Right-Click** | Opens the ItemRack Options window |
+| **Right-Click** | Opens the gear-set list when **Menu on right click** is enabled; otherwise opens ItemRack Options |
 | **Shift+Left-Click** | Unequips the current gear set |
 | **Alt+Left-Click** | Toggles ItemRack Events ON/OFF |
-| **Alt+Right-Click** | Opens the Events tab in Options |
+| **Alt+Right-Click** | Opens the Sets tab in Options |
 
 ---
 

@@ -5,7 +5,6 @@ local _
 -- GetItemCooldown exists in both C_Container and C_Item - prefer C_Container for consistency
 local GetItemCooldown = _G.GetItemCooldown or (C_Container and C_Container.GetItemCooldown) or (C_Item and C_Item.GetItemCooldown)
 local GetItemSpell = _G.GetItemSpell or (C_Item and C_Item.GetItemSpell)
-local GetItemCount = _G.GetItemCount or (C_Item and C_Item.GetItemCount)
 local IsEquippedItem = _G.IsEquippedItem or (C_Item and C_Item.IsEquippedItem)
 
 -- Queue debug prints use the global system:
@@ -168,8 +167,7 @@ function ItemRack.GetNextItemInQueue(slot)
 	for i=idx+1,#(list) do
 		if list[i].id~=0 then -- 0 is stop marker
 			local candidate = string.match(list[i].id,"(%d+)")
-			local count = candidate and GetItemCount(candidate) or 0
-			if candidate and count>0 then
+			if candidate and ItemRack.FindItemInBags(list[i].id) then
 				return list[i].id
 			end
 		else
@@ -181,8 +179,7 @@ function ItemRack.GetNextItemInQueue(slot)
 	for i=1,idx-1 do
 		if list[i].id~=0 then
 			local candidate = string.match(list[i].id,"(%d+)")
-			local count = candidate and GetItemCount(candidate) or 0
-			if candidate and count>0 then
+			if candidate and ItemRack.FindItemInBags(list[i].id) then
 				return list[i].id
 			end
 		end
@@ -251,10 +248,10 @@ function ItemRack.ManualQueueAdvance(slot)
 	
 	-- Helper to attempt swap
 	local function tryEquip(itemID)
-		local inv, bag, bagSlot = ItemRack.FindItem(itemID)
+		local bag, bagSlot = ItemRack.FindItemInBags(itemID)
 		if bag and bagSlot then
 			ItemRack.Debug("Queue", "ManualAdvance equipping", itemID, "from bag", bag)
-			ItemRack.EquipItemByID(itemID, slot)
+			ItemRack.EquipItemByID(itemID, slot, false, bag, bagSlot)
 			return true
 		end
 		return false
@@ -599,11 +596,11 @@ function ItemRack.ProcessAutoQueue(slot)
 	local nextItem, nextItemID = ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready)
 	if nextItem then
 		if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("autoqueue_candidate", { current = baseID, next = nextItemID, ready = ready and true or false, slot = slot }) end
-		if GetItemCount(tonumber(nextItem) or nextItem)>0 and not ItemRack.SameExactID(exactID, nextItemID) then
-			local _,bag = ItemRack.FindItem(nextItemID)
+		if not ItemRack.SameExactID(exactID, nextItemID) then
+			local bag,bagSlot = ItemRack.FindItemInBags(nextItemID)
 			if bag and not (ItemRack.CombatQueue[slot]==nextItemID) then
 				if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("autoqueue_equip_requested", { item = nextItemID, slot = slot }) end
-				ItemRack.EquipItemByID(nextItemID,slot,true)
+				ItemRack.EquipItemByID(nextItemID,slot,true,bag,bagSlot)
 			end
 		end
 		
@@ -696,7 +693,13 @@ function ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready, setname)
 			if canSwap then
 				local candidateCustomTime = list[i].swapInEnabled and list[i].swapIn or nil
 				if ItemRack.IsCandidateReady(slot, list[i].id, candidateCustomTime) then
-					return candidate, list[i].id
+					-- Queue candidates must be carried in bags. An item equipped in the
+					-- other ring/trinket slot cannot satisfy this slot or block later items.
+					if ItemRack.FindItemInBags(list[i].id) then
+						return candidate, list[i].id
+					elseif ItemRack.QueueDiagnostic then
+						ItemRack.QueueDiagnostic("autoqueue_candidate_skipped", { item = list[i].id, reason = "not_in_bags", slot = slot })
+					end
 				end
 			end
 		end

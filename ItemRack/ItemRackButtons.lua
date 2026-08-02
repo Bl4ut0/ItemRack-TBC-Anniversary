@@ -91,6 +91,16 @@ function ItemRack.ButtonOnLoad(self)
 		hotkey:SetText("")
 	end
 
+	-- Slot 20 is the set button and never displays an item stack or charge count.
+	-- Its inherited ActionBarButtonTemplate Count region can otherwise retain an
+	-- action-bar value and cover the set name, even with every addon disabled.
+	local countText = _G[self:GetName().."Count"]
+	if self:GetID() == 20 and countText then
+		countText:SetText("")
+		countText:Hide()
+		countText.SetText = function() end
+	end
+
 	-- Clear the "Name" FontString (macro/action name text from ActionButtonTemplate).
 	-- During ActionBarButtonMixin:OnLoad(), UpdateAction() writes macro text from matching
 	-- action bar slots to self.Name via GetActionText(). We must clear it and prevent
@@ -865,9 +875,19 @@ function ItemRack.ButtonPostClick(self,button)
 		end
 		
 		
-		-- Plain right-click on Slot 20 opens the Settings page
+		-- Slot 20 must honor the same Menu-on-right-click setting as Classic Era.
+		-- Alt+Right-click above remains the shortcut to the Sets options tab.
 		if id==20 then
-			ItemRack.ToggleOptions(self)
+			if ItemRackSettings.MenuOnRight=="ON" then
+				if ItemRackMenuFrame:IsVisible() and ItemRack.menuOpen==id then
+					ItemRackMenuFrame:Hide()
+				else
+					ItemRack.DockMenuToButton(id)
+					ItemRack.BuildMenu(id, nil, 2)
+				end
+			else
+				ItemRack.ToggleOptions(self)
+			end
 			return
 		end
 		
