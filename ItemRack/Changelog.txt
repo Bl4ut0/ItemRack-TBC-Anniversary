@@ -1,4 +1,6 @@
 __ Development __
+
+__ New in 4.43-beta2 - By Bl4ut0 __
 - AutoQueue now skips queue candidates that exist only in an equipped paired ring/trinket slot and continues to the next ready item carried in bags; additional matching bag copies remain eligible. Reported by Bloodasha on CurseForge.
 - Cleared the inherited ItemRackButton20Count action-button region so numeric counts can no longer cover the current set name. Reported by smackadack on CurseForge.
 - Restored the set button's Classic Era right-click behavior: with "Menu on right click" enabled, right-click toggles the gear-set list, while Alt+Right-click still opens the Sets options tab. Reported by gizmo22 on CurseForge.

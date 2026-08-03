@@ -4,6 +4,8 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 
 ## [Development]
 
+## [4.43-beta2] - 2026-08-02
+### Bug Fixes & Improvements
 ### Bug Fixes & Improvements
 - **Cross-Slot AutoQueue Availability (CurseForge: Bloodasha)**: AutoQueue now considers only candidates physically available in carried bags. Rings or trinkets already equipped in the paired slot are skipped so the next ready bag item can equip, while an additional matching copy in a bag remains eligible.
 - **Set Button Count Overlay (CurseForge: smackadack)**: Permanently cleared the inherited `ItemRackButton20Count` action-button region so Blizzard action counts can no longer cover the current set name.
