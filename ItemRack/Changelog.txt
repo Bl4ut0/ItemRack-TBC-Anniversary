@@ -1,5 +1,15 @@
 __ Development __
 
+__ New in 4.43-beta3 - By Bl4ut0 __
+- Fixed a major regression in MoveItem where container-to-inventory and inventory-to-container swaps failed to place displaced items into source slots, causing occupied slot swaps to abort with AbortSwap=4, leave orphaned bag slot reservations in LockList, and freeze stance/set swaps into SetsWaiting. Reported by Thoare on CurseForge.
+- Ensured ItemRack.ClearLockList is invoked whenever IterateSwapList aborts early, preventing failed or interrupted swaps from locking bag slots in ItemRack's cache.
+- Enhanced GetStanceNumber to resolve Druid stance names (Bear, Cat, Aquatic, Travel, Moonkin, Tree of Life) dynamically against GetShapeshiftFormInfo, preventing stance bar index shifts on lower-level or specialized Druids from breaking stance event evaluation.
+- Refreshed Season of Discovery engraving data when the bank opens and moved bank-flyout rune markers above Masque and ItemRack's bank-only border so their icons remain visible.
+- Fixed a Season of Discovery character-sheet hover error by translating main-bank slots through BankButtonIDToInvSlotID before querying the engraving API; unsupported negative containers are ignored safely.
+- Made saved sets, AutoQueue entries, combat-queue completion, bank lookup, and burn-on-use tracking rune-aware so identical gear carrying different runes is matched and swapped by its saved rune. Legacy entries without rune metadata retain the existing base-item fallback for Era and TBC compatibility.
+- Added a SoD-only "Show SoD rune icons" option synchronized with Blizzard's native always-show setting. ItemRack now marks engraved items in flyout menus, quick-access buttons, the set editor, and AutoQueue rows, including cached learned-rune icons for saved bank entries.
+- Kept same-item AutoQueue entries with different runes distinct when the Queue options are opened or rebuilt; legacy non-rune entries retain base-item de-duplication.
+
 __ New in 4.43-beta2 - By Bl4ut0 __
 - AutoQueue now skips queue candidates that exist only in an equipped paired ring/trinket slot and continues to the next ready item carried in bags; additional matching bag copies remain eligible. Reported by Bloodasha on CurseForge.
 - Cleared the inherited ItemRackButton20Count action-button region so numeric counts can no longer cover the current set name. Reported by smackadack on CurseForge.
