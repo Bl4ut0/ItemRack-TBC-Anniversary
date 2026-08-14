@@ -15,6 +15,14 @@ function ItemRack.PeriodicQueueCheck()
 	if ItemRack.QueueStateReady ~= true then
 		return
 	end
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("autoqueue_skipped", { reason = "automatic_swap_suspended" }) end
+		return
+	end
+	if ItemRack.SetSwapping or (ItemRack.AnythingLocked and ItemRack.AnythingLocked()) then
+		if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("autoqueue_skipped", { reason = ItemRack.SetSwapping and "set_swap_in_progress" or "inventory_locked" }) end
+		return
+	end
 	if SpellIsTargeting() then
 		ItemRack.Debug("Queue","SpellIsTargeting - skipping queue check")
 		return
@@ -38,13 +46,29 @@ function ItemRack.ClearManualQueueChoice(slot)
 	end
 end
 
+-- Resolve exact rune/item identity before considering a legacy base-ID
+-- wildcard, regardless of the entries' order in the queue.
+function ItemRack.FindQueueEntryIndex(list,currentID)
+	if not list or not currentID or currentID == 0 then return nil end
+	local legacyFallback
+	for i=1,#list do
+		local entryID = list[i].id
+		if entryID == 0 then break end
+		if ItemRack.SameExactID(entryID,currentID) then
+			return i
+		elseif not legacyFallback and not ItemRack.HasRuneID(entryID) and ItemRack.SameID(entryID,currentID) then
+			legacyFallback = i
+		end
+	end
+	return legacyFallback
+end
+
 function ItemRack.IsManualQueueChoice(slot, exactID, baseID)
 	local choice = ItemRack.ManualQueueChoice and ItemRack.ManualQueueChoice[slot]
 	if not choice then
 		return false
 	end
-	local choiceBaseID = string.match(tostring(choice), "^(%d+)")
-	return ItemRack.SameExactID(choice, exactID) or (baseID and choiceBaseID == tostring(baseID))
+	return ItemRack.MatchesStoredItemID(choice, exactID)
 end
 
 function ItemRack.SetManualQueueChoice(slot, id, setname)
@@ -57,24 +81,21 @@ function ItemRack.SetManualQueueChoice(slot, id, setname)
 		ItemRack.ClearManualQueueChoice(slot)
 		return
 	end
-	local baseID = ItemRack.GetIRString(id, true)
-	for i=1,#list do
-		if list[i].id == 0 then
-			break
-		end
-		local queueBaseID = string.match(tostring(list[i].id), "^(%d+)")
-		if ItemRack.SameExactID(list[i].id, id) or (baseID and queueBaseID == tostring(baseID)) then
-			ItemRack.ManualQueueChoice = ItemRack.ManualQueueChoice or {}
-			ItemRack.ManualQueueChoice[slot] = list[i].id
-			return
-		end
+	local matchIndex = ItemRack.FindQueueEntryIndex(list,id)
+	if matchIndex then
+		ItemRack.ManualQueueChoice = ItemRack.ManualQueueChoice or {}
+		ItemRack.ManualQueueChoice[slot] = list[matchIndex].id
+		return
 	end
 	ItemRack.ClearManualQueueChoice(slot)
 end
 
 function ItemRack.GetQueueBurnKey(id, baseID)
 	if id and id ~= 0 then
-		return tostring(id):match(ItemRack.iSPatternItemFieldsFromIR) or tostring(id)
+		local idText = tostring(id)
+		local burnKey = idText:match(ItemRack.iSPatternItemFieldsFromIR) or idText
+		local runeSuffix = idText:match("(:runeid:%d+)$")
+		return runeSuffix and (burnKey..runeSuffix) or burnKey
 	elseif baseID and baseID ~= 0 then
 		return tostring(baseID)
 	end
@@ -83,10 +104,22 @@ end
 function ItemRack.IsQueueItemBurnt(slot, id, baseID)
 	local burnKey = ItemRack.GetQueueBurnKey(id, baseID)
 	if not burnKey or not slot then return false end
-	if ItemRackUser and ItemRackUser.BurntQueueItems and ItemRackUser.BurntQueueItems[slot] and ItemRackUser.BurntQueueItems[slot][burnKey] then
-		return true
+	local function HasBurnKey(key)
+		if ItemRackUser and ItemRackUser.BurntQueueItems and ItemRackUser.BurntQueueItems[slot] and ItemRackUser.BurntQueueItems[slot][key] then
+			return true
+		end
+		return ItemRack.BurntQueueItems and ItemRack.BurntQueueItems[slot] and ItemRack.BurntQueueItems[slot][key]
 	end
-	return burnKey and ItemRack.BurntQueueItems and ItemRack.BurntQueueItems[slot] and ItemRack.BurntQueueItems[slot][burnKey]
+	if HasBurnKey(burnKey) then return true end
+	-- Burn state written before rune-aware keys applied to all copies of the
+	-- item. Continue honoring that legacy key until the queue state is cleared.
+	if ItemRack.HasRuneID(id) then
+		local legacyKey = tostring(id):match(ItemRack.iSPatternItemFieldsFromIR)
+		if legacyKey and legacyKey ~= burnKey and HasBurnKey(legacyKey) then
+			return true
+		end
+	end
+	return false
 end
 
 function ItemRack.SetQueueItemBurnt(slot, id, baseID)
@@ -110,18 +143,11 @@ function ItemRack.MarkEquippedQueueItemBurnt(slot, exactID, baseID, list)
 	if not list then
 		return
 	end
-	for i=1,#list do
-		if list[i].id == 0 then
-			break
-		end
-		if ItemRack.SameExactID(list[i].id, exactID) then
-			if list[i].swapOnUse then
-				ItemRack.SetQueueItemBurnt(slot, list[i].id, baseID)
-				if ItemRack.QueueDiagnostic then
-					ItemRack.QueueDiagnostic("queue_item_burnt", { baseID = baseID, slot = slot })
-				end
-			end
-			break
+	local matchIndex = ItemRack.FindQueueEntryIndex(list,exactID)
+	if matchIndex and list[matchIndex].swapOnUse then
+		ItemRack.SetQueueItemBurnt(slot,list[matchIndex].id,baseID)
+		if ItemRack.QueueDiagnostic then
+			ItemRack.QueueDiagnostic("queue_item_burnt", { baseID = baseID, slot = slot })
 		end
 	end
 end
@@ -155,7 +181,7 @@ function ItemRack.GetNextItemInQueue(slot)
 		for i=1,#(list) do
 			if list[i].id ~= 0 then
 				local listBaseID = string.match(list[i].id,"(%d+)")
-				if listBaseID == baseID then
+				if not ItemRack.HasRuneID(list[i].id) and listBaseID == baseID then
 					idx = i
 					break
 				end
@@ -236,7 +262,7 @@ function ItemRack.ManualQueueAdvance(slot)
 		for i = 1, #list do
 			if list[i].id ~= 0 then
 				local queueBaseID = string.match(tostring(list[i].id), "^(%d+)")
-				if queueBaseID == equippedBaseID then
+				if not ItemRack.HasRuneID(list[i].id) and queueBaseID == equippedBaseID then
 					currentIdx = i
 					break
 				end
@@ -519,7 +545,7 @@ function ItemRack.ProcessAutoQueue(slot)
 					break -- Stop marker reached
 				else
 					local queueBaseID = string.match(tostring(list[i].id), "^(%d+)")
-					if queueBaseID == baseID then
+					if not ItemRack.HasRuneID(list[i].id) and queueBaseID == baseID then
 						matchIdx = i
 						break
 					end
@@ -573,7 +599,7 @@ function ItemRack.ProcessAutoQueue(slot)
 			for i=1,#list do
 				if list[i].id == 0 then break end
 				local sqID = string.match(list[i].id,"^(%d+)")
-				if sqID == baseID then
+				if not ItemRack.HasRuneID(list[i].id) and sqID == baseID then
 					matchIdx = i
 					break
 				end
@@ -596,7 +622,7 @@ function ItemRack.ProcessAutoQueue(slot)
 	local nextItem, nextItemID = ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready)
 	if nextItem then
 		if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("autoqueue_candidate", { current = baseID, next = nextItemID, ready = ready and true or false, slot = slot }) end
-		if not ItemRack.SameExactID(exactID, nextItemID) then
+		if not ItemRack.MatchesStoredItemID(nextItemID, exactID) then
 			local bag,bagSlot = ItemRack.FindItemInBags(nextItemID)
 			if bag and not (ItemRack.CombatQueue[slot]==nextItemID) then
 				if ItemRack.QueueDiagnostic then ItemRack.QueueDiagnostic("autoqueue_equip_requested", { item = nextItemID, slot = slot }) end
@@ -628,39 +654,25 @@ function ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready, setname)
 	local exactID = ItemRack.GetID(slot)
 	local currentBurnt = ItemRack.IsQueueItemBurnt(slot, exactID, baseID)
 	local manualHold = ItemRack.IsManualQueueChoice(slot, exactID, baseID)
-	local matchedCurrent = false
-	for i=1,#(list) do
-		if list[i].id == 0 then
-			break
+	local currentMatchIndex = ItemRack.FindQueueEntryIndex(list,exactID)
+	local matchedCurrent = currentMatchIndex ~= nil
+	if currentMatchIndex then
+		local currentEntry = list[currentMatchIndex]
+		local buff = GetItemSpell(baseID)
+		if buff and AuraUtil.FindAuraByName(buff,"player") then
+			return nil
 		end
-		local matched = false
-		if ItemRack.SameExactID(list[i].id, exactID) then
-			matched = true
-		else
-			local queueBaseID = string.match(tostring(list[i].id), "^(%d+)")
-			if queueBaseID == baseID then
-				matched = true
-			end
+		-- Pause Queue: item is flagged to stay equipped indefinitely
+		if currentEntry.keep then
+			return nil
 		end
-		if matched then
-			matchedCurrent = true
-			local buff = GetItemSpell(baseID)
-			if buff and AuraUtil.FindAuraByName(buff,"player") then
+		-- Delay: item should not be swapped until delay seconds after use
+		local delayValue = tonumber(currentEntry.delay)
+		if delayValue and delayValue > 0 then
+			local start = GetInventoryItemCooldown("player", slot)
+			if start and start > 0 and (GetTime() - start) <= delayValue then
 				return nil
 			end
-			-- Pause Queue: item is flagged to stay equipped indefinitely
-			if list[i].keep then
-				return nil
-			end
-			-- Delay: item should not be swapped until delay seconds after use
-			local delayValue = tonumber(list[i].delay)
-			if delayValue and delayValue > 0 then
-				local start = GetInventoryItemCooldown("player", slot)
-				if start and start > 0 and (GetTime() - start) <= delayValue then
-					return nil
-				end
-			end
-			break
 		end
 	end
 	if not matchedCurrent and ItemRack.ManualQueueChoice and ItemRack.ManualQueueChoice[slot] then
@@ -683,11 +695,11 @@ function ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready, setname)
 		elseif ItemRack.IsQueueItemBurnt(slot, list[i].id, candidate) then
 			-- continue
 		-- If baseID is near ready but our candidate IS baseID, return nil.
-		elseif ready and candidate==baseID then
+		elseif ready and i == currentMatchIndex then
 			return nil
 		else
 			local canSwap = not ready or enable==0 or list[i].priority
-			if manualHold and ready and candidate ~= baseID then
+			if manualHold and ready and i ~= currentMatchIndex then
 				canSwap = false
 			end
 			if canSwap then
@@ -713,7 +725,7 @@ function ItemRack.ItemNearReady(id, slot, customReadyTime)
 	if not ItemRack.IsEquippedSlotStateReady(slot) then return true end
 	local exactID = ItemRack.EquippedSnapshot[slot]
 	local baseID = ItemRack.GetIRString(id, true)
-	if exactID and ItemRack.SameExactID(exactID, id) then
+	if exactID and ItemRack.MatchesStoredItemID(id, exactID) then
 		return ItemRack.ShouldHoldEquippedItem(slot, exactID, baseID, customReadyTime)
 	else
 		return ItemRack.IsCandidateReady(slot, id, customReadyTime)

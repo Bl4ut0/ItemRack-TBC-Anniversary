@@ -1,4 +1,10 @@
 {
+  "private": true,
+  "scripts": {
+    "validate:lua": "node .tools/check_lua.js ItemRack/ItemRack.lua ItemRack/ItemRackButtons.lua ItemRack/ItemRackEquip.lua ItemRack/ItemRackEvents.lua ItemRack/ItemRackQueue.lua ItemRackOptions/ItemRackOptions.lua",
+    "test:regressions": "node .tools/check_regressions.js",
+    "test": "npm run validate:lua && npm run test:regressions"
+  },
   "dependencies": {
     "luaparse": "^0.3.1"
   }

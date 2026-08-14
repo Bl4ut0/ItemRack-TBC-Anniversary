@@ -14,7 +14,7 @@ This addon is based on the original **ItemRack Classic** maintained by Rottenbee
 
 ## Installation
 
-1. Download the latest release from the [Releases page](https://github.com/Bl4ut0/ItemRack-TBC-Anniversary/releases)
+1. Download the latest release from the [Releases page](https://github.com/Bl4ut0/ItemRack-Anniversary/releases)
 2. Extract the contents to your WoW addons folder:
    ```
    World of Warcraft\_classic_era_\Interface\AddOns\

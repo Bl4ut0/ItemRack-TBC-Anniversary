@@ -296,6 +296,9 @@ function ItemRack.InitButtons()
 	local button
 	for i=0,20 do
 		button = _G["ItemRackButton"..i]
+		-- CLICK keybindings are handled consistently on key release regardless of
+		-- the player's ActionButtonUseKeyDown CVar.
+		button:SetAttribute("useOnKeyDown",false)
 		
 		-- Securely wrap Show to prevent external/Blizzard systems from showing inactive buttons
 		local origShow = button.Show
@@ -429,6 +432,7 @@ function ItemRack.AddButton(id)
 	end
 	ItemRack.NewAnchor = id
 	_G["ItemRackButton"..id.."ItemRackIcon"]:SetTexture(ItemRack.GetTextureBySlot(id))
+	ItemRack.SetRuneIconOverlay(button,id<20 and ItemRack.GetID(id) or nil,nil,nil,"BOTTOMLEFT")
 	button:Show()
 	ItemRack.UpdateButtonCooldowns()
 	if ItemRack.RefreshButtonVisibility then
@@ -672,6 +676,7 @@ function ItemRack.UpdateButtons()
 	for i in pairs(ItemRackUser.Buttons) do
 		if i<20 then
 			_G["ItemRackButton"..i.."ItemRackIcon"]:SetTexture(ItemRack.GetTextureBySlot(i))
+			ItemRack.SetRuneIconOverlay(_G["ItemRackButton"..i],ItemRack.GetID(i),nil,nil,"BOTTOMLEFT")
 			
 			-- Update Stack/Charge Count (Hide if <= 1, Show if > 1)
 			local count = GetInventoryItemCount("player", i)

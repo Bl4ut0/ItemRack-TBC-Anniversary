@@ -6,17 +6,17 @@ This document details all modifications made to port ItemRack Classic to the TBC
 
 The TBC Anniversary Edition runs on a modern WoW client engine (similar to Retail), which means many APIs have been moved to new namespaces or deprecated. This port adds compatibility shims and fixes to ensure ItemRack functions correctly.
 
-## Tooltip Window Resizing Fix (GameTooltip:Show)
-**File:** [ItemRack.lua](file:///c:/Dev%20Projects/ItemRack/ItemRack/ItemRack.lua) — `ItemRack.ListSetsHavingItem`
+## Tooltip Post-Hook Taint Containment
+**File:** `ItemRack/ItemRack.lua` — `ItemRack.ListSetsHavingItem`
 
 ### Problem
-With "Show set info in tooltips" enabled, the set name lines appended to item tooltips extended outside the bottom boundary of the tooltip window.
+`ListSetsHavingItem` runs from insecure post-hooks on Blizzard tooltip methods. Calling `tooltip:Show()` from those hooks can propagate taint into protected action-button update paths and produce `ADDON_ACTION_BLOCKED` errors after an otherwise harmless item hover.
 
-### Root Cause
-In secure post-hooks (`SetBagItem`, `SetInventoryItem`, `SetHyperlink`), Blizzard's engine code calls `tooltip:Show()` *before* the post-hooks run. When `ListSetsHavingItem` appends lines via `tooltip:AddDoubleLine(...)`, the lines are added to the tooltip frame, but without calling `tooltip:Show()` afterward, the tooltip frame height is never recalculated. Consequently, the added text overflowed past the bottom border of the tooltip backdrop.
+### Correct boundary
+The hook may append ItemRack's set-name lines with `AddDoubleLine`, but Blizzard retains ownership of the tooltip's `Show` lifecycle. Avoiding direct assignments to `GameTooltip.SetOwner` fixes a separate taint source; it does **not** make an insecure `Show()` call safe. Earlier versions of this document incorrectly combined those two issues.
 
 ### Solution
-Restored `tooltip:Show()` inside `ListSetsHavingItem` when set info lines are added. Calling `tooltip:Show()` forces `GameTooltip` to recalculate its dimensions so that set names stay neatly contained within the tooltip background frame. Calling `Show()` on `GameTooltip` is safe and taint-free now that table key assignments like `GameTooltip.SetOwner = ...` were eliminated (see GameTooltip Taint Fix section below).
+`ListSetsHavingItem` now only appends and clears its lines. It never calls `Show()` or replaces a secure tooltip method. Character-sheet positioning is applied after Blizzard's handler completes. Backdrop sizing should be verified in-game on each supported client; any future sizing adjustment must preserve this protected-method boundary.
 
 ---
 
@@ -71,7 +71,7 @@ Instead of intercepting `GameTooltip.SetOwner`, we now:
 2. Call the original Blizzard handler **completely untouched** (secure, no taint)
 3. **After** it finishes, reposition using `ClearAllPoints()`/`SetPoint()` — these are method calls, not table key assignments, so they don't cause taint
 4. **Reveal** the tooltip at the correct position with `SetAlpha(1)`
-5. Store the desired anchor in `ItemRack.pendingTooltipAnchor` so it can be **re-applied** after `tooltip:Show()` calls from hooks (e.g. `ListSetsHavingItem`) which would otherwise re-snap the tooltip
+5. Store the desired anchor in `ItemRack.pendingTooltipAnchor` so it can be **re-applied** after asynchronous native tooltip refreshes that restore Blizzard's default anchor
 6. If the repositioned tooltip is **too wide** and overlaps the menu, fall back to below the menu frame
 
 ```lua

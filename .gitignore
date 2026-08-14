@@ -4,7 +4,11 @@
 
 # WoW Interface Code
 BlizzardInterfaceCode/
-.agent/
+.agent/*
+!.agent/workflows/
+.agent/workflows/*
+!.agent/workflows/release.md
+!.agent/workflows/local_build.md
 .versions/
 WeakAuras/
 
@@ -19,5 +23,11 @@ Images/
 .gemini/
 OmniCC/
 OmniCC_Config/
-.tools/
+.tools/*
+!.tools/build_release_dev.ps1
+!.tools/check_lua.js
+!.tools/check_regressions.js
+!.tools/create_release.js
+!.tools/install_local.ps1
 node_modules/
+.release-audit/

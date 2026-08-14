@@ -38,8 +38,10 @@ local GetAddOnInfo = GetAddOnInfo or (C_AddOns and C_AddOns.GetAddOnInfo)
 local GetNumAddOns = GetNumAddOns or (C_AddOns and C_AddOns.GetNumAddOns)
 
 local wowver, wowbuild, wowbuilddate, wowtoc = GetBuildInfo()
-ItemRack.Version = GetAddOnMetadata(addonName, "Version")
-ItemRack.BuildID = "Dev"
+ItemRack.Version = GetAddOnMetadata(addonName, "Version") or "Dev"
+-- Derive the diagnostic build identifier from the packaged TOC so source,
+-- tags, and release archives cannot drift through a missed manual edit.
+ItemRack.BuildID = ItemRack.Version == "Dev" and "Dev" or ("v"..ItemRack.Version)
 
 -- Global Debug System
 -- Usage: ItemRack.Debug("Queue", "some message", someVar)
@@ -172,32 +174,110 @@ function ItemRack.IsEngravingActive()
 	return C_Engraving and C_Engraving.IsEngravingEnabled()
 end
 
+ItemRack.RuneIconCache = {}
+ItemRack.RuneIconsCVar = "alwaysShowRuneIcons"
+ItemRack.RuneIconSettings = { ShowRuneIcons = "OFF" }
+
+function ItemRack.GetRuneIconsEnabled()
+	if not ItemRack.IsEngravingActive() then return false end
+	if C_CVar and C_CVar.GetCVarBool then
+		return C_CVar.GetCVarBool(ItemRack.RuneIconsCVar)
+	end
+	return GetCVar and GetCVar(ItemRack.RuneIconsCVar) == "1"
+end
+
+function ItemRack.SyncRuneIconSetting()
+	ItemRack.RuneIconSettings.ShowRuneIcons = ItemRack.GetRuneIconsEnabled() and "ON" or "OFF"
+	return ItemRack.RuneIconSettings.ShowRuneIcons
+end
+
+function ItemRack.SetRuneIconsEnabled(enabled)
+	local value = (enabled == true or enabled == "ON") and "1" or "0"
+	ItemRack.RuneIconSettings.ShowRuneIcons = value == "1" and "ON" or "OFF"
+	if C_CVar and C_CVar.SetCVar then
+		C_CVar.SetCVar(ItemRack.RuneIconsCVar,value)
+	elseif SetCVar then
+		SetCVar(ItemRack.RuneIconsCVar,value)
+	end
+	ItemRack.SyncRuneIconSetting()
+	if ItemRack.RefreshRuneIconOverlays then
+		ItemRack.RefreshRuneIconOverlays()
+	end
+end
+
+function ItemRack.CacheRuneInfo(runeInfo)
+	if runeInfo and runeInfo.skillLineAbilityID and runeInfo.skillLineAbilityID ~= 0 and runeInfo.iconTexture then
+		ItemRack.RuneIconCache[runeInfo.skillLineAbilityID] = runeInfo.iconTexture
+	end
+end
+
 do
 	if ItemRack.IsEngravingActive() then
-		function ItemRack.AppendRuneID(bag, slot)
+		local function GetRuneSuffix(rune_info)
+			local runeID = rune_info and rune_info.skillLineAbilityID or 0
+			ItemRack.CacheRuneInfo(rune_info)
+			return ":runeid:"..tostring(runeID)
+		end
+
+		function ItemRack.GetRuneInfoAtLocation(bag, slot)
 			if slot then
-				if C_Engraving.IsInventorySlotEngravable(bag, slot) then
-					local rune_info = C_Engraving.GetRuneForInventorySlot(bag, slot)
-					if rune_info then
-						return ":runeid:"..tostring(rune_info.skillLineAbilityID)
-					else
-						return ":runeid:0"
+				-- The main bank uses a negative container ID, which the engraving
+				-- inventory APIs reject. Convert it to its inventory-slot equivalent.
+				if bag == BANK_CONTAINER then
+					local inventorySlot = BankButtonIDToInvSlotID and BankButtonIDToInvSlotID(slot)
+					if inventorySlot and C_Engraving.GetRuneForEquipmentSlot then
+						local ok,runeInfo = pcall(C_Engraving.GetRuneForEquipmentSlot,inventorySlot)
+						if ok then return runeInfo end
 					end
-				else
-					return ""
+					return nil
+				elseif type(bag) ~= "number" or bag < 0 then
+					return nil
 				end
+				if C_Engraving.GetRuneForInventorySlot then
+					local ok,runeInfo = pcall(C_Engraving.GetRuneForInventorySlot,bag,slot)
+					if ok then return runeInfo end
+				end
+				return nil
 			else
-				if C_Engraving.IsEquipmentSlotEngravable(bag) then
-					local rune_info = C_Engraving.GetRuneForEquipmentSlot(bag)
-					if rune_info then
-						return ":runeid:"..tostring(rune_info.skillLineAbilityID)
-					else
-						return ":runeid:0"
-					end
-				else
-					return ""
+				if type(bag) == "number" and bag >= 0 and C_Engraving.GetRuneForEquipmentSlot then
+					local ok,runeInfo = pcall(C_Engraving.GetRuneForEquipmentSlot,bag)
+					if ok then return runeInfo end
 				end
+				return nil
 			end
+		end
+
+		function ItemRack.AppendRuneID(bag, slot)
+			-- Read the nilable rune getter first. During bank initialization SoD's
+			-- engravable predicate can lag behind rune data that is already readable.
+			local runeInfo = ItemRack.GetRuneInfoAtLocation(bag,slot)
+			if runeInfo then
+				return GetRuneSuffix(runeInfo)
+			end
+
+			local isEngravable
+			if slot then
+				if bag == BANK_CONTAINER then
+					local inventorySlot = BankButtonIDToInvSlotID and BankButtonIDToInvSlotID(slot)
+					if inventorySlot and C_Engraving.IsEquipmentSlotEngravable then
+						local ok,result = pcall(C_Engraving.IsEquipmentSlotEngravable,inventorySlot)
+						isEngravable = ok and result
+					end
+				elseif type(bag) == "number" and bag >= 0 then
+					if C_Engraving.IsInventorySlotEngravable then
+						local ok,result = pcall(C_Engraving.IsInventorySlotEngravable,bag,slot)
+						isEngravable = ok and result
+					end
+				end
+			elseif type(bag) == "number" and bag >= 0 and C_Engraving.IsEquipmentSlotEngravable then
+				local ok,result = pcall(C_Engraving.IsEquipmentSlotEngravable,bag)
+				isEngravable = ok and result
+			end
+
+			if isEngravable then
+				return GetRuneSuffix(nil)
+			end
+			return ""
 		end
 	end
 end
@@ -408,10 +488,18 @@ function ItemRack.InitEventHandlers()
 	handler.CHARACTER_POINTS_CHANGED = ItemRack.UpdateClassSpecificStuff
 	handler.PLAYER_TALENT_UPDATE = ItemRack.UpdateClassSpecificStuff
 	handler.PLAYER_ENTERING_WORLD = ItemRack.OnEnterWorld
+	handler.PLAYER_LEAVING_WORLD = ItemRack.OnLeavingWorld
 	handler.ZONE_CHANGED_NEW_AREA = ItemRack.OnZoneChanged
 	handler.ZONE_CHANGED_INDOORS = ItemRack.OnZoneChanged
+	handler.CONFIRM_SUMMON = ItemRack.OnSummonPending
+	handler.CANCEL_SUMMON = ItemRack.OnSummonCanceled
 	handler.PLAYER_LOGOUT = ItemRack.OnPlayerLogout
 	handler.ACTIVE_TALENT_GROUP_CHANGED = ItemRack.UpdateClassSpecificStuff
+	if ItemRack.IsEngravingActive() then
+		handler.RUNE_UPDATED = ItemRack.OnRuneUpdated
+		handler.ENGRAVING_MODE_CHANGED = ItemRack.OnRuneUpdated
+		handler.CVAR_UPDATE = ItemRack.OnRuneIconsCVarUpdate
+	end
 --	handler.PET_BATTLE_OPENING_START = ItemRack.OnEnteringPetBattle
 --	handler.PET_BATTLE_CLOSE = ItemRack.OnLeavingPetBattle
 end
@@ -733,6 +821,12 @@ function ItemRack.AuditSavedVariables(printToChat)
 end
 
 function ItemRack.OnPlayerLogin()
+	-- Keep automation quiescent until the first PLAYER_ENTERING_WORLD has
+	-- completed and the inventory APIs have had time to settle.
+	ItemRack.WorldTransitioning = true
+	ItemRack.SummonPending = nil
+	ItemRack.PendingSpecSet = nil
+	ItemRack.AutomaticSwapResumeAt = nil
 	ItemRack.ClearQueueDiagnostics()
 	ItemRack.QueueDiagnostic("login_reset", { generation = (ItemRack.QueueStateGeneration or 0) + 1 })
 	ItemRack.QueueStateReady = false
@@ -787,14 +881,142 @@ function ItemRack.OnPlayerLogin()
 end
 
 function ItemRack.OnPlayerLogout()
-	-- Override bindings are runtime-only and don't need saving on logout.
-	-- Set keybinds are stored in ItemRackUser.Sets[name].key and re-applied
-	-- via SetSetBindings() on each login/reload.
+	-- ItemRack binding changes are saved when they are made. Set keys are also
+	-- mirrored in ItemRackUser so older profiles can be reconciled on login.
 end
 
-function ItemRack.RunAllEvents(reason)
+ItemRack.AutomaticSwapSettleDelay = 3
+
+function ItemRack.IsAutomaticSwapBlocked()
+	if ItemRack.WorldTransitioning then
+		return true, "world transition"
+	end
+	if ItemRack.SummonPending then
+		return true, "summon pending"
+	end
+	if ItemRack.AutomaticSwapResumeAt then
+		local remaining = ItemRack.AutomaticSwapResumeAt - GetTime()
+		if remaining > 0 then
+			return true, "inventory settling", remaining
+		end
+		ItemRack.AutomaticSwapResumeAt = nil
+	end
+	return false
+end
+
+function ItemRack.ScheduleAutomaticSwapResume(reason, delay)
+	if ItemRack.AutomaticSwapResumeTimer then
+		ItemRack.AutomaticSwapResumeTimer:Cancel()
+		ItemRack.AutomaticSwapResumeTimer = nil
+	end
+	if ItemRack.WorldTransitioning or ItemRack.SummonPending then
+		return
+	end
+	delay = math.max(tonumber(delay) or 0, 0.05)
+	ItemRack.AutomaticSwapResumeTimer = C_Timer.NewTimer(delay, function()
+		ItemRack.AutomaticSwapResumeTimer = nil
+		local blocked, _, remaining = ItemRack.IsAutomaticSwapBlocked()
+		if blocked then
+			if remaining then
+				ItemRack.ScheduleAutomaticSwapResume(reason, remaining)
+			end
+			return
+		end
+
+		ItemRack.Debug("Equip", "Automatic swaps resumed after:", reason or "transition")
+		if ItemRack.SetSwapping then
+			ItemRack.LockChangedDuringSetSwap()
+		elseif not ItemRack.AnythingLocked() and not ItemRack.NowCasting then
+			if next(ItemRack.CombatQueue) and not InCombatLockdown() then
+				ItemRack.ProcessCombatQueue()
+			end
+			if #ItemRack.SetsWaiting > 0 and not ItemRack.AnythingLocked() then
+				ItemRack.ProcessSetsWaiting()
+			end
+		end
+		ItemRack.RunAllEvents(reason or "automatic swap resume")
+		if ItemRack.PeriodicQueueCheck then
+			ItemRack.PeriodicQueueCheck()
+		end
+	end)
+end
+
+function ItemRack.OnSummonPending()
+	ItemRack.SummonPending = true
+	ItemRack.SummonPendingStartedAt = GetTime()
+	ItemRack.SummonWatchGeneration = (ItemRack.SummonWatchGeneration or 0) + 1
+	local generation = ItemRack.SummonWatchGeneration
+	ItemRack.AutomaticSwapResumeAt = nil
+	if ItemRack.AutomaticSwapResumeTimer then
+		ItemRack.AutomaticSwapResumeTimer:Cancel()
+		ItemRack.AutomaticSwapResumeTimer = nil
+	end
+	ItemRack.Debug("Equip", "Automatic swaps suspended: summon pending")
+	if ItemRack.PauseAutomaticSwapForWorldTransition then
+		ItemRack.PauseAutomaticSwapForWorldTransition("summon pending")
+	end
+
+	-- CANCEL_SUMMON is not emitted consistently by every supported client when
+	-- the prompt expires. Poll its native countdown so automation cannot remain
+	-- suspended forever after a declined or expired summon.
+	local function CheckSummonPending()
+		if generation ~= ItemRack.SummonWatchGeneration or not ItemRack.SummonPending then return end
+		if ItemRack.WorldTransitioning then return end
+		local elapsed = GetTime() - ItemRack.SummonPendingStartedAt
+		if type(GetSummonConfirmTimeLeft) == "function" then
+			local ok, timeLeft = pcall(GetSummonConfirmTimeLeft)
+			if ok and tonumber(timeLeft) and tonumber(timeLeft) <= 0 and elapsed >= 1 then
+				ItemRack.OnSummonCanceled()
+				return
+			end
+		elseif elapsed >= 120 then
+			ItemRack.OnSummonCanceled()
+			return
+		end
+		C_Timer.After(0.5, CheckSummonPending)
+	end
+	C_Timer.After(0.5, CheckSummonPending)
+end
+
+function ItemRack.OnSummonCanceled()
+	if not ItemRack.SummonPending then return end
+	ItemRack.SummonPending = nil
+	ItemRack.SummonPendingStartedAt = nil
+	ItemRack.SummonWatchGeneration = (ItemRack.SummonWatchGeneration or 0) + 1
+	ItemRack.AutomaticSwapResumeAt = GetTime() + 0.5
+	ItemRack.Debug("Equip", "Summon canceled; automatic swaps will resume after inventory settles")
+	ItemRack.ScheduleAutomaticSwapResume("summon canceled", 0.5)
+end
+
+function ItemRack.OnLeavingWorld()
+	ItemRack.WorldTransitioning = true
+	ItemRack.AutomaticSwapResumeAt = nil
+	if ItemRack.AutomaticSwapResumeTimer then
+		ItemRack.AutomaticSwapResumeTimer:Cancel()
+		ItemRack.AutomaticSwapResumeTimer = nil
+	end
+	ItemRack.Debug("Equip", "Automatic swaps suspended: PLAYER_LEAVING_WORLD")
+	if ItemRack.PauseAutomaticSwapForWorldTransition then
+		ItemRack.PauseAutomaticSwapForWorldTransition("PLAYER_LEAVING_WORLD")
+	end
+end
+
+function ItemRack.RunAllEvents(reason, forceSpecialization)
+	if forceSpecialization then
+		-- Keep this request across queue, bag-data, and world-transition deferrals
+		-- so re-enabling a spec event works without requiring a spec change.
+		ItemRack.ForceSpecializationCheck = true
+	end
 	if ItemRackUser.EnableEvents ~= "ON" then
 		ItemRack.Debug("Events", "RunAllEvents skipped (events disabled):", reason)
+		return
+	end
+	local automaticSwapBlocked, blockReason, remaining = ItemRack.IsAutomaticSwapBlocked()
+	if automaticSwapBlocked then
+		ItemRack.Debug("Events", "RunAllEvents deferred while automatic swaps are suspended:", blockReason, reason or "")
+		if remaining then
+			ItemRack.ScheduleAutomaticSwapResume(reason or blockReason, remaining)
+		end
 		return
 	end
 	if ItemRackUser.EnableQueues == "ON" and ItemRack.QueueLifecycleKnown and ItemRack.QueueStateReady ~= true then
@@ -820,7 +1042,11 @@ function ItemRack.RunAllEvents(reason)
 		if ItemRack.ProcessBuffEvent then ItemRack.ProcessBuffEvent() end
 	end
 	if ItemRack.ProcessStanceEvent then ItemRack.ProcessStanceEvent() end
-	if ItemRack.ProcessSpecializationEvent then ItemRack.ProcessSpecializationEvent() end
+	if ItemRack.ProcessSpecializationEvent then
+		local forceSpec = ItemRack.ForceSpecializationCheck
+		ItemRack.ForceSpecializationCheck = nil
+		ItemRack.ProcessSpecializationEvent(forceSpec)
+	end
 end
 
 function ItemRack.ScheduleEventRecheck(reason, delay)
@@ -933,6 +1159,10 @@ function ItemRack.TryEquipPendingQueueSet()
 	or not ItemRackUser.Sets or not ItemRackUser.Sets[pendingSet.setname] then
 		return false
 	end
+	if (pendingSet.isEventEquipment or pendingSet.isDeferredEquipment)
+	and ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		return false
+	end
 
 	if ItemRackUser.EnableQueues == "ON" then
 		if ItemRack.QueueStateReady ~= true then
@@ -946,7 +1176,17 @@ function ItemRack.TryEquipPendingQueueSet()
 	end
 
 	ItemRack.PendingQueueEquipSet = nil
+	local previousEventEquipment = ItemRack.IsEventEquipment
+	local previousDeferredEquipment = ItemRack.IsDeferredEquipment
+	if pendingSet.isEventEquipment then
+		ItemRack.IsEventEquipment = true
+	end
+	if pendingSet.isDeferredEquipment then
+		ItemRack.IsDeferredEquipment = true
+	end
 	ItemRack.EquipSet(pendingSet.setname, pendingSet.disableSound, pendingSet.isSecureKeybind)
+	ItemRack.IsEventEquipment = previousEventEquipment
+	ItemRack.IsDeferredEquipment = previousDeferredEquipment
 	return true
 end
 
@@ -1194,6 +1434,8 @@ function ItemRack.ReconcileEquippedSnapshot(fromInventoryEvent)
 			end
 		elseif state == "resolved" then
 			ItemRack.UnresolvedEquippedSlots[i] = nil
+			local runeIdentityChanged = ItemRack.IsRuneOnlyIdentityChange
+			and ItemRack.IsRuneOnlyIdentityChange(previousID,currentID)
 			if wasUnresolved then
 				ItemRack.QueueDiagnostic("slot_resolved", { current = currentID, previous = previousID, slot = i })
 				stateChanged = true
@@ -1227,7 +1469,13 @@ function ItemRack.ReconcileEquippedSnapshot(fromInventoryEvent)
 				ItemRack.EquippedSnapshot[i] = currentID
 				stateChanged = true
 			else
-				if not previousID or previousID == 0 or not ItemRack.SameExactID(previousID, currentID) then
+				if runeIdentityChanged then
+					ItemRack.QueueDiagnostic("rune_identity_changed", { current = currentID, previous = previousID, slot = i })
+					if ItemRack.AdoptEquippedRuneIdentity then
+						ItemRack.AdoptEquippedRuneIdentity(i,currentID)
+					end
+					stateChanged = true
+				elseif not previousID or previousID == 0 or not ItemRack.SameExactID(previousID, currentID) then
 					ItemRack.QueueDiagnostic("equip_transition", { current = currentID, previous = previousID, slot = i })
 					if ItemRack.RecordEquipTime then
 						ItemRack.RecordEquipTime(i, currentID, transitionTime)
@@ -1236,7 +1484,7 @@ function ItemRack.ReconcileEquippedSnapshot(fromInventoryEvent)
 				end
 				ItemRack.EquippedSnapshot[i] = currentID
 				local record = ItemRack.EquipTimers and ItemRack.EquipTimers[i]
-				if record and record.pending and ItemRack.SameExactID(record.id, currentID)
+				if not runeIdentityChanged and record and record.pending and ItemRack.SameExactID(record.id, currentID)
 				and ItemRack.RecordEquipTime then
 					ItemRack.RecordEquipTime(i, currentID, record.transitionTime or record.time)
 				end
@@ -1311,6 +1559,15 @@ end
 
 function ItemRack.OnEnterWorld(self,event,...)
 	local isLogin,isReload = ...
+	ItemRack.WorldTransitioning = nil
+	ItemRack.SummonPending = nil
+	ItemRack.SummonPendingStartedAt = nil
+	ItemRack.SummonWatchGeneration = (ItemRack.SummonWatchGeneration or 0) + 1
+	ItemRack.AutomaticSwapResumeAt = GetTime() + ItemRack.AutomaticSwapSettleDelay
+	if ItemRack.ResetMountEventStability then
+		ItemRack.ResetMountEventStability()
+	end
+	ItemRack.Debug("Equip", "Entered world; holding automatic swaps for", ItemRack.AutomaticSwapSettleDelay, "seconds")
 	ItemRack.UpdateArenaVisibilityState()
 	ItemRack.QueueLifecycleKnown = true
 	ItemRack.QueueInitWasReload = isReload and true or false
@@ -1321,9 +1578,9 @@ function ItemRack.OnEnterWorld(self,event,...)
 		end
 	end
 
-	-- Schedule settled rechecks after entering world/instance
-	ItemRack.ScheduleEventRecheck("PLAYER_ENTERING_WORLD (0.5s)", 0.5)
-	ItemRack.ScheduleEventRecheck("PLAYER_ENTERING_WORLD (1.5s)", 1.5)
+	-- Resume event sets and AutoQueue only after equipment/bag state has remained
+	-- available for a short post-loading-screen settlement window.
+	ItemRack.ScheduleAutomaticSwapResume("PLAYER_ENTERING_WORLD", ItemRack.AutomaticSwapSettleDelay)
 
 	if isLogin or isReload then
 		-- Force a set update shortly after loading to ensure minimap icon/current set is correct
@@ -1457,6 +1714,9 @@ function ItemRack.DelayedCombatQueue()
 	if ItemRack.NowCasting then
 		return
 	end
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		return
+	end
 	ItemRack.ProcessCombatQueue()
 	-- Also process any sets waiting for a swap
 	if #(ItemRack.SetsWaiting)>0 and not ItemRack.AnythingLocked() then
@@ -1501,7 +1761,7 @@ function ItemRack.OnUnitInventoryChanged(self,event,unit)
 			local dirty = false
 			for slot, queuedID in pairs(ItemRack.CombatQueue) do
 				local equippedState, equippedID = ItemRack.GetEquippedSlotState(slot)
-				local match = equippedState == "resolved" and queuedID and ItemRack.SameID(equippedID, queuedID)
+				local match = equippedState == "resolved" and queuedID and ItemRack.MatchesStoredItemID(queuedID, equippedID)
 				ItemRack.Debug("CombatQueue", "  slot="..tostring(slot).." queued="..tostring(queuedID).." equipped="..tostring(equippedID).." match="..tostring(match))
 				if match then
 					ItemRack.CombatQueue[slot] = nil
@@ -1561,6 +1821,10 @@ function ItemRack.OnLeavingCombatOrDeath()
 end
 
 function ItemRack.ProcessCombatQueue()
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		ItemRack.Debug("CombatQueue", "ProcessCombatQueue deferred while automatic swaps are suspended")
+		return
+	end
 	-- Safety: clear any items stuck on the cursor from previous partial swaps
 	if CursorHasItem() then
 		ClearCursor()
@@ -1608,7 +1872,10 @@ function ItemRack.ProcessCombatQueue()
 		if next(combat) then
 			ItemRackUser.Sets["~CombatQueue"].oldset = ItemRack.CombatSet
 			ItemRack.UpdateCombatQueue()
+			local previousDeferredEquipment = ItemRack.IsDeferredEquipment
+			ItemRack.IsDeferredEquipment = true
 			ItemRack.EquipSet("~CombatQueue")
+			ItemRack.IsDeferredEquipment = previousDeferredEquipment
 		end
 	end
 
@@ -1668,6 +1935,25 @@ end
 
 function ItemRack.OnBankOpen()
 	ItemRack.BankOpen = 1
+	-- SoD can expose bank item links before its engraving lookup has refreshed.
+	-- Re-prime rune data on the next frame, then rebuild any flyout that was
+	-- already open over the character sheet.
+	if ItemRack.GetRuneInfoAtLocation then
+		local function RefreshBankRunes()
+			if not ItemRack.BankOpen then return end
+			if ItemRack.PopulateRuneIconCache then
+				ItemRack.PopulateRuneIconCache()
+			end
+			if ItemRack.RefreshRuneIconOverlays then
+				ItemRack.RefreshRuneIconOverlays(true)
+			end
+		end
+		if C_Timer and C_Timer.After then
+			C_Timer.After(0,RefreshBankRunes)
+		else
+			RefreshBankRunes()
+		end
+	end
 end
 
 function ItemRack.UpdateClassSpecificStuff()
@@ -1709,25 +1995,22 @@ do
 			return
 		end
 		if not id or id == 0 then return end
-		local same_exact = ItemRack.SameExactID
+		local matchesStored = ItemRack.MatchesStoredItemID
 		for name, set in pairs(ItemRackUser.Sets) do
 			if not name:match("^~") then
 				for _, item in pairs(set.equip) do
-					if same_exact(item, id) then
+					if matchesStored(item, id) then
 						data[name] = true
 					end
 				end
 			end
 		end
-		local added = false
 		for name in pairs(data) do
 			tooltip:AddDoubleLine("ItemRack Set: ", name, 0,.6,1, 0,.6,1)
 			data[name] = nil
-			added = true
 		end
-		if added then
-			tooltip:Show()
-		end
+		-- Blizzard owns the tooltip's Show lifecycle. Calling Show from these
+		-- insecure post-hooks can taint protected action-button update paths.
 	end
 end
 
@@ -1818,8 +2101,18 @@ function ItemRack.InitCore()
 	ItemRackFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
 	ItemRackFrame:RegisterEvent("UNIT_AURA")
 	ItemRackFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+	ItemRackFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
 	ItemRackFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 	ItemRackFrame:RegisterEvent("ZONE_CHANGED_INDOORS")
+	-- Anniversary clients expose summon lifecycle events, but keep registration
+	-- defensive for older supported interface branches.
+	pcall(ItemRackFrame.RegisterEvent, ItemRackFrame, "CONFIRM_SUMMON")
+	pcall(ItemRackFrame.RegisterEvent, ItemRackFrame, "CANCEL_SUMMON")
+	if ItemRack.IsEngravingActive() then
+		ItemRackFrame:RegisterEvent("RUNE_UPDATED")
+		ItemRackFrame:RegisterEvent("ENGRAVING_MODE_CHANGED")
+		ItemRackFrame:RegisterEvent("CVAR_UPDATE")
+	end
 	--end
 	ItemRack.StartTimer("CooldownUpdate")
 	ItemRack.ReflectAlpha()
@@ -1851,6 +2144,12 @@ function ItemRack.InitCore()
 	ItemRackSettings.TinyTooltipsQuickAccess = ItemRackSettings.TinyTooltipsQuickAccess or "OFF"
 	ItemRackSettings.TinyTooltipsSubMenusOnly = ItemRackSettings.TinyTooltipsSubMenusOnly or "OFF"
 	ItemRackSettings.DisableTooltipsInCombat = ItemRackSettings.DisableTooltipsInCombat or "OFF"
+	if ItemRack.IsEngravingActive() then
+		ItemRack.SyncRuneIconSetting()
+		if ItemRack.PopulateRuneIconCache then
+			ItemRack.PopulateRuneIconCache()
+		end
+	end
 	ItemRackSettings.CharacterSheetMenusLeft = nil -- removed in 4.27.3, replaced with per-side toggles
 	
 	-- (Temporary?) function to update all queues to tables for 
@@ -2014,6 +2313,7 @@ ItemRack.iSPatternBaseIDFromIR = "^(%-?%d+)" --this must *only* be used on ItemR
 ItemRack.iSPatternBaseIDFromRegular = "item:(%-?%d+)" --this must *only* be used regular itemLinks/itemStrings, and will return the first field (the itemID), allowing us to do loose item matching
 ItemRack.iSPatternEnhancementsFromIR = "^(%-?%d+):(%-?%d*):(%-?%d*):(%-?%d*):(%-?%d*)" --this must *only* be used on ItemRack-style IDs, and will return itemID, enchantID, gem1, gem2, gem3
 ItemRack.iSPatternItemFieldsFromIR = "^(%-?%d+:%-?%d*:%-?%d*:%-?%d*:%-?%d*:%-?%d*:%-?%d*:%-?%d*)" --extracts the first 8 item-identifying fields (itemID:enchant:gem1:gem2:gem3:gem4:suffix:unique), ignoring level/spec/etc trailing fields
+ItemRack.iSPatternRuneIDFromIR = ":runeid:(%d+)$"
 function ItemRack.GetIRString(inputString,baseid,regular)
 	return string.match(tostring(inputString or ""), (baseid and (regular and ItemRack.iSPatternBaseIDFromRegular or ItemRack.iSPatternBaseIDFromIR) or ItemRack.iSPatternRegularToIR)) or 0
 end
@@ -2063,13 +2363,239 @@ function ItemRack.SameID(id1,id2)
 	return ItemRack.GetIRString(id1,true) == ItemRack.GetIRString(id2,true)
 end
 
+function ItemRack.GetRuneID(id)
+	local runeID = tostring(id or ""):match(ItemRack.iSPatternRuneIDFromIR)
+	return runeID and tonumber(runeID) or nil
+end
+
+function ItemRack.HasRuneID(id)
+	return ItemRack.GetRuneID(id) ~= nil
+end
+
+-- Returns the SoD rune texture for a rune-aware ItemRack ID. AppendRuneID
+-- populates the cache while live equipment, bags, and bank slots are scanned;
+-- FindItem supplies a safe fallback for saved IDs that have not been seen yet.
+function ItemRack.GetRuneIconByID(id)
+	if ItemRack.RuneIconSettings.ShowRuneIcons ~= "ON" or not ItemRack.GetRuneInfoAtLocation then
+		return nil
+	end
+
+	local runeID = ItemRack.GetRuneID(id)
+	if not runeID or runeID == 0 then
+		return nil
+	end
+
+	local texture = ItemRack.RuneIconCache[runeID]
+	if texture then
+		return texture
+	end
+
+	local inv,bag,slot = ItemRack.FindItem(id)
+	local runeInfo
+	if bag then
+		runeInfo = ItemRack.GetRuneInfoAtLocation(bag,slot)
+	elseif inv then
+		runeInfo = ItemRack.GetRuneInfoAtLocation(inv)
+	end
+	if runeInfo and runeInfo.skillLineAbilityID == runeID and runeInfo.iconTexture then
+		ItemRack.RuneIconCache[runeID] = runeInfo.iconTexture
+		return runeInfo.iconTexture
+	end
+end
+
+-- Adds a compact rune marker without replacing the underlying item texture.
+-- Optional anchor/size/point values let compact UI surfaces avoid existing text.
+function ItemRack.SetRuneIconOverlay(button,id,anchor,size,point)
+	if not button then return end
+	local runeTexture = ItemRack.GetRuneIconByID(id)
+	local overlay = button.ItemRackRuneIcon
+	if runeTexture then
+		if not overlay then
+			overlay = button:CreateTexture(nil,"OVERLAY",nil,7)
+			overlay:SetTexCoord(.08,.92,.08,.92)
+			button.ItemRackRuneIcon = overlay
+		end
+		-- Masque and ItemRack's bank-only border are applied after menu buttons
+		-- are created. Restore the highest overlay sublevel whenever refreshed.
+		if overlay.SetDrawLayer then
+			overlay:SetDrawLayer("OVERLAY",7)
+		end
+		overlay:ClearAllPoints()
+		overlay:SetSize(size or 16,size or 16)
+		point = point or "TOPRIGHT"
+		local offset = point == "BOTTOMLEFT" and 2 or -2
+		overlay:SetPoint(point,anchor or button,point,offset,offset)
+		overlay:SetTexture(runeTexture)
+		overlay:Show()
+	elseif overlay then
+		overlay:Hide()
+	end
+end
+
+-- Prime icons for learned runes so saved set/queue entries can still display
+-- their rune when the physical item is in a closed bank or otherwise absent.
+function ItemRack.PopulateRuneIconCache()
+	if not ItemRack.IsEngravingActive()
+	or not C_Engraving.GetRuneCategories
+	or not C_Engraving.GetRunesForCategory then
+		return
+	end
+	if C_Engraving.RefreshRunesList then
+		pcall(C_Engraving.RefreshRunesList)
+	end
+	local ok,categories = pcall(C_Engraving.GetRuneCategories,false,true)
+	if not ok or type(categories) ~= "table" then return end
+	for _,category in ipairs(categories) do
+		local runesOK,runes = pcall(C_Engraving.GetRunesForCategory,category,true)
+		if runesOK and type(runes) == "table" then
+			for _,runeInfo in ipairs(runes) do
+				ItemRack.CacheRuneInfo(runeInfo)
+			end
+		end
+	end
+end
+
+function ItemRack.RefreshRuneIconOverlays(rebuildLocations)
+	if not ItemRack.GetRuneInfoAtLocation then return end
+	if rebuildLocations and ItemRack.PopulateKnownItems then
+		ItemRack.PopulateKnownItems()
+	end
+	if ItemRack.UpdateButtons then
+		ItemRack.UpdateButtons()
+	end
+	if ItemRackMenuFrame and ItemRackMenuFrame:IsVisible() and ItemRack.menuOpen then
+		ItemRack.BuildMenu()
+	end
+	if ItemRackOpt then
+		if rebuildLocations and ItemRackOpt.Inv then
+			for slot=0,19 do
+				if ItemRackOpt.Inv[slot] and not ItemRackOpt.Inv[slot].selected then
+					ItemRackOpt.Inv[slot].id = ItemRack.GetID(slot)
+				end
+			end
+		end
+		if ItemRackOpt.UpdateInv then
+			ItemRackOpt.UpdateInv()
+		end
+		if ItemRackOpt.SortListScrollFrameUpdate then
+			ItemRackOpt.SortListScrollFrameUpdate()
+		end
+	end
+end
+
+function ItemRack.OnRuneIconsCVarUpdate(self,event,cvarName)
+	if string.lower(tostring(cvarName or "")) ~= string.lower(ItemRack.RuneIconsCVar) then
+		return
+	end
+	ItemRack.SyncRuneIconSetting()
+	ItemRack.RefreshRuneIconOverlays()
+	if ItemRackOpt and ItemRackOpt.ListScrollFrameUpdate then
+		ItemRackOpt.ListScrollFrameUpdate()
+	end
+end
+
+function ItemRack.OnRuneUpdated(self,event,runeInfo)
+	if event == "RUNE_UPDATED" then
+		ItemRack.CacheRuneInfo(runeInfo)
+		-- RUNE_UPDATED is synchronous; defer one frame so the item's new rune
+		-- identity is readable before refreshing the queue snapshot and icons.
+		C_Timer.After(0,function()
+			if ItemRack.RefreshEquippedRuneIdentity then
+				ItemRack.RefreshEquippedRuneIdentity()
+			end
+			ItemRack.RefreshRuneIconOverlays(true)
+			if ItemRack.PeriodicQueueCheck then
+				ItemRack.PeriodicQueueCheck()
+			end
+		end)
+	else
+		ItemRack.RefreshRuneIconOverlays(true)
+	end
+end
+
 -- takes two ItemRack-style IDs and returns true if they share the same item-identifying fields (itemID, enchant, gems, suffix, unique)
 -- this is more precise than SameID (which only compares base itemID) but tolerant of item string format changes (Classic 10 fields vs TBC 14 fields)
 function ItemRack.SameExactID(id1,id2)
 	if not id1 or not id2 or id1==0 or id2==0 then return false end
 	local f1 = tostring(id1):match(ItemRack.iSPatternItemFieldsFromIR) or tostring(id1)
 	local f2 = tostring(id2):match(ItemRack.iSPatternItemFieldsFromIR) or tostring(id2)
-	return f1 == f2
+	if f1 ~= f2 then return false end
+	local rune1 = ItemRack.GetRuneID(id1)
+	local rune2 = ItemRack.GetRuneID(id2)
+	if rune1 ~= nil or rune2 ~= nil then
+		return rune1 == rune2
+	end
+	return true
+end
+
+function ItemRack.IsRuneOnlyIdentityChange(previousID,currentID)
+	if not previousID or previousID == 0 or previousID == false or not currentID or currentID == 0 then
+		return false
+	end
+	local previousFields = tostring(previousID):match(ItemRack.iSPatternItemFieldsFromIR)
+	local currentFields = tostring(currentID):match(ItemRack.iSPatternItemFieldsFromIR)
+	return previousFields and previousFields == currentFields
+	and ItemRack.GetRuneID(previousID) ~= ItemRack.GetRuneID(currentID)
+end
+
+function ItemRack.AdoptEquippedRuneIdentity(slot,currentID)
+	if ItemRack.EquippedSnapshot then
+		ItemRack.EquippedSnapshot[slot] = currentID
+	end
+	local function UpdateRecord(record)
+		if not record or not record.id then return end
+		local recordFields = tostring(record.id):match(ItemRack.iSPatternItemFieldsFromIR)
+		local currentFields = tostring(currentID):match(ItemRack.iSPatternItemFieldsFromIR)
+		if recordFields and recordFields == currentFields then
+			record.id = currentID
+		end
+	end
+	local equipRecord = ItemRack.EquipTimers and ItemRack.EquipTimers[slot]
+	UpdateRecord(equipRecord)
+	local savedRecord = ItemRackUser and ItemRackUser.EquipTimers and ItemRackUser.EquipTimers[slot]
+	if savedRecord ~= equipRecord then
+		UpdateRecord(savedRecord)
+	end
+end
+
+-- Re-engraving an equipped item changes its exact identity without moving the
+-- item. Update the AutoQueue snapshot (and any live equip-timer record) without
+-- manufacturing a false equipment transition or 30-second equip penalty.
+function ItemRack.RefreshEquippedRuneIdentity()
+	if ItemRack.QueueStateReady ~= true or type(ItemRack.EquippedSnapshot) ~= "table" then
+		return false
+	end
+
+	local changed = false
+	for slot=0,19 do
+		local state,currentID = ItemRack.GetEquippedSlotState(slot)
+		local previousID = ItemRack.EquippedSnapshot[slot]
+		if state == "resolved" and ItemRack.IsRuneOnlyIdentityChange(previousID,currentID) then
+			ItemRack.AdoptEquippedRuneIdentity(slot,currentID)
+			changed = true
+		elseif state == "unresolved" and ItemRack.ScheduleEquippedStateRetry then
+			ItemRack.ScheduleEquippedStateRetry()
+		end
+	end
+
+	if changed then
+		if ItemRack.UpdateCombatQueue then
+			ItemRack.UpdateCombatQueue()
+		end
+	end
+	return changed
+end
+
+-- Rune-aware saved entries require the same item instance and rune. Legacy
+-- entries without rune metadata retain ItemRack's historical base-ID fallback.
+function ItemRack.MatchesStoredItemID(expectedID,currentID)
+	if ItemRack.SameExactID(expectedID,currentID) then
+		return true
+	end
+	if ItemRack.HasRuneID(expectedID) then
+		return false
+	end
+	return ItemRack.SameID(expectedID,currentID)
 end
 
 -- takes an ItemRack-style ID and returns the name, texture, equipslot and quality
@@ -2106,6 +2632,7 @@ function ItemRack.FindItem(id,lock)
 	local locklist, getid, sameid = ItemRack.LockList, ItemRack.GetID, ItemRack.SameID --GetID will be used to look up the ItemRack-style ID for each item we pass over while we loop through the player's equipment/inventory
 
 	id = ItemRack.UpdateIRString(id) --we must update the incoming ItemRack-style ID to always match the player's current level no matter what, since all WoW ItemStrings contain the player's current level at the time of query, thus if we don't update the level in our OLD ID it won't match the CURRENT ID even if it is the EXACT same item. this simple update ensures that the exact item can be accurately located even if the player has dinged since last saving the set.
+	local allowBaseFallback = not ItemRack.HasRuneID(id)
 
 	-- look for item in known items cache first (this cache is frequently rebuilt, such as when clicking the buttons to change a set, AS WELL as when the actual set change takes place, it's a bit overkill in fact, but at least it is up to date -- in fact the entire design is stupid. if the cache is ALWAYS rebuilt EVERY TIME a set change takes place, then the MANUAL search code further down will never take place unless the item is COMPLETELY MISSING. likewise, it means that we're constantly rebuilding a cache of ItemRack-style IDs, and then doing the EXACT same job AGAIN further down, in the "search for..." sections at the bottom of this function... bad design and lots of redundancy, heh. a better design would be to just search through our cache twice, first to look for an exact match, and then to look for a baseID match.)
 	local knownID = ItemRack.KnownItems[id]
@@ -2141,20 +2668,22 @@ function ItemRack.FindItem(id,lock)
 			return i
 		end
 	end
-	-- search bags for base id matches
-	for i=4,0,-1 do
-		for j=1,GetContainerNumSlots(i) do
-			if sameid(id,getid(i,j)) and (not lock or not locklist[i][j]) then
-				if lock then locklist[i][j]=1 end
-				return nil,i,j
+	if allowBaseFallback then
+		-- search bags for base id matches
+		for i=4,0,-1 do
+			for j=1,GetContainerNumSlots(i) do
+				if sameid(id,getid(i,j)) and (not lock or not locklist[i][j]) then
+					if lock then locklist[i][j]=1 end
+					return nil,i,j
+				end
 			end
 		end
-	end
-	-- search worn equipment for base id matches
-	for i=0,19 do
-		if sameid(id,getid(i)) and (not lock or not locklist[-2][i]) then
-			if lock then locklist[-2][i]=1 end
-			return i
+		-- search worn equipment for base id matches
+		for i=0,19 do
+			if sameid(id,getid(i)) and (not lock or not locklist[-2][i]) then
+				if lock then locklist[-2][i]=1 end
+				return i
+			end
 		end
 	end
 	-- if bank is open, search bank
@@ -2170,13 +2699,14 @@ end
 -- Exact matches are preferred, with a base-ID fallback for migrated item data.
 function ItemRack.FindItemInBags(id)
 	id = ItemRack.UpdateIRString(id)
+	local allowBaseFallback = not ItemRack.HasRuneID(id)
 	local fallbackBag,fallbackSlot
 	for bag=4,0,-1 do
 		for slot=1,GetContainerNumSlots(bag) do
 			local bagID = ItemRack.GetID(bag,slot)
 			if id==bagID then
 				return bag,slot
-			elseif not fallbackBag and ItemRack.SameID(id,bagID) then
+			elseif allowBaseFallback and not fallbackBag and ItemRack.SameID(id,bagID) then
 				fallbackBag,fallbackSlot = bag,slot
 			end
 		end
@@ -2191,6 +2721,7 @@ function ItemRack.FindInBank(id,lock)
 	local locklist, getid, sameid = ItemRack.LockList, ItemRack.GetID, ItemRack.SameID --GetID will be used to look up the ItemRack-style ID for each item we pass over while we loop through the player's bank
 
 	id = ItemRack.UpdateIRString(id) --just as with the FindItem() patch above, we must ensure that the incoming ID to this function is brought up to date before we start scanning
+	local allowBaseFallback = not ItemRack.HasRuneID(id)
 
 	if ItemRack.BankOpen then -- only proceed if bank is open
 		for _,i in pairs(ItemRack.BankSlots) do -- try to find an exact match at first
@@ -2203,12 +2734,14 @@ function ItemRack.FindInBank(id,lock)
 				end
 			end
 		end
-		for _,i in pairs(ItemRack.BankSlots) do -- otherwise resort to a loose baseID match
-			if ItemRack.ValidBag(i) then
-				for j=1,GetContainerNumSlots(i) do
-					if sameid(id,getid(i,j)) and (not lock or not locklist[i][j]) then
-						if lock then locklist[i][j]=1 end
-						return i,j
+		if allowBaseFallback then
+			for _,i in pairs(ItemRack.BankSlots) do -- otherwise resort to a loose baseID match
+				if ItemRack.ValidBag(i) then
+					for j=1,GetContainerNumSlots(i) do
+						if sameid(id,getid(i,j)) and (not lock or not locklist[i][j]) then
+							if lock then locklist[i][j]=1 end
+							return i,j
+						end
 					end
 				end
 			end
@@ -2326,6 +2859,14 @@ end
 -- function happens .2 seconds after last ITEM_LOCK_CHANGE
 function ItemRack.LocksChanged()
 	ItemRack.UpdateButtonLocks()
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		if ItemRack.SetSwapping and not ItemRack.SetSwappingIsAutomatic then
+			ItemRack.LockChangedDuringSetSwap()
+			return
+		end
+		ItemRack.Debug("API", "LocksChanged observed during automatic-swap suspension; recovery deferred")
+		return
+	end
 	if ItemRack.SetSwapping then
 		ItemRack.LockChangedDuringSetSwap()
 	elseif ItemRackMenuFrame:IsVisible() and ItemRack.BankOpen and not ItemRack.AnythingLocked() then
@@ -2731,6 +3272,10 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 			else
 				_G["ItemRackMenu"..i.."Count"]:SetText(count>1 and count or "")
 			end
+			-- Apply this after Masque and the bank-only border. Bottom-left keeps
+			-- the rune fully visible instead of clipping it beneath the border.
+			local runeItemID = ItemRack.menuOpen<20 and ItemRack.Menu[i]~=0 and ItemRack.Menu[i] or nil
+			ItemRack.SetRuneIconOverlay(_G["ItemRackMenu"..i],runeItemID,_G["ItemRackMenu"..i.."Icon"],16,"BOTTOMLEFT")
 		end
 	end
 
@@ -2895,7 +3440,8 @@ function ItemRack.CreateMenuButton(idx,itemID)
 	else
 		_G["ItemRackMenu"..idx.."Icon"]:SetTexture(select(2,GetInventorySlotInfo(ItemRack.SlotInfo[ItemRack.menuOpen].name)))
 	end
-	return _G["ItemRackMenu"..idx]
+	button = _G["ItemRackMenu"..idx]
+	return button
 end
 
 -- takes an ItemRack-style ID, finds the best match in the player's inventory, and puts its ItemLink to the chat editbox.
@@ -3136,7 +3682,7 @@ function ItemRack.EquipItemByID(id,slot,isAutoQueue,sourceBag,sourceSlot)
 		
 		if id~=0 then -- not an empty slot
 			local b,s
-			if sourceBag and sourceSlot and ItemRack.SameID(id,ItemRack.GetID(sourceBag,sourceSlot)) then
+			if sourceBag and sourceSlot and ItemRack.MatchesStoredItemID(id,ItemRack.GetID(sourceBag,sourceSlot)) then
 				b,s = sourceBag,sourceSlot
 			elseif isAutoQueue and ItemRack.FindItemInBags then
 				b,s = ItemRack.FindItemInBags(id)
@@ -3651,11 +4197,11 @@ function ItemRack.ClearCombatQueueMetadata(slot)
 end
 
 function ItemRack.AddToCombatQueue(slot,id,isAutoQueue)
-	-- Skip if the item is already equipped (prevents oscillation from ID format mismatches
-	-- where strict ~= in EquipSet sees a difference but SameID correctly matches)
+	-- Skip if the saved item is already equipped. Legacy entries can use the
+	-- historical base-ID fallback; rune-aware entries require their saved rune.
 	if id and id ~= 0 then
 		local equippedState, equippedID = ItemRack.GetEquippedSlotState(slot)
-		if equippedState == "resolved" and ItemRack.SameID(equippedID, id) then
+		if equippedState == "resolved" and ItemRack.MatchesStoredItemID(id, equippedID) then
 			return
 		end
 	end
@@ -3696,7 +4242,7 @@ function ItemRack.UpdateCombatQueue()
 	for slot, queuedID in pairs(ItemRack.CombatQueue) do
 		if queuedID and queuedID ~= 0 then
 			local equippedState, equippedID = ItemRack.GetEquippedSlotState(slot)
-			if equippedState == "resolved" and ItemRack.SameID(equippedID, queuedID) then
+			if equippedState == "resolved" and ItemRack.MatchesStoredItemID(queuedID, equippedID) then
 				ItemRack.CombatQueue[slot] = nil
 				ItemRack.ClearCombatQueueMetadata(slot)
 			end
@@ -4034,7 +4580,7 @@ function ItemRack.SetTooltip(self,setname)
 							else
 								itemColor = "FF4C80FF"
 							end
-						elseif itemName~="(empty)" and ItemRackSettings.TooltipColorUnEquipped=="ON" and not ItemRack.SameExactID(ItemRack.GetID(i), set[i]) then
+						elseif itemName~="(empty)" and ItemRackSettings.TooltipColorUnEquipped=="ON" and not ItemRack.MatchesStoredItemID(set[i], ItemRack.GetID(i)) then
 							itemColor = "FFFF8C00"
 						else
 							itemColor = "FFAAAAAA"
@@ -4150,8 +4696,8 @@ function PaperDollItemSlotButton_OnEnter(self)
 	-- handlers and causes ADDON_ACTION_BLOCKED errors on protected calls like SetShown().
 	ItemRack.oldPaperDollItemSlotButton_OnEnter(self)
 	
-	-- AFTER the secure handler has finished (including any hooksecurefunc hooks like
-	-- ListSetsHavingItem which call tooltip:Show()), reposition and reveal the tooltip.
+	-- AFTER the secure handler and its post-hooks have finished, reposition and
+	-- reveal the tooltip without invoking protected tooltip lifecycle methods.
 	if isMenuOpen and slot then
 		local desiredOwner, desiredAnchor
 		
@@ -4187,7 +4733,7 @@ function PaperDollItemSlotButton_OnEnter(self)
 			end
 		end
 		
-		-- Store for re-application after tooltip:Show() in hooks
+		-- Store the desired anchor for asynchronous tooltip refreshes.
 		ItemRack.pendingTooltipAnchor = desiredAnchor
 		ItemRack.pendingTooltipOwner = desiredOwner
 		
@@ -4200,8 +4746,8 @@ function PaperDollItemSlotButton_OnEnter(self)
 	end
 end
 
--- Apply the stored tooltip anchor. Called after PaperDollItemSlotButton_OnEnter
--- and again after ListSetsHavingItem's tooltip:Show() which re-snaps the position.
+-- Apply the stored tooltip anchor after PaperDollItemSlotButton_OnEnter and
+-- asynchronous tooltip refreshes that may restore Blizzard's default anchor.
 -- Also handles wide tooltips that would overlap the menu by falling back to
 -- positioning below or above the menu frame.
 function ItemRack.ApplyTooltipAnchor()
@@ -4498,6 +5044,36 @@ function ItemRack.ToggleHidden(id)
 end
 
 --[[ Key bindings ]]
+function ItemRack.GetSetBindingButtonName(setname)
+	return "ItemRack"..UnitName("player")..GetRealmName()..setname
+end
+
+function ItemRack.SaveCurrentBindings()
+	local bindingSet = GetCurrentBindingSet()
+	if bindingSet then
+		return SaveBindings(bindingSet)
+	end
+end
+
+function ItemRack.ClearBindingAction(action,persist)
+	if InCombatLockdown() or not action then
+		return false,false
+	end
+	local changed = false
+	local key = GetBindingKey(action)
+	while key do
+		if not SetBinding(key,nil) then
+			return false,changed
+		end
+		changed = true
+		key = GetBindingKey(action)
+	end
+	if changed and persist then
+		ItemRack.SaveCurrentBindings()
+	end
+	return true,changed
+end
+
 function ItemRack.SetSetBindings()
 	if InCombatLockdown() then
 		-- Queue to run after combat ends
@@ -4505,18 +5081,20 @@ function ItemRack.SetSetBindings()
 		table.insert(ItemRack.RunAfterCombat, "SetSetBindings")
 		return
 	end
-	local buttonName,button
 	local bindingsChanged = false
-	for i in pairs(ItemRackUser.Sets) do
-		if ItemRackUser.Sets[i].key then
-			buttonName = "ItemRack"..UnitName("player")..GetRealmName()..i
-			button = _G[buttonName] or CreateFrame("Button",buttonName,nil,"SecureActionButtonTemplate")
+	for setname,set in pairs(ItemRackUser.Sets) do
+		local buttonName = ItemRack.GetSetBindingButtonName(setname)
+		local action = "CLICK "..buttonName..":LeftButton"
+		local boundKey = GetBindingKey(action)
+		local savedKey = set.key
+		if boundKey or (savedKey and savedKey~="") then
+			local button = _G[buttonName] or CreateFrame("Button",buttonName,nil,"SecureActionButtonTemplate")
 
 			button:SetAttribute("type","macro")
 			button:SetAttribute("useOnKeyDown", false)
 			local macrotext = ""
 			for slot = 16, 18 do
-				local itemID = ItemRackUser.Sets[i].equip[slot]
+				local itemID = set.equip and set.equip[slot]
 				if itemID and itemID ~= 0 then
 					local itemStr = tostring(itemID)
 					local baseID = string.match(itemStr, "^(%-?%d+)")
@@ -4534,20 +5112,27 @@ function ItemRack.SetSetBindings()
 			end
 			button:SetAttribute("macrotext",macrotext)
 			if macrotext ~= "" then
-				ItemRack.Debug("API", "SetSetBindings compiled macro for " .. i .. ": " .. string.gsub(macrotext, "\n", " | "))
+				ItemRack.Debug("API", "SetSetBindings compiled macro for " .. setname .. ": " .. string.gsub(macrotext, "\n", " | "))
 			end
-			button:SetScript("PostClick", function() ItemRack.RunSetBinding(i) end)
-			
-			local key = ItemRackUser.Sets[i].key
-			
-			-- Only import key on first pass if there's no standard binding already. Overwrites game defaults if imported.
-			if not ItemRack.BindingsInitialized then
-				if not GetBindingKey("CLICK "..buttonName..":LeftButton") then
-					SetBindingClick(key, buttonName)
-					bindingsChanged = true
+			local setNameForClick = setname
+			button:SetScript("PostClick", function() ItemRack.RunSetBinding(setNameForClick) end)
+
+			if boundKey then
+				-- The active Blizzard binding table is authoritative.
+				set.key = boundKey
+			elseif savedKey and savedKey~="" then
+				local existingAction = GetBindingAction(savedKey)
+				if existingAction=="" or existingAction==action then
+					if SetBindingClick(savedKey,buttonName) then
+						bindingsChanged = true
+					else
+						set.key = nil
+					end
+				else
+					-- Never let a stale saved set key silently replace a current game binding.
+					ItemRack.Debug("API", "SetSetBindings left "..setname.." unbound because "..savedKey.." belongs to "..existingAction)
+					set.key = nil
 				end
-			else
-				SetBindingClick(key, buttonName)
 			end
 		end
 	end
@@ -4556,10 +5141,7 @@ function ItemRack.SetSetBindings()
 	
 	-- Batch-save binding changes once at the end rather than per-key
 	if bindingsChanged then
-		local bindingSet = GetCurrentBindingSet()
-		if bindingSet then
-			SaveBindings(bindingSet)
-		end
+		ItemRack.SaveCurrentBindings()
 	end
 end
 
@@ -4801,6 +5383,13 @@ function ItemRack.SlashHandler(arg1)
 			dumpText = dumpText .. "ItemRackMenuFrame:IsVisible() = " .. tostring(ItemRackMenuFrame and ItemRackMenuFrame:IsVisible()) .. "\n"
 			dumpText = dumpText .. "ItemRack.CombatQueue = " .. ItemRackLogFrame.Serialize(ItemRack.CombatQueue) .. "\n"
 			dumpText = dumpText .. "ItemRack.SetSwapping = " .. tostring(ItemRack.SetSwapping) .. "\n"
+			dumpText = dumpText .. "ItemRack.SetSwappingIsAutomatic = " .. tostring(ItemRack.SetSwappingIsAutomatic) .. "\n"
+			dumpText = dumpText .. "ItemRack.WorldTransitioning = " .. tostring(ItemRack.WorldTransitioning) .. "\n"
+			dumpText = dumpText .. "ItemRack.SummonPending = " .. tostring(ItemRack.SummonPending) .. "\n"
+			dumpText = dumpText .. "ItemRack.AutomaticSwapResumeAt = " .. tostring(ItemRack.AutomaticSwapResumeAt) .. "\n"
+			dumpText = dumpText .. "ItemRack.PendingSpecSet = " .. ItemRackLogFrame.Serialize(ItemRack.PendingSpecSet) .. "\n"
+			dumpText = dumpText .. "ItemRack.LockedReason = " .. tostring(ItemRack.GetLockedReason and ItemRack.GetLockedReason() or "Unavailable") .. "\n"
+			dumpText = dumpText .. "ItemRack.SetsWaitingStartedAt = " .. tostring(ItemRack.SetsWaitingStartedAt) .. "\n"
 			dumpText = dumpText .. "ItemRack.DebugAll = " .. tostring(ItemRack.DebugAll) .. "\n"
 			dumpText = dumpText .. "ItemRack.DebugChat = " .. tostring(ItemRack.DebugChat) .. "\n"
 			dumpText = dumpText .. "ItemRack.DebugTags = " .. ItemRackLogFrame.Serialize(ItemRack.DebugTags) .. "\n"

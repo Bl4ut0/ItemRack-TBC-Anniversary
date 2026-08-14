@@ -460,6 +460,7 @@ end
 function ItemRack.SpinDownEvent(eventName)
 	if not eventName then return end
 	local eventData = ItemRackEvents and ItemRackEvents[eventName]
+	local wasActive = eventData and eventData.Active
 	
 	ItemRack.Debug("Events", "SpinDownEvent requested for:", eventName)
 	
@@ -494,9 +495,9 @@ function ItemRack.SpinDownEvent(eventName)
 			end
 			ItemRack.ClearScriptEventState(eventName)
 		end
-	elseif eventData and eventData.Unequip then
+	elseif wasActive and eventData and eventData.Unequip then
 		local setname = ItemRack.GetEventSet(eventName)
-		if setname and ItemRack.IsSetEquipped(setname) then
+		if setname and ItemRackUser.CurrentSet ~= setname and ItemRack.IsSetEquipped(setname) then
 			ItemRack.UnequipSet(setname)
 		end
 	end
@@ -513,7 +514,8 @@ function ItemRack.SpinUpEvent(eventName)
 	if not eventName then return end
 	ItemRack.Debug("Events", "SpinUpEvent requested for:", eventName)
 	if ItemRackUser.EnableEvents ~= "ON" then return end
-	ItemRack.RunAllEvents("Event enabled: " .. eventName)
+	local eventData = ItemRackEvents and ItemRackEvents[eventName]
+	ItemRack.RunAllEvents("Event enabled: " .. eventName, eventData and eventData.Type == "Specialization")
 end
 
 function ItemRack.SpinDownAllEvents()
@@ -564,7 +566,7 @@ function ItemRack.ToggleEvents(self)
 	if ItemRackUser.EnableEvents == "OFF" then
 		ItemRack.SpinDownAllEvents()
 	else
-		ItemRack.RunAllEvents("Global events enabled")
+		ItemRack.RunAllEvents("Global events enabled", true)
 	end
 	if not next(ItemRackUser.Events.Enabled) then
 		-- user is turning on events with no events enabled, go to events frame
@@ -729,6 +731,10 @@ end
 --[[ Event processing ]]
 
 function ItemRack.ProcessingFrameOnEvent(self,event,...)
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		ItemRack.Debug("Events", "Event processing deferred while automatic swaps are suspended:", event)
+		return
+	end
 	local getSlots = C_Container and C_Container.GetContainerNumSlots or _G.GetContainerNumSlots
 	local numSlots = getSlots and getSlots(0)
 	if not numSlots or numSlots == 0 then
@@ -811,18 +817,47 @@ end
 
 --[[ Event processing ]]
 
+local druidStanceNames = {
+	[1] = { "Bear Form", "Dire Bear Form" },
+	[2] = { "Aquatic Form" },
+	[3] = { "Cat Form" },
+	[4] = { "Travel Form" },
+}
+
 function ItemRack.GetStanceNumber(name)
-	if tonumber(name) then
-		return name
-	end
-	for i=1,GetNumShapeshiftForms() do
-		if name==select(2,GetShapeshiftFormInfo(i)) then
+	local numForms = GetNumShapeshiftForms()
+	if not numForms or numForms == 0 then return end
+
+	-- Check exact form name match against current stance bar
+	for i = 1, numForms do
+		local _, formName = GetShapeshiftFormInfo(i)
+		if name == formName then
 			return i
 		end
+	end
+
+	-- Fallback for numeric stance IDs (e.g. default Druid stance events with Stance = 1, 2, 3, 4)
+	local stanceNum = tonumber(name)
+	if stanceNum then
+		local _, playerClass = UnitClass("player")
+		if playerClass == "DRUID" and druidStanceNames[stanceNum] then
+			for i = 1, numForms do
+				local _, formName = GetShapeshiftFormInfo(i)
+				for _, targetName in ipairs(druidStanceNames[stanceNum]) do
+					if formName == targetName then
+						return i
+					end
+				end
+			end
+		end
+		return stanceNum
 	end
 end
 
 function ItemRack.ProcessStanceEvent()
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		return
+	end
 	local enabled = ItemRackUser.Events.Enabled
 	local events = ItemRackEvents
 
@@ -1112,6 +1147,10 @@ local function getZoneMatch(eventData, currentZone, currentSubZone, instanceType
 end
 
 function ItemRack.ProcessZoneEvent(reason)
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		ItemRack.Debug("Events", "ProcessZoneEvent deferred while automatic swaps are suspended:", reason or "")
+		return false
+	end
 	local enabled = ItemRackUser.Events.Enabled
 	local events = ItemRackEvents
 
@@ -1342,7 +1381,10 @@ function ItemRack.ProcessZoneEvent(reason)
 	return true
 end
 
-function ItemRack.ProcessSpecializationEvent()
+function ItemRack.ProcessSpecializationEvent(force)
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		return
+	end
 	local enabled = ItemRackUser.Events.Enabled
 	local events = ItemRackEvents
 	
@@ -1354,28 +1396,54 @@ function ItemRack.ProcessSpecializationEvent()
 	if not currentSpec or currentSpec == 0 then return end
 	
 	-- Only proceed if the spec index has actually changed
-	if ItemRack.LastLastSpec == currentSpec then return end
+	if not force and ItemRack.LastLastSpec == currentSpec then return end
 	ItemRack.LastLastSpec = currentSpec
+
+	local preserveRequestedSet
+	local pendingSpecSet = ItemRack.PendingSpecSet
+	if pendingSpecSet then
+		local expired = pendingSpecSet.expiresAt and GetTime() > pendingSpecSet.expiresAt
+		local requestedSetExists = pendingSpecSet.setname and ItemRackUser.Sets[pendingSpecSet.setname]
+		if not expired and requestedSetExists and pendingSpecSet.spec == currentSpec and ItemRackUser.CurrentSet == pendingSpecSet.setname then
+			preserveRequestedSet = pendingSpecSet.setname
+			ItemRack.Debug("Events", "Preserving associated set through spec change:", preserveRequestedSet)
+		end
+		-- A spec transition consumes the request whether it reached the expected
+		-- destination or the player changed course before the cast completed.
+		ItemRack.PendingSpecSet = nil
+	end
 	
-	local eventToEquip, eventToUnequip, setname
+	local eventToEquip, eventToUnequip, eventToAdopt, setname
 	
 	for eventName in pairs(enabled) do
-		if events[eventName].Type=="Specialization" and events[eventName].Spec then
+		local eventData = events[eventName]
+		if eventData and eventData.Type=="Specialization" and eventData.Spec then
 			setname = ItemRackUser.Events.Set[eventName]
 			-- Always equip the set for the current spec
-			if events[eventName].Spec == currentSpec then
-				if not events[eventName].Active then
+			if eventData.Spec == currentSpec then
+				if preserveRequestedSet then
+					-- If this event already maps to the requested set, adopt it into
+					-- the event stack without equipping it a second time. Otherwise
+					-- leave the destination event inactive so its default set cannot
+					-- replace another explicitly selected set for the same spec.
+					if setname == preserveRequestedSet then
+						eventToAdopt = eventName
+						eventData.Active = true
+					else
+						eventData.Active = nil
+					end
+				elseif not eventData.Active then
 					eventToEquip = eventName
-					events[eventName].Active = true
+					eventData.Active = true
 				end
 			-- Unequip sets for other specs if they're equipped
-			elseif events[eventName].Spec ~= currentSpec then
-				if events[eventName].Active then
-					if events[eventName].Unequip then
+			elseif eventData.Spec ~= currentSpec then
+				if eventData.Active then
+					if eventData.Unequip then
 						eventToUnequip = eventName
 					end
-					events[eventName].Active = nil
-				elseif events[eventName].Unequip and ItemRack.IsSetEquipped(setname) then
+					eventData.Active = nil
+				elseif eventData.Unequip and ItemRack.IsSetEquipped(setname) then
 					-- Fallback for consistency: only trigger if the user didn't manually equip this set
 					if ItemRackUser.CurrentSet ~= setname then
 						eventToUnequip = eventName
@@ -1390,6 +1458,26 @@ function ItemRack.ProcessSpecializationEvent()
 	if eventToUnequip and eventToUnequip ~= eventToEquip then
 		ItemRack.PopEvent(eventToUnequip)
 		unequipTriggered = true
+	end
+	if preserveRequestedSet then
+		-- Remove any stale destination-spec layer before optionally adopting the
+		-- event whose mapping already matches the requested set.
+		for i = #ItemRackUser.EventStack, 1, -1 do
+			local stackedEvent = ItemRackUser.EventStack[i]
+			local stackedData = events[stackedEvent]
+			if stackedData and stackedData.Type=="Specialization" and stackedData.Spec==currentSpec then
+				table.remove(ItemRackUser.EventStack,i)
+			end
+		end
+		if eventToAdopt then
+			table.insert(ItemRackUser.EventStack,eventToAdopt)
+			ItemRack.Debug("Events", "Adopted requested set into specialization event:", eventToAdopt, preserveRequestedSet)
+		else
+			ItemRack.Debug("Events", "Suppressed destination specialization default to preserve:", preserveRequestedSet)
+		end
+		ItemRack.ScheduleDualWieldRetry(preserveRequestedSet)
+		ItemRack.UpdateCurrentSet()
+		return
 	end
 	if eventToEquip then
 		local setToEquip = ItemRackUser.Events.Set[eventToEquip]
@@ -1454,7 +1542,7 @@ function ItemRack.RetryDualWieldWeapons(setname, expectedSpec)
 	
 	-- If offhand is defined but not correctly equipped, retry using EquipItemByID
 	-- This doesn't use temporary sets, so it won't pollute the SetsWaiting queue
-	if intendedOffhand and intendedOffhand ~= 0 and not ItemRack.SameID(currentOffhand, intendedOffhand) then
+	if intendedOffhand and intendedOffhand ~= 0 and not ItemRack.MatchesStoredItemID(intendedOffhand, currentOffhand) then
 		ItemRack.Print("Dual-wield detected, retrying offhand weapon...")
 		
 		-- Use EquipItemByID which handles combat queue properly
@@ -1464,7 +1552,7 @@ function ItemRack.RetryDualWieldWeapons(setname, expectedSpec)
 		-- Also retry mainhand if needed
 		local currentMainhand = ItemRack.GetID(16)
 		local intendedMainhand = set[16]
-		if intendedMainhand and intendedMainhand ~= 0 and not ItemRack.SameID(currentMainhand, intendedMainhand) then
+		if intendedMainhand and intendedMainhand ~= 0 and not ItemRack.MatchesStoredItemID(intendedMainhand, currentMainhand) then
 			ItemRack.EquipItemByID(intendedMainhand, 16)
 		end
 	end
@@ -1472,7 +1560,31 @@ end
 
 --here we observe mounted status and raise an event should it change. UNIT_AURA event seems unreliable for this
 local _lastStateMounted = IsMounted() and not UnitOnTaxi("player")
+local mountStateChangedAt = GetTime()
+local mountEquipDelay = 0.75
+local mountEquipDelayPending
+
+function ItemRack.ResetMountEventStability()
+	_lastStateMounted = IsMounted() and not UnitOnTaxi("player")
+	mountStateChangedAt = GetTime()
+end
+
+local function scheduleMountEquipCheck()
+	if mountEquipDelayPending then return end
+	mountEquipDelayPending = true
+	local remaining = math.max(mountEquipDelay - (GetTime() - mountStateChangedAt), 0.05)
+	C_Timer.After(remaining, function()
+		mountEquipDelayPending = nil
+		if IsMounted() and not UnitOnTaxi("player") then
+			ItemRack.ProcessBuffEvent()
+		end
+	end)
+end
+
 function ItemRack.CheckForMountedEvents()
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		return
+	end
 	local getSlots = C_Container and C_Container.GetContainerNumSlots or _G.GetContainerNumSlots
 	local numSlots = getSlots and getSlots(0)
 	if not numSlots or numSlots == 0 then
@@ -1490,8 +1602,16 @@ function ItemRack.CheckForMountedEvents()
 	local isPlayerMounted = IsMounted() and not UnitOnTaxi("player")
 	if isPlayerMounted ~= _lastStateMounted or _refreshMountState == 1 then
 		_lastStateMounted = isPlayerMounted
+		mountStateChangedAt = GetTime()
 		_refreshMountState = 0
-		ItemRack.ProcessBuffEvent()
+		if isPlayerMounted then
+			-- Let the mount and movement state stabilize before issuing item API
+			-- calls. This avoids starting a trinket swap in the same instant that
+			-- the player flies through an instance portal after a summon.
+			scheduleMountEquipCheck()
+		else
+			ItemRack.ProcessBuffEvent()
+		end
 	elseif _refreshMountState > 1 then
 		_refreshMountState = _refreshMountState - 1
 	end
@@ -1501,6 +1621,10 @@ end
 -- If they started moving again within that window, PendingOnMovementUnequip was cleared
 -- and this function does nothing.
 function ItemRack.ProcessOnMovementUnequip()
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		ItemRack.PendingOnMovementUnequip = nil
+		return
+	end
 	local eventName = ItemRack.PendingOnMovementUnequip
 	ItemRack.PendingOnMovementUnequip = nil
 	if not eventName then return end
@@ -1520,6 +1644,19 @@ function ItemRack.ProcessOnMovementUnequip()
 	end
 end
 function ItemRack.ProcessBuffEvent()
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		ItemRack.Debug("Events", "ProcessBuffEvent deferred while automatic swaps are suspended")
+		return
+	end
+	local currentlyMounted = IsMounted() and not UnitOnTaxi("player")
+	if currentlyMounted ~= _lastStateMounted then
+		_lastStateMounted = currentlyMounted
+		mountStateChangedAt = GetTime()
+	end
+	if currentlyMounted and (GetTime() - mountStateChangedAt) < mountEquipDelay then
+		scheduleMountEquipCheck()
+		return
+	end
 	if ItemRack.MountZoneTransitionDeferred then
 		ItemRack.Debug("Events", "ProcessBuffEvent paused while mount/zone transition is deferred")
 		return
