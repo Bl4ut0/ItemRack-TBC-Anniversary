@@ -1,7 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const events = fs.readFileSync('ItemRack/ItemRackEvents.lua', 'utf8');
+const events = fs.readFileSync('ItemRack/ItemRackEvents.lua', 'utf8').replace(/\r\n/g, '\n');
 
 function between(source, start, end) {
   const startIndex = source.indexOf(start);
