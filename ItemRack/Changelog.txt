@@ -1,11 +1,10 @@
 __ Development __
 
+__ New in 4.43 - By Bl4ut0 __
 - Captures Script event triggers during transition holds and replays them once after addon readiness, while preventing specialization events from claiming or later removing manually equipped matching sets during live evaluation or startup reconstruction.
 - Gives rune-specific queue entries deterministic precedence over migrated base-item wildcards, distinguishes physical rune-copy swaps from slot-scoped explicit re-engraving under either inventory-event order, and preserves saved item fields in tooltip membership.
 - Keeps the newest manual set request authoritative over duplicate automatic work and pauses the lock watchdog during casting or ordinary multi-pass swaps so only persistent inventory locks can time out.
 - Splits stable delivery into a locally installed production candidate and an approved public finalization, with exact committed/tagged-tree packages, verified manifests, and a hard failure when no local client target exists.
-
-__ New in 4.43-beta4 - By Bl4ut0 __
 - Fixed the keybinding overwrite confirmation Lua error by passing dynamic prompt text through Blizzard's formatted-text argument path. Set and event names containing percent signs are now safe, and a failed popup no longer leaves the binding controls disabled.
 - Hardened the complete set and slot hotkey lifecycle: explicit unbinds are saved, rejected replacements restore both prior keys, secondary keys and extended mouse buttons are recognized, screenshot bindings are protected, and all ItemRack click bindings consistently activate on key release.
 - Removed persistent set bindings and stale secure callbacks when a bound set is deleted. Startup reconciliation no longer overwrites unrelated game bindings, and generated set-button callbacks retain the correct set name.
@@ -18,8 +17,6 @@ __ New in 4.43-beta4 - By Bl4ut0 __
 - Prevented disabled events from unwinding manually equipped matching sets and forced specialization evaluation when same-spec events or the global event system are re-enabled.
 - Reset the lock watchdog for each waiting request, retained the newest manual request for one bounded retry, and reconciled the displayed set state after a partial-swap timeout.
 - Unified beta and stable release preparation with complete validation, beta-note consolidation, checksummed exact-source packages, generated GitHub/CurseForge copy, and exact-package local testing.
-
-__ New in 4.43-beta3 - By Bl4ut0 __
 - Fixed a major regression in MoveItem where container-to-inventory and inventory-to-container swaps failed to place displaced items into source slots, causing occupied slot swaps to abort with AbortSwap=4, leave orphaned bag slot reservations in LockList, and freeze stance/set swaps into SetsWaiting. Reported by Thoare on CurseForge.
 - Ensured ItemRack.ClearLockList is invoked whenever IterateSwapList aborts early, preventing failed or interrupted swaps from locking bag slots in ItemRack's cache.
 - Enhanced GetStanceNumber to resolve Druid stance names (Bear, Cat, Aquatic, Travel, Moonkin, Tree of Life) dynamically against GetShapeshiftFormInfo, preventing stance bar index shifts on lower-level or specialized Druids from breaking stance event evaluation.
@@ -28,16 +25,12 @@ __ New in 4.43-beta3 - By Bl4ut0 __
 - Made saved sets, AutoQueue entries, combat-queue completion, bank lookup, and burn-on-use tracking rune-aware so identical gear carrying different runes is matched and swapped by its saved rune. Legacy entries without rune metadata retain the existing base-item fallback for Era and TBC compatibility.
 - Added a SoD-only "Show SoD rune icons" option synchronized with Blizzard's native always-show setting. ItemRack now marks engraved items in flyout menus, quick-access buttons, the set editor, and AutoQueue rows, including cached learned-rune icons for saved bank entries.
 - Kept same-item AutoQueue entries with different runes distinct when the Queue options are opened or rebuilt; legacy non-rune entries retain base-item de-duplication.
-
-__ New in 4.43-beta2 - By Bl4ut0 __
 - AutoQueue now skips queue candidates that exist only in an equipped paired ring/trinket slot and continues to the next ready item carried in bags; additional matching bag copies remain eligible. Reported by Bloodasha on CurseForge.
 - Cleared the inherited ItemRackButton20Count action-button region so numeric counts can no longer cover the current set name. Reported by smackadack on CurseForge.
 - Restored the set button's Classic Era right-click behavior: with "Menu on right click" enabled, right-click toggles the gear-set list, while Alt+Right-click still opens the Sets options tab. Reported by gizmo22 on CurseForge.
 - Fixed bound set and weapon swaps being ignored during combat on Classic Era/Season of Discovery 1.15.9 and TBC Anniversary 2.5.6 by explicitly configuring secure set-binding buttons for key-up activation (PR #20, contributed by Hamdor).
 - Changed the AutoQueue diagnostic flight recorder to collect entries only while Queue diagnostics or master debugging is enabled, and to release its buffer when tracing is disabled.
 - Initialized all supported debug tags explicitly and added diagnostic tracking markers so per-tag toggles and support dumps remain consistent.
-
-__ New in 4.43-beta1 - By Bl4ut0 __
 - Gated queue evaluation behind ItemRack.QueueStateReady to prevent queue checks during loading screens or before item data is resolved.
 - Implemented TryInitializeQueueState to safely scan all 20 equipment slots via native GetInventoryItemID, deferring initialization if any occupied slot has unresolved item data (GetID == 0).
 - Validated persisted EquipTimers on UI reload/login against table schemas, numeric timestamps, exact item IDs, and the 0-30s elapsed time window.
