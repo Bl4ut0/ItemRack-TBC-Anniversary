@@ -46,8 +46,35 @@ function ItemRack.ClearManualQueueChoice(slot)
 	end
 end
 
+-- A legacy queue entry has no rune suffix and therefore resolves any carried
+-- copy with the same base ID. That fallback remains necessary for profiles
+-- created before rune-aware IDs existed, but it becomes ambiguous once the
+-- active part of the same queue contains an explicit rune entry for that item.
+function ItemRack.QueueHasExplicitRuneEntry(list,baseID)
+	if not list or not baseID or baseID == 0 then return false end
+	baseID = tostring(baseID)
+	for i=1,#list do
+		local entryID = list[i].id
+		if entryID == 0 then break end
+		if ItemRack.HasRuneID(entryID)
+		and tostring(ItemRack.GetIRString(entryID,true)) == baseID then
+			return true
+		end
+	end
+	return false
+end
+
+function ItemRack.IsQueueEntryUnambiguous(list,index)
+	local entry = list and list[index]
+	if not entry or not entry.id or entry.id == 0 then return false end
+	if ItemRack.HasRuneID(entry.id) then return true end
+	local baseID = ItemRack.GetIRString(entry.id,true)
+	return not ItemRack.QueueHasExplicitRuneEntry(list,baseID)
+end
+
 -- Resolve exact rune/item identity before considering a legacy base-ID
--- wildcard, regardless of the entries' order in the queue.
+-- wildcard, regardless of the entries' order in the queue. Never use an
+-- ambiguous wildcard when this queue has explicit rune identities available.
 function ItemRack.FindQueueEntryIndex(list,currentID)
 	if not list or not currentID or currentID == 0 then return nil end
 	local legacyFallback
@@ -56,7 +83,9 @@ function ItemRack.FindQueueEntryIndex(list,currentID)
 		if entryID == 0 then break end
 		if ItemRack.SameExactID(entryID,currentID) then
 			return i
-		elseif not legacyFallback and not ItemRack.HasRuneID(entryID) and ItemRack.SameID(entryID,currentID) then
+		elseif not legacyFallback and not ItemRack.HasRuneID(entryID)
+		and ItemRack.IsQueueEntryUnambiguous(list,i)
+		and ItemRack.SameID(entryID,currentID) then
 			legacyFallback = i
 		end
 	end
@@ -66,6 +95,11 @@ end
 function ItemRack.IsManualQueueChoice(slot, exactID, baseID)
 	local choice = ItemRack.ManualQueueChoice and ItemRack.ManualQueueChoice[slot]
 	if not choice then
+		return false
+	end
+	local list = ItemRack.GetQueues()[slot]
+	local choiceIndex = ItemRack.FindQueueEntryIndex(list,choice)
+	if not choiceIndex or not ItemRack.IsQueueEntryUnambiguous(list,choiceIndex) then
 		return false
 	end
 	return ItemRack.MatchesStoredItemID(choice, exactID)
@@ -166,34 +200,16 @@ function ItemRack.GetNextItemInQueue(slot)
 
 	local exactID = ItemRack.GetID(slot)
 	
-	-- simple loop to find current item in list and return next valid one
-	local idx = 0
-	-- First pass: Try to find an exact match (respects enchants, gems for multiple identical items)
-	for i=1,#(list) do
-		if list[i].id ~= 0 and ItemRack.SameExactID(list[i].id, exactID) then
-			idx = i
-			break
-		end
-	end
-	
-	-- Second pass: Fallback to base ID match
-	if idx == 0 then
-		for i=1,#(list) do
-			if list[i].id ~= 0 then
-				local listBaseID = string.match(list[i].id,"(%d+)")
-				if not ItemRack.HasRuneID(list[i].id) and listBaseID == baseID then
-					idx = i
-					break
-				end
-			end
-		end
-	end
+	-- Locate the exact rune identity first. A legacy base-ID entry is used only
+	-- when this queue has no explicit rune entry for the same item.
+	local idx = ItemRack.FindQueueEntryIndex(list,exactID) or 0
 
 	-- Look forward from current item
 	for i=idx+1,#(list) do
 		if list[i].id~=0 then -- 0 is stop marker
-			local candidate = string.match(list[i].id,"(%d+)")
-			if candidate and ItemRack.FindItemInBags(list[i].id) then
+			local candidate = string.match(tostring(list[i].id),"(%d+)")
+			if candidate and ItemRack.IsQueueEntryUnambiguous(list,i)
+			and ItemRack.FindItemInBags(list[i].id) then
 				return list[i].id
 			end
 		else
@@ -204,8 +220,9 @@ function ItemRack.GetNextItemInQueue(slot)
 	-- Wrap around to start if nothing found after current
 	for i=1,idx-1 do
 		if list[i].id~=0 then
-			local candidate = string.match(list[i].id,"(%d+)")
-			if candidate and ItemRack.FindItemInBags(list[i].id) then
+			local candidate = string.match(tostring(list[i].id),"(%d+)")
+			if candidate and ItemRack.IsQueueEntryUnambiguous(list,i)
+			and ItemRack.FindItemInBags(list[i].id) then
 				return list[i].id
 			end
 		end
@@ -246,34 +263,19 @@ function ItemRack.ManualQueueAdvance(slot)
 	local equippedBaseID = ItemRack.GetIRString(equippedExactID, true)
 	ItemRack.Debug("Queue", "ManualAdvance slot", slot, "equipped:", equippedBaseID)
 	
-	-- Find current item in queue (exact match first)
-	local currentIdx = 0
-	for i = 1, #list do
-		if list[i].id ~= 0 then
-			if ItemRack.SameExactID(list[i].id, equippedExactID) then
-				currentIdx = i
-				break
-			end
-		end
-	end
-	
-	-- If exact match fails, fallback to base ID match
-	if currentIdx == 0 then
-		for i = 1, #list do
-			if list[i].id ~= 0 then
-				local queueBaseID = string.match(tostring(list[i].id), "^(%d+)")
-				if not ItemRack.HasRuneID(list[i].id) and queueBaseID == equippedBaseID then
-					currentIdx = i
-					break
-				end
-			end
-		end
-	end
+	-- Find current item in queue (exact rune identity first, with a legacy
+	-- fallback only when no explicit rune entry makes that fallback ambiguous).
+	local currentIdx = ItemRack.FindQueueEntryIndex(list,equippedExactID) or 0
 	
 	ItemRack.Debug("Queue", "ManualAdvance currentIdx:", currentIdx)
 	
 	-- Helper to attempt swap
-	local function tryEquip(itemID)
+	local function tryEquip(index)
+		if not ItemRack.IsQueueEntryUnambiguous(list,index) then
+			ItemRack.Debug("Queue", "ManualAdvance: skipping ambiguous legacy entry", index)
+			return false
+		end
+		local itemID = list[index].id
 		local bag, bagSlot = ItemRack.FindItemInBags(itemID)
 		if bag and bagSlot then
 			ItemRack.Debug("Queue", "ManualAdvance equipping", itemID, "from bag", bag)
@@ -286,18 +288,18 @@ function ItemRack.ManualQueueAdvance(slot)
 	-- Try items after current index
 	for i = currentIdx + 1, #list do
 		if list[i].id == 0 then break end -- Stop marker
-		local candidate = string.match(list[i].id,"(%d+)")
+		local candidate = string.match(tostring(list[i].id),"(%d+)")
 		if not ItemRack.IsQueueItemBurnt(slot, list[i].id, candidate) then
-			if tryEquip(list[i].id) then return true end
+			if tryEquip(i) then return true end
 		end
 	end
 	
 	-- Wrap around to start of queue
 	for i = 1, currentIdx - 1 do
 		if list[i].id == 0 then break end
-		local candidate = string.match(list[i].id,"(%d+)")
+		local candidate = string.match(tostring(list[i].id),"(%d+)")
 		if not ItemRack.IsQueueItemBurnt(slot, list[i].id, candidate) then
-			if tryEquip(list[i].id) then return true end
+			if tryEquip(i) then return true end
 		end
 	end
 	
@@ -332,6 +334,7 @@ function ItemRack.RecordEquipTime(slot, exactID, transitionTime, attempt)
 	if not slot or not exactID or exactID == 0 then return end
 	ItemRackUser = ItemRackUser or {}
 	ItemRackUser.EquipTimers = ItemRackUser.EquipTimers or {}
+	local previousTimerRecord = ItemRack.EquipTimers and ItemRack.EquipTimers[slot]
 	local start, duration = GetInventoryItemCooldown("player", slot)
 	start = tonumber(start)
 	duration = tonumber(duration)
@@ -367,6 +370,9 @@ function ItemRack.RecordEquipTime(slot, exactID, transitionTime, attempt)
 		}
 		ItemRackUser.EquipTimers[slot] = pendingRecord
 		ItemRack.EquipTimers = ItemRackUser.EquipTimers
+		if ItemRack.AdvanceRecentRuneOnlyEquipTransitionRecord then
+			ItemRack.AdvanceRecentRuneOnlyEquipTransitionRecord(slot,previousTimerRecord,pendingRecord,exactID)
+		end
 		if ItemRack.QueueDiagnostic then
 			ItemRack.QueueDiagnostic("equip_timer_pending", { attempt = attempt, slot = slot })
 		end
@@ -417,6 +423,9 @@ function ItemRack.RecordEquipTime(slot, exactID, transitionTime, attempt)
 		used = not hasPenalty -- Items without an equip penalty are unheld immediately
 	}
 	ItemRack.EquipTimers = ItemRackUser.EquipTimers
+	if ItemRack.AdvanceRecentRuneOnlyEquipTransitionRecord then
+		ItemRack.AdvanceRecentRuneOnlyEquipTransitionRecord(slot,previousTimerRecord,ItemRack.EquipTimers[slot],exactID)
+	end
 	if ItemRack.QueueDiagnostic then
 		ItemRack.QueueDiagnostic("equip_timer_recorded", {
 			hasPenalty = hasPenalty,
@@ -526,32 +535,7 @@ function ItemRack.ProcessAutoQueue(slot)
 	
 	-- Find the equipped item in the queue to get its priority/keep/delay settings
 	if list then
-		local matchIdx = 0
-		
-		-- First pass: Try to find an exact match (respects enchants, gems for multiple identical items)
-		for i=1, #list do
-			if list[i].id == 0 then
-				break -- Stop marker reached before finding our item
-			elseif ItemRack.SameExactID(list[i].id, exactID) then
-				matchIdx = i
-				break
-			end
-		end
-		
-		-- Second pass: Fallback to base ID match
-		if matchIdx == 0 then
-			for i=1, #list do
-				if list[i].id == 0 then
-					break -- Stop marker reached
-				else
-					local queueBaseID = string.match(tostring(list[i].id), "^(%d+)")
-					if not ItemRack.HasRuneID(list[i].id) and queueBaseID == baseID then
-						matchIdx = i
-						break
-					end
-				end
-			end
-		end
+		local matchIdx = ItemRack.FindQueueEntryIndex(list,exactID) or 0
 		
 		if matchIdx > 0 then
 			keepValue = list[matchIdx].keep
@@ -587,24 +571,7 @@ function ItemRack.ProcessAutoQueue(slot)
 	-- logic to actually swap
 	local equippedCustomTime = nil
 	if list then
-		local matchIdx = 0
-		for i=1,#list do
-			if list[i].id == 0 then break end
-			if ItemRack.SameExactID(list[i].id, exactID) then
-				matchIdx = i
-				break
-			end
-		end
-		if matchIdx == 0 then
-			for i=1,#list do
-				if list[i].id == 0 then break end
-				local sqID = string.match(list[i].id,"^(%d+)")
-				if not ItemRack.HasRuneID(list[i].id) and sqID == baseID then
-					matchIdx = i
-					break
-				end
-			end
-		end
+		local matchIdx = ItemRack.FindQueueEntryIndex(list,exactID) or 0
 		if matchIdx > 0 then
 			equippedCustomTime = list[matchIdx].swapInEnabled and list[matchIdx].swapIn or nil
 		end
@@ -687,12 +654,20 @@ function ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready, setname)
 	-- This will return nil if no new item should be equipped.  
 	--    - This is either because there is no auto queue or what we have equipped is already what we want.
 	for i=1,#(list) do
-		candidate = string.match(list[i].id,"(%d+)")
+		local entryID = list[i].id
+		candidate = string.match(tostring(entryID),"(%d+)")
 		-- If there is nothing at the top of our queue, return nil.
-		if list[i].id==0 then
+		if entryID==0 then
 			return nil
+		-- A legacy entry can ask FindItemInBags for an arbitrary same-base copy.
+		-- Once this queue has rune-specific entries for that item, only those exact
+		-- entries are eligible candidates.
+		elseif not ItemRack.IsQueueEntryUnambiguous(list,i) then
+			if ItemRack.QueueDiagnostic then
+				ItemRack.QueueDiagnostic("autoqueue_candidate_skipped", { item = entryID, reason = "ambiguous_legacy_identity", slot = slot })
+			end
 		-- Skip burnt items
-		elseif ItemRack.IsQueueItemBurnt(slot, list[i].id, candidate) then
+		elseif ItemRack.IsQueueItemBurnt(slot, entryID, candidate) then
 			-- continue
 		-- If baseID is near ready but our candidate IS baseID, return nil.
 		elseif ready and i == currentMatchIndex then
@@ -704,13 +679,13 @@ function ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready, setname)
 			end
 			if canSwap then
 				local candidateCustomTime = list[i].swapInEnabled and list[i].swapIn or nil
-				if ItemRack.IsCandidateReady(slot, list[i].id, candidateCustomTime) then
+				if ItemRack.IsCandidateReady(slot, entryID, candidateCustomTime) then
 					-- Queue candidates must be carried in bags. An item equipped in the
 					-- other ring/trinket slot cannot satisfy this slot or block later items.
-					if ItemRack.FindItemInBags(list[i].id) then
-						return candidate, list[i].id
+					if ItemRack.FindItemInBags(entryID) then
+						return candidate, entryID
 					elseif ItemRack.QueueDiagnostic then
-						ItemRack.QueueDiagnostic("autoqueue_candidate_skipped", { item = list[i].id, reason = "not_in_bags", slot = slot })
+						ItemRack.QueueDiagnostic("autoqueue_candidate_skipped", { item = entryID, reason = "not_in_bags", slot = slot })
 					end
 				end
 			end

@@ -51,19 +51,26 @@ function ItemRack.StartSetsWaitingWatchdog()
 		end
 
 		local automaticSwapBlocked = ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked()
-		if automaticSwapBlocked then
-			-- Loading screens and summon confirmation time do not count toward a
-			-- persistent-lock timeout; give the client a full recovery window after.
+		local ordinarySwapBlocked = ItemRack.SetSwapping or ItemRack.NowCasting
+		local hardLocked
+		if not automaticSwapBlocked and not ordinarySwapBlocked then
+			hardLocked = ItemRack.AnythingLocked()
+		end
+		if automaticSwapBlocked or ordinarySwapBlocked then
+			-- Loading screens, summon confirmation, casting, and an ordinary
+			-- multi-pass set swap do not prove an inventory lock is stuck. Give a
+			-- real lock its full recovery window after those blockers finish.
 			ItemRack.SetsWaitingStartedAt = GetTime()
 		end
-		if not automaticSwapBlocked and not ItemRack.SetSwapping and not ItemRack.NowCasting and not ItemRack.AnythingLocked() then
+		if not automaticSwapBlocked and not ordinarySwapBlocked and not hardLocked then
 			ItemRack.Debug("API", "SetsWaiting watchdog observed unlocked inventory; resuming without ITEM_LOCK_CHANGED")
 			ItemRack.ProcessSetsWaiting()
 			if #ItemRack.SetsWaiting == 0 then
 				ItemRack.StopSetsWaitingWatchdog()
 				return
 			end
-		elseif not automaticSwapBlocked and (GetTime() - ItemRack.SetsWaitingStartedAt) >= ItemRack.SetsWaitingTimeout then
+		elseif not automaticSwapBlocked and not ordinarySwapBlocked and hardLocked
+		and (GetTime() - ItemRack.SetsWaitingStartedAt) >= ItemRack.SetsWaitingTimeout then
 			local count = #ItemRack.SetsWaiting
 			local reason = ItemRack.GetLockedReason()
 			local retryRequest
@@ -275,24 +282,44 @@ end
 
 function ItemRack.AddSetToSetsWaiting(setwaiting,whichequip,disableSound,isSecureKeybind)
 	local wait = ItemRack.SetsWaiting
-	for i in pairs(wait) do
-		if wait[i][1]==setwaiting and wait[i][2]==whichequip then
-			if ItemRack.IsEventEquipment then
-				wait[i][5] = true
+	local incomingEvent = ItemRack.IsEventEquipment and true or nil
+	local incomingDeferred = ItemRack.IsDeferredEquipment and true or nil
+	local incomingAutomatic = incomingEvent or incomingDeferred
+	for i,request in ipairs(wait) do
+		if request[1]==setwaiting and request[2]==whichequip then
+			local existingAutomatic = request[5] or request[6]
+			if not incomingAutomatic then
+				-- Manual intent is authoritative. Replace automatic provenance and
+				-- move this request to the tail so "newest manual request" remains
+				-- true even when de-duplication collapses an older queue entry.
+				request[3] = disableSound
+				request[4] = isSecureKeybind
+				request[5] = nil
+				request[6] = nil
+				request[7] = nil
+				table.remove(wait,i)
+				table.insert(wait,request)
+				if ItemRack.SetsWaitingStartedAt then
+					ItemRack.SetsWaitingStartedAt = GetTime()
+				end
+			elseif existingAutomatic then
+				-- Automatic duplicates may merge provenance, but they must never
+				-- downgrade an already queued manual request.
+				request[3] = disableSound
+				request[4] = isSecureKeybind
+				request[5] = request[5] or incomingEvent
+				request[6] = request[6] or incomingDeferred
+				if ItemRack.IsWatchdogRetry then
+					request[7] = true
+				end
 			end
-			if ItemRack.IsDeferredEquipment then
-				wait[i][6] = true
-			end
-			if ItemRack.IsWatchdogRetry then
-				wait[i][7] = true
-			end
-			ItemRack.Debug("API", "AddSetToSetsWaiting ignored duplicate for:", setwaiting)
+			ItemRack.Debug("API", "AddSetToSetsWaiting merged duplicate for:", setwaiting, incomingAutomatic and "automatic" or "manual")
 			ItemRack.StartSetsWaitingWatchdog()
 			return
 		end
 	end
 	ItemRack.Debug("API", "AddSetToSetsWaiting added set to API lock queue:", setwaiting)
-	table.insert(wait,{setwaiting,whichequip,disableSound,isSecureKeybind,ItemRack.IsEventEquipment and true or nil,ItemRack.IsDeferredEquipment and true or nil,ItemRack.IsWatchdogRetry and true or nil})
+	table.insert(wait,{setwaiting,whichequip,disableSound,isSecureKeybind,incomingEvent,incomingDeferred,ItemRack.IsWatchdogRetry and true or nil})
 	ItemRack.StartSetsWaitingWatchdog()
 end
 
@@ -1051,15 +1078,14 @@ function ItemRack.IsSetEquipped(setname,exact)
 					local currentCustomTime
 					local currentInQueue = false
 					if currentBaseID and currentBaseID ~= 0 then
-						for q=1,#slotQueue do
-							if slotQueue[q].id == 0 then
-								break
-							end
-							if matchesStored(slotQueue[q].id, id) then
-								currentInQueue = true
-								currentCustomTime = slotQueue[q].swapInEnabled and slotQueue[q].swapIn or nil
-								break
-							end
+						-- Use the queue's exact-first migration boundary here too. A
+						-- legacy wildcard beside rune-specific entries cannot establish
+						-- that an unlisted rune copy is intentionally active for the set.
+						local currentQueueIndex = ItemRack.FindQueueEntryIndex(slotQueue,id)
+						if currentQueueIndex then
+							local currentEntry = slotQueue[currentQueueIndex]
+							currentInQueue = true
+							currentCustomTime = currentEntry.swapInEnabled and currentEntry.swapIn or nil
 						end
 						local start,duration,enable = GetInventoryItemCooldown("player",i)
 						local ready = ItemRack.ShouldHoldEquippedItem and ItemRack.ShouldHoldEquippedItem(i, id, currentBaseID, currentCustomTime) or ItemRack.ItemNearReady(currentBaseID, i, currentCustomTime)

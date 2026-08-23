@@ -1031,8 +1031,11 @@ function ItemRack.RunAllEvents(reason, forceSpecialization)
 	local numSlots = getSlots and getSlots(0)
 	if not numSlots or numSlots == 0 then
 		ItemRack.Debug("Events", "RunAllEvents aborted (bag data not ready), rescheduling...")
-		ItemRack.ScheduleEventRecheck(reason .. " (retry)", 0.5)
+		ItemRack.ScheduleEventRecheck((reason or "Event readiness") .. " (retry)", 0.5)
 		return
+	end
+	if ItemRack.ReplayDeferredScriptEvents then
+		ItemRack.ReplayDeferredScriptEvents()
 	end
 	ItemRack.Debug("Events", "RunAllEvents triggered by:", reason)
 	local zoneDeferred = ItemRack.ProcessZoneEvent and ItemRack.ProcessZoneEvent(reason) == false
@@ -1436,6 +1439,13 @@ function ItemRack.ReconcileEquippedSnapshot(fromInventoryEvent)
 			ItemRack.UnresolvedEquippedSlots[i] = nil
 			local runeIdentityChanged = ItemRack.IsRuneOnlyIdentityChange
 			and ItemRack.IsRuneOnlyIdentityChange(previousID,currentID)
+			if not runeIdentityChanged and ItemRack.GetRecentRuneOnlyEquipTransition then
+				-- Preserve a recent record while duplicate inventory notifications
+				-- report the same exact item, but discard it if this slot moved on.
+				ItemRack.GetRecentRuneOnlyEquipTransition(i,currentID)
+			end
+			local priorRuneEquipTimer = runeIdentityChanged and ItemRack.EquipTimers
+			and ItemRack.EquipTimers[i]
 			if wasUnresolved then
 				ItemRack.QueueDiagnostic("slot_resolved", { current = currentID, previous = previousID, slot = i })
 				stateChanged = true
@@ -1469,13 +1479,7 @@ function ItemRack.ReconcileEquippedSnapshot(fromInventoryEvent)
 				ItemRack.EquippedSnapshot[i] = currentID
 				stateChanged = true
 			else
-				if runeIdentityChanged then
-					ItemRack.QueueDiagnostic("rune_identity_changed", { current = currentID, previous = previousID, slot = i })
-					if ItemRack.AdoptEquippedRuneIdentity then
-						ItemRack.AdoptEquippedRuneIdentity(i,currentID)
-					end
-					stateChanged = true
-				elseif not previousID or previousID == 0 or not ItemRack.SameExactID(previousID, currentID) then
+				if not previousID or previousID == 0 or not ItemRack.SameExactID(previousID, currentID) then
 					ItemRack.QueueDiagnostic("equip_transition", { current = currentID, previous = previousID, slot = i })
 					if ItemRack.RecordEquipTime then
 						ItemRack.RecordEquipTime(i, currentID, transitionTime)
@@ -1484,13 +1488,19 @@ function ItemRack.ReconcileEquippedSnapshot(fromInventoryEvent)
 				end
 				ItemRack.EquippedSnapshot[i] = currentID
 				local record = ItemRack.EquipTimers and ItemRack.EquipTimers[i]
-				if not runeIdentityChanged and record and record.pending and ItemRack.SameExactID(record.id, currentID)
+				if record and record.pending and ItemRack.SameExactID(record.id, currentID)
 				and ItemRack.RecordEquipTime then
 					ItemRack.RecordEquipTime(i, currentID, record.transitionTime or record.time)
+				end
+				if runeIdentityChanged and ItemRack.RememberRuneOnlyEquipTransition then
+					ItemRack.RememberRuneOnlyEquipTransition(i,previousID,currentID,priorRuneEquipTimer)
 				end
 			end
 		else
 			ItemRack.UnresolvedEquippedSlots[i] = nil
+			if ItemRack.RecentRuneOnlyEquipTransitions then
+				ItemRack.RecentRuneOnlyEquipTransitions[i] = nil
+			end
 			if wasUnresolved then
 				stateChanged = true
 				readinessRestored = true
@@ -1995,11 +2005,11 @@ do
 			return
 		end
 		if not id or id == 0 then return end
-		local matchesStored = ItemRack.MatchesStoredItemID
+		local matchesStoredFields = ItemRack.MatchesStoredItemFields
 		for name, set in pairs(ItemRackUser.Sets) do
 			if not name:match("^~") then
 				for _, item in pairs(set.equip) do
-					if matchesStored(item, id) then
+					if matchesStoredFields(item, id) then
 						data[name] = true
 					end
 				end
@@ -2497,11 +2507,21 @@ end
 function ItemRack.OnRuneUpdated(self,event,runeInfo)
 	if event == "RUNE_UPDATED" then
 		ItemRack.CacheRuneInfo(runeInfo)
+		-- Blizzard identifies the affected equipment type/slot in the event
+		-- payload even when the engraved item is in a bag. Keep that attribution
+		-- local: a global allowance can misclassify a simultaneous physical swap
+		-- of a different rune-bearing item.
+		local equipmentSlot = runeInfo and tonumber(runeInfo.equipmentSlot)
+		if not equipmentSlot or equipmentSlot < 0 or equipmentSlot > 19 or equipmentSlot % 1 ~= 0 then
+			equipmentSlot = nil
+		end
+		local expectedRuneID = runeInfo and tonumber(runeInfo.skillLineAbilityID) or nil
+		local refreshDeadline = GetTime() + 1
 		-- RUNE_UPDATED is synchronous; defer one frame so the item's new rune
 		-- identity is readable before refreshing the queue snapshot and icons.
 		C_Timer.After(0,function()
 			if ItemRack.RefreshEquippedRuneIdentity then
-				ItemRack.RefreshEquippedRuneIdentity()
+				ItemRack.RefreshEquippedRuneIdentity(equipmentSlot,expectedRuneID,refreshDeadline)
 			end
 			ItemRack.RefreshRuneIconOverlays(true)
 			if ItemRack.PeriodicQueueCheck then
@@ -2515,15 +2535,32 @@ end
 
 -- takes two ItemRack-style IDs and returns true if they share the same item-identifying fields (itemID, enchant, gems, suffix, unique)
 -- this is more precise than SameID (which only compares base itemID) but tolerant of item string format changes (Classic 10 fields vs TBC 14 fields)
-function ItemRack.SameExactID(id1,id2)
+function ItemRack.SameItemFields(id1,id2)
 	if not id1 or not id2 or id1==0 or id2==0 then return false end
 	local f1 = tostring(id1):match(ItemRack.iSPatternItemFieldsFromIR) or tostring(id1)
 	local f2 = tostring(id2):match(ItemRack.iSPatternItemFieldsFromIR) or tostring(id2)
-	if f1 ~= f2 then return false end
+	return f1 == f2
+end
+
+function ItemRack.SameExactID(id1,id2)
+	if not ItemRack.SameItemFields(id1,id2) then return false end
 	local rune1 = ItemRack.GetRuneID(id1)
 	local rune2 = ItemRack.GetRuneID(id2)
 	if rune1 ~= nil or rune2 ~= nil then
 		return rune1 == rune2
+	end
+	return true
+end
+
+-- Tooltip and other identity-display paths must preserve enchant/gem/suffix
+-- distinctions. A legacy entry without rune metadata may match the same item
+-- fields with any current rune, but it must never become a base-ID wildcard.
+function ItemRack.MatchesStoredItemFields(expectedID,currentID)
+	if not ItemRack.SameItemFields(expectedID,currentID) then
+		return false
+	end
+	if ItemRack.HasRuneID(expectedID) then
+		return ItemRack.GetRuneID(expectedID) == ItemRack.GetRuneID(currentID)
 	end
 	return true
 end
@@ -2536,6 +2573,61 @@ function ItemRack.IsRuneOnlyIdentityChange(previousID,currentID)
 	local currentFields = tostring(currentID):match(ItemRack.iSPatternItemFieldsFromIR)
 	return previousFields and previousFields == currentFields
 	and ItemRack.GetRuneID(previousID) ~= ItemRack.GetRuneID(currentID)
+end
+
+-- Reconciliation may run before RUNE_UPDATED. Preserve enough information to
+-- undo only the provisional rune-only transition that it recorded. Restoring
+-- the previous record (instead of simply clearing the slot) retains a genuine
+-- equip hold that existed before the item was re-engraved; pending retry
+-- closures self-cancel because their record is no longer current.
+function ItemRack.RememberRuneOnlyEquipTransition(slot,previousID,currentID,previousRecord)
+	ItemRack.RecentRuneOnlyEquipTransitions = ItemRack.RecentRuneOnlyEquipTransitions or {}
+	ItemRack.RecentRuneOnlyEquipTransitions[slot] = {
+		currentID = currentID,
+		expiresAt = GetTime() + 0.5,
+		previousID = previousID,
+		previousRecord = previousRecord,
+		recordedRecord = ItemRack.EquipTimers and ItemRack.EquipTimers[slot]
+	}
+end
+
+function ItemRack.GetRecentRuneOnlyEquipTransition(slot,currentID)
+	local recent = ItemRack.RecentRuneOnlyEquipTransitions
+	and ItemRack.RecentRuneOnlyEquipTransitions[slot]
+	if not recent then return nil end
+	if GetTime() > recent.expiresAt
+	and ItemRack.RecentRuneOnlyEquipTransitions then
+		ItemRack.RecentRuneOnlyEquipTransitions[slot] = nil
+		return nil
+	end
+	if currentID and not ItemRack.SameExactID(recent.currentID,currentID) then
+		ItemRack.RecentRuneOnlyEquipTransitions[slot] = nil
+		return nil
+	end
+	return recent
+end
+
+function ItemRack.RollbackRuneOnlyEquipTransition(slot,recent)
+	if not recent or not ItemRack.RecentRuneOnlyEquipTransitions
+	or ItemRack.RecentRuneOnlyEquipTransitions[slot] ~= recent then
+		return false
+	end
+	ItemRack.RecentRuneOnlyEquipTransitions[slot] = nil
+	local currentRecord = ItemRack.EquipTimers and ItemRack.EquipTimers[slot]
+	if currentRecord ~= recent.recordedRecord then
+		return false
+	end
+	ItemRackUser.EquipTimers = ItemRackUser.EquipTimers or {}
+	ItemRackUser.EquipTimers[slot] = recent.previousRecord
+	ItemRack.EquipTimers = ItemRackUser.EquipTimers
+	return true
+end
+
+function ItemRack.AdvanceRecentRuneOnlyEquipTransitionRecord(slot,previousRecord,newRecord,currentID)
+	local recent = ItemRack.GetRecentRuneOnlyEquipTransition(slot,currentID)
+	if recent and recent.recordedRecord == previousRecord then
+		recent.recordedRecord = newRecord
+	end
 end
 
 function ItemRack.AdoptEquippedRuneIdentity(slot,currentID)
@@ -2556,34 +2648,89 @@ function ItemRack.AdoptEquippedRuneIdentity(slot,currentID)
 	if savedRecord ~= equipRecord then
 		UpdateRecord(savedRecord)
 	end
+	-- RecordEquipTime's pending retry closes over the old exact ID. Re-arm it
+	-- after adopting the rune so the old closure self-cancels by pointer and a
+	-- legitimate pre-existing equip hold continues under the new identity.
+	local activeRecord = ItemRack.EquipTimers and ItemRack.EquipTimers[slot]
+	if activeRecord and activeRecord.pending and ItemRack.RecordEquipTime then
+		ItemRack.RecordEquipTime(slot,currentID,activeRecord.transitionTime or activeRecord.time)
+	end
 end
 
--- Re-engraving an equipped item changes its exact identity without moving the
--- item. Update the AutoQueue snapshot (and any live equip-timer record) without
--- manufacturing a false equipment transition or 30-second equip penalty.
-function ItemRack.RefreshEquippedRuneIdentity()
+-- Re-engraving an equipped item changes its exact identity without moving it.
+-- Use the event's slot when available; a nil payload may authorize only one
+-- unambiguous live/recent delta. Retrying briefly handles either ordering of
+-- RUNE_UPDATED and UNIT_INVENTORY_CHANGED without weakening physical swaps.
+function ItemRack.RefreshEquippedRuneIdentity(equipmentSlot,expectedRuneID,deadline)
 	if ItemRack.QueueStateReady ~= true or type(ItemRack.EquippedSnapshot) ~= "table" then
+		if equipmentSlot ~= nil and deadline and GetTime() < deadline then
+			C_Timer.After(0.05,function()
+				ItemRack.RefreshEquippedRuneIdentity(equipmentSlot,expectedRuneID,deadline)
+			end)
+		end
 		return false
 	end
 
-	local changed = false
-	for slot=0,19 do
+	local candidates = {}
+	local unresolved = false
+	local firstSlot = equipmentSlot or 0
+	local lastSlot = equipmentSlot or 19
+	for slot=firstSlot,lastSlot do
 		local state,currentID = ItemRack.GetEquippedSlotState(slot)
 		local previousID = ItemRack.EquippedSnapshot[slot]
-		if state == "resolved" and ItemRack.IsRuneOnlyIdentityChange(previousID,currentID) then
-			ItemRack.AdoptEquippedRuneIdentity(slot,currentID)
-			changed = true
-		elseif state == "unresolved" and ItemRack.ScheduleEquippedStateRetry then
-			ItemRack.ScheduleEquippedStateRetry()
+		if state == "resolved" then
+			local recent = ItemRack.GetRecentRuneOnlyEquipTransition(slot,currentID)
+			local liveDelta = ItemRack.IsRuneOnlyIdentityChange(previousID,currentID)
+			local currentRuneID = ItemRack.GetRuneID(currentID)
+			local runeMatches = expectedRuneID == nil
+			or currentRuneID == expectedRuneID
+			or (expectedRuneID == 0 and currentRuneID == nil)
+			local fallbackIsRemoval = equipmentSlot ~= nil or expectedRuneID ~= nil
+			or currentRuneID == 0 or currentRuneID == nil
+			if (liveDelta or recent) and runeMatches and fallbackIsRemoval then
+				table.insert(candidates,{ currentID=currentID, liveDelta=liveDelta, recent=recent, slot=slot })
+			end
+		elseif state == "unresolved" then
+			unresolved = true
 		end
 	end
 
-	if changed then
+	-- A known slot yields at most one candidate. With a nil payload, exactly one
+	-- candidate is required so a physical swap in another slot is never guessed.
+	if #candidates == 1 then
+		local candidate = candidates[1]
+		local rollbackSucceeded = false
+		if candidate.recent then
+			rollbackSucceeded = ItemRack.RollbackRuneOnlyEquipTransition(candidate.slot,candidate.recent)
+		end
+		if candidate.recent and not candidate.liveDelta and not rollbackSucceeded then
+			ItemRack.QueueDiagnostic("rune_identity_refresh_skipped", { reason = "transition_record_changed", slot = candidate.slot })
+			return false
+		end
+		ItemRack.AdoptEquippedRuneIdentity(candidate.slot,candidate.currentID)
+		ItemRack.QueueDiagnostic("rune_identity_changed", { current = candidate.currentID, slot = candidate.slot })
 		if ItemRack.UpdateCombatQueue then
 			ItemRack.UpdateCombatQueue()
 		end
+		if ItemRack.RefreshRuneIconOverlays then
+			ItemRack.RefreshRuneIconOverlays(true)
+		end
+		return true
 	end
-	return changed
+
+	if unresolved and ItemRack.ScheduleEquippedStateRetry then
+		ItemRack.ScheduleEquippedStateRetry()
+	end
+	-- A resolved target with no delta is a terminal bag/non-equipped engraving
+	-- event. Retry only when the known target slot itself is unresolved; doing
+	-- otherwise can misclassify a physical swap performed after engraving a bag
+	-- copy of the same equipment type.
+	if equipmentSlot ~= nil and unresolved and deadline and GetTime() < deadline then
+		C_Timer.After(0.05,function()
+			ItemRack.RefreshEquippedRuneIdentity(equipmentSlot,expectedRuneID,deadline)
+		end)
+	end
+	return false
 end
 
 -- Rune-aware saved entries require the same item instance and rune. Legacy
@@ -4580,7 +4727,7 @@ function ItemRack.SetTooltip(self,setname)
 							else
 								itemColor = "FF4C80FF"
 							end
-						elseif itemName~="(empty)" and ItemRackSettings.TooltipColorUnEquipped=="ON" and not ItemRack.MatchesStoredItemID(set[i], ItemRack.GetID(i)) then
+						elseif itemName~="(empty)" and ItemRackSettings.TooltipColorUnEquipped=="ON" and not ItemRack.MatchesStoredItemFields(set[i], ItemRack.GetID(i)) then
 							itemColor = "FFFF8C00"
 						else
 							itemColor = "FFAAAAAA"

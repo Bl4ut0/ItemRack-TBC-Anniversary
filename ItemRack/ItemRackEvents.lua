@@ -256,6 +256,9 @@ end
 function ItemRack.InitEvents()
 	ItemRack.LoadEvents()
 	ItemRack.MigrateDefaultScriptEvents()
+	-- Deferred Script triggers are runtime-only. Never carry a one-shot game
+	-- event across a reload or a fresh event-system initialization.
+	ItemRack.DeferredScriptEvents = {}
 
 	ItemRack.CreateTimer("EventsBuffTimer",ItemRack.ProcessBuffEvent,.15)
 	ItemRack.CreateTimer("EventsZoneTimer",ItemRack.ProcessZoneEvent,.16)
@@ -367,17 +370,28 @@ function ItemRack.InitEvents()
 			if shouldBeActive then
 				local setname = ItemRackUser.Events.Set[eventName]
 				if setname and ItemRack.IsSetEquipped(setname) then
-					eventData.Active = true
-					-- Re-populate EventStack with active event on startup
-					local alreadyStacked = false
-					for _, name in ipairs(ItemRackUser.EventStack) do
-						if name == eventName then
-							alreadyStacked = true
-							break
+					-- Matching gear is not sufficient proof that a specialization
+					-- event owns it: the player may have equipped that set manually
+					-- before logging out or reloading. Unlike stateful Buff/Zone/Stance
+					-- events, specialization ownership cannot be reconstructed after
+					-- the runtime stack is purged, so leave it inactive and let the
+					-- next real specialization transition establish a stack layer.
+					if eventData.Type == "Specialization" then
+						eventData.Active = nil
+						ItemRack.Debug("Events", "Startup specialization match left unowned:", eventName, setname)
+					else
+						eventData.Active = true
+						-- Re-populate EventStack with an active state event on startup.
+						local alreadyStacked = false
+						for _, name in ipairs(ItemRackUser.EventStack) do
+							if name == eventName then
+								alreadyStacked = true
+								break
+							end
 						end
-					end
-					if not alreadyStacked then
-						table.insert(ItemRackUser.EventStack, eventName)
+						if not alreadyStacked then
+							table.insert(ItemRackUser.EventStack, eventName)
+						end
 					end
 				end
 			end
@@ -520,6 +534,10 @@ end
 
 function ItemRack.SpinDownAllEvents()
 	ItemRack.Debug("Events", "SpinDownAllEvents requested")
+	-- Script triggers describe a moment in time. If the user disables events
+	-- while automatic swaps are suspended, do not replay those moments when
+	-- the event system is enabled again later.
+	ItemRack.DeferredScriptEvents = {}
 	local stack = ItemRackUser.EventStack
 	if stack then
 		for i = #stack, 1, -1 do
@@ -730,8 +748,120 @@ end
 
 --[[ Event processing ]]
 
+local deferredScriptEventLimit = 64
+
+local function HasEnabledScriptTrigger(event)
+	if not event or not ItemRackUser or ItemRackUser.EnableEvents == "OFF" then
+		return false
+	end
+	local enabled = ItemRackUser.Events and ItemRackUser.Events.Enabled
+	if not enabled then
+		return false
+	end
+	for eventName in pairs(enabled) do
+		local eventData = ItemRackEvents and ItemRackEvents[eventName]
+		if eventData and eventData.Type == "Script" and eventData.Trigger == event then
+			return true
+		end
+	end
+	return false
+end
+
+local function CaptureScriptEventArguments(event,...)
+	local a1,a2,a3,a4,a5,a6,a7,a8,a9,a10 = ...
+	-- Compatibility for UNIT_SPELLCAST_* changes in 1.15.0+ / 10.0+.
+	-- Resolve this while the event is being received so a deferred replay keeps
+	-- the original cast rather than observing some later game state.
+	if event:match("^UNIT_SPELLCAST_") and type(a2)=="string" and a2:match("^Cast%-") then
+		local spellID = a3
+		if spellID then
+			local name, subtext = GetSpellInfo(spellID)
+			if name then
+				if subtext and subtext ~= "" then
+					a2 = name .. "(" .. subtext .. ")"
+				else
+					a2 = name
+				end
+			end
+		end
+	end
+	-- COMBAT_LOG_EVENT_UNFILTERED has no useful callback arguments on modern
+	-- clients. Capture its payload now: CombatLogGetCurrentEventInfo() would
+	-- refer to a different combat-log record by the time a hold is released.
+	if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+		a1,a2,a3,a4,a5,a6,a7,a8,a9,a10 = CombatLogGetCurrentEventInfo()
+	end
+	return {
+		[1]=a1, [2]=a2, [3]=a3, [4]=a4, [5]=a5,
+		[6]=a6, [7]=a7, [8]=a8, [9]=a9, [10]=a10,
+	}
+end
+
+local function ProcessScriptTriggers(event,args)
+	local enabled = ItemRackUser.Events.Enabled
+	local events = ItemRackEvents
+	local a1,a2,a3,a4,a5 = args[1],args[2],args[3],args[4],args[5]
+	local a6,a7,a8,a9,a10 = args[6],args[7],args[8],args[9],args[10]
+	for eventName in pairs(enabled) do
+		local eventData = events[eventName]
+		if eventData and eventData.Type=="Script" and eventData.Trigger==event then
+			local method, compileErr = loadstring("local event,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10 = ...;local EquipEventSet = function(setname, disableSound) return ItemRack.ScriptEventEquip(event, setname, disableSound) end;local UnequipEventSet = function(disableSound) return ItemRack.ScriptEventUnequip(event, disableSound) end;local EquipSet = function(setname, disableSound) return EquipEventSet(setname, disableSound) end;local UnequipSet = function(setname, disableSound) local activeSet = ItemRack.GetEventSet(event) if setname and (not activeSet or setname ~= activeSet) then return ItemRack.UnequipSet(setname, disableSound) end return UnequipEventSet(disableSound) end;" .. eventData.Script)
+			if not method then
+				ItemRack.Debug("Events", "Error compiling script for event '" .. tostring(eventName) .. "': " .. tostring(compileErr))
+			else
+				local ok, runErr = pcall(method,event,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10)
+				if not ok then
+					ItemRack.Debug("Events", "Error running script for event '" .. tostring(eventName) .. "': " .. tostring(runErr))
+				end
+			end
+		end
+	end
+end
+
+local function QueueDeferredScriptEvent(event,...)
+	if not HasEnabledScriptTrigger(event) then
+		return false
+	end
+	local queue = ItemRack.DeferredScriptEvents
+	if not queue then
+		queue = {}
+		ItemRack.DeferredScriptEvents = queue
+	end
+	if #queue >= deferredScriptEventLimit then
+		table.remove(queue,1)
+		ItemRack.Debug("Events", "Deferred Script event queue full; discarded oldest trigger")
+	end
+	table.insert(queue,{
+		event = event,
+		args = CaptureScriptEventArguments(event,...),
+	})
+	ItemRack.Debug("Events", "Queued Script trigger until automatic swaps resume:", event)
+	return true
+end
+
+-- Called by RunAllEvents after transition/readiness holds have cleared. This
+-- deliberately invokes only user Script triggers; Buff/Zone/Stance/Spec state
+-- is already reevaluated by RunAllEvents and must not be processed twice.
+function ItemRack.ReplayDeferredScriptEvents()
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		return 0
+	end
+	local queue = ItemRack.DeferredScriptEvents
+	if not queue or #queue == 0 then
+		return 0
+	end
+	ItemRack.DeferredScriptEvents = {}
+	for i = 1, #queue do
+		local pending = queue[i]
+		ProcessScriptTriggers(pending.event,pending.args)
+	end
+	ItemRack.Debug("Events", "Replayed deferred Script triggers:", #queue)
+	return #queue
+end
+
 function ItemRack.ProcessingFrameOnEvent(self,event,...)
 	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		QueueDeferredScriptEvent(event,...)
 		ItemRack.Debug("Events", "Event processing deferred while automatic swaps are suspended:", event)
 		return
 	end
@@ -771,38 +901,11 @@ function ItemRack.ProcessingFrameOnEvent(self,event,...)
 				ItemRack.LastZoneChangeTime = GetTime()
 			elseif event == "ACTIVE_TALENT_GROUP_CHANGED" and eventType == "Specialization" then
 				ItemRack.StartTimer("SpecChangeTimer")
-			elseif eventType=="Script" and eventData.Trigger==event then
-				local a1,a2,a3,a4,a5,a6,a7,a8,a9,a10 = ...
-				-- Compatibility for UNIT_SPELLCAST_* changes in 1.15.0+ / 10.0+
-				-- If arg2 is a castGUID (starts with "Cast-") and arg3 is a spellID, resolve name to arg2
-				if event:match("^UNIT_SPELLCAST_") and type(a2)=="string" and a2:match("^Cast%-") then
-					local spellID = a3
-					if spellID then
-						local name, subtext = GetSpellInfo(spellID)
-						if name then
-							if subtext and subtext ~= "" then
-								a2 = name .. "(" .. subtext .. ")"
-							else
-								a2 = name
-							end
-						end
-					end
-				end
-				-- Compatibility for COMBAT_LOG_EVENT_UNFILTERED changes in 8.0+ / 1.13+
-				if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-					a1,a2,a3,a4,a5,a6,a7,a8,a9,a10 = CombatLogGetCurrentEventInfo()
-				end
-				local method, compileErr = loadstring("local event,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10 = ...;local EquipEventSet = function(setname, disableSound) return ItemRack.ScriptEventEquip(event, setname, disableSound) end;local UnequipEventSet = function(disableSound) return ItemRack.ScriptEventUnequip(event, disableSound) end;local EquipSet = function(setname, disableSound) return EquipEventSet(setname, disableSound) end;local UnequipSet = function(setname, disableSound) local activeSet = ItemRack.GetEventSet(event) if setname and (not activeSet or setname ~= activeSet) then return ItemRack.UnequipSet(setname, disableSound) end return UnequipEventSet(disableSound) end;" .. eventData.Script)
-				if not method then
-					ItemRack.Debug("Events", "Error compiling script for event '" .. tostring(eventName) .. "': " .. tostring(compileErr))
-				else
-					local ok, runErr = pcall(method,event,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10)
-					if not ok then
-						ItemRack.Debug("Events", "Error running script for event '" .. tostring(eventName) .. "': " .. tostring(runErr))
-					end
-				end
 			end
 		end
+	end
+	if HasEnabledScriptTrigger(event) then
+		ProcessScriptTriggers(event,CaptureScriptEventArguments(event,...))
 	end
 	if startStance then
 		ItemRack.ProcessStanceEvent()
@@ -1381,6 +1484,19 @@ function ItemRack.ProcessZoneEvent(reason)
 	return true
 end
 
+local function EventOwnsStackLayer(eventName)
+	local stack = ItemRackUser and ItemRackUser.EventStack
+	if not stack then
+		return false
+	end
+	for i = #stack, 1, -1 do
+		if stack[i] == eventName then
+			return true
+		end
+	end
+	return false
+end
+
 function ItemRack.ProcessSpecializationEvent(force)
 	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
 		return
@@ -1419,6 +1535,7 @@ function ItemRack.ProcessSpecializationEvent(force)
 		local eventData = events[eventName]
 		if eventData and eventData.Type=="Specialization" and eventData.Spec then
 			setname = ItemRackUser.Events.Set[eventName]
+			local ownsStackLayer = EventOwnsStackLayer(eventName)
 			-- Always equip the set for the current spec
 			if eventData.Spec == currentSpec then
 				if preserveRequestedSet then
@@ -1428,26 +1545,33 @@ function ItemRack.ProcessSpecializationEvent(force)
 					-- replace another explicitly selected set for the same spec.
 					if setname == preserveRequestedSet then
 						eventToAdopt = eventName
-						eventData.Active = true
+						eventData.Active = nil
 					else
 						eventData.Active = nil
 					end
-				elseif not eventData.Active then
-					eventToEquip = eventName
+				elseif ownsStackLayer then
+					-- Recover a stale Active flag only when an actual event-owned
+					-- stack layer proves this set was adopted/equipped by the event.
 					eventData.Active = true
+				else
+					eventToEquip = eventName
+					eventData.Active = nil
 				end
 			-- Unequip sets for other specs if they're equipped
 			elseif eventData.Spec ~= currentSpec then
 				if eventData.Active then
-					if eventData.Unequip then
+					-- Active alone is not ownership. In particular, a forced
+					-- same-spec evaluation may find the mapped set manually worn.
+					-- Never PopEvent (and restore gear) without its stack layer.
+					if eventData.Unequip and ownsStackLayer then
 						eventToUnequip = eventName
 					end
 					eventData.Active = nil
-				elseif eventData.Unequip and ItemRack.IsSetEquipped(setname) then
-					-- Fallback for consistency: only trigger if the user didn't manually equip this set
-					if ItemRackUser.CurrentSet ~= setname then
-						eventToUnequip = eventName
-					end
+				elseif eventData.Unequip and ownsStackLayer then
+					-- A stack layer is the authoritative ownership record. This
+					-- also repairs an inactive flag without treating matching manual
+					-- gear as something the specialization event may restore.
+					eventToUnequip = eventName
 				end
 			end
 		end
@@ -1471,6 +1595,7 @@ function ItemRack.ProcessSpecializationEvent(force)
 		end
 		if eventToAdopt then
 			table.insert(ItemRackUser.EventStack,eventToAdopt)
+			events[eventToAdopt].Active = true
 			ItemRack.Debug("Events", "Adopted requested set into specialization event:", eventToAdopt, preserveRequestedSet)
 		else
 			ItemRack.Debug("Events", "Suppressed destination specialization default to preserve:", preserveRequestedSet)
@@ -1481,14 +1606,23 @@ function ItemRack.ProcessSpecializationEvent(force)
 	end
 	if eventToEquip then
 		local setToEquip = ItemRackUser.Events.Set[eventToEquip]
+		if not setToEquip or not ItemRackUser.Sets[setToEquip] then
+			events[eventToEquip].Active = nil
+			ItemRack.Debug("Events", "Specialization event has no valid set mapping:", eventToEquip, setToEquip or "nil")
+			return
+		end
 		if not ItemRack.IsSetEquipped(setToEquip) or unequipTriggered then
 			ItemRack.Print("Spec changed! Equipping set: "..setToEquip)
 			ItemRack.PushEvent(eventToEquip)
+			events[eventToEquip].Active = EventOwnsStackLayer(eventToEquip) and true or nil
 			
 			-- Dual-Wield Awareness: Schedule a delayed re-check for weapon slots
 			ItemRack.ScheduleDualWieldRetry(setToEquip)
 		else
-			-- If already equipped, still update the UI to ensure the correct set name is shown
+			-- A matching set may have been selected manually. Keep this event
+			-- inactive unless it owns a stack layer, otherwise the next spec
+			-- change would PopEvent and restore/unequip gear it never equipped.
+			events[eventToEquip].Active = nil
 			ItemRack.UpdateCurrentSet()
 		end
 	end

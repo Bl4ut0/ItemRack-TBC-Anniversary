@@ -26,7 +26,12 @@ OmniCC_Config/
 .tools/*
 !.tools/build_release_dev.ps1
 !.tools/check_lua.js
+!.tools/check_addon_structure.js
+!.tools/check_events_runtime.js
+!.tools/check_identity_regressions.js
+!.tools/check_queue_watchdog_regressions.js
 !.tools/check_regressions.js
+!.tools/check_release_flow.js
 !.tools/create_release.js
 !.tools/install_local.ps1
 node_modules/

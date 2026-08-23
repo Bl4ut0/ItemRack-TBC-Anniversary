@@ -31,7 +31,11 @@ const tooltipHook = between(
   'function ItemRack.InitCore'
 );
 check(!tooltipHook.includes('tooltip:Show()'), 'Tooltip post-hooks must not call Show().');
-check(tooltipHook.includes('MatchesStoredItemID'), 'Tooltip set membership must be rune-aware.');
+check(
+  tooltipHook.includes('MatchesStoredItemFields') &&
+    !tooltipHook.includes('MatchesStoredItemID'),
+  'Tooltip set membership must preserve the stored item fields and rune identity.'
+);
 
 const setEquipped = between(
   equip,
@@ -40,7 +44,11 @@ const setEquipped = between(
 );
 check(!setEquipped.includes('ItemRack.SameID'), 'IsSetEquipped must not use base-only matching.');
 check(setEquipped.includes('matchesStored(set[i],id)'), 'Set slots must use stored-item matching.');
-check(setEquipped.includes('matchesStored(slotQueue[q].id, id)'), 'Queue membership must use stored-item matching.');
+check(
+  setEquipped.includes('ItemRack.FindQueueEntryIndex(slotQueue,id)') &&
+    !setEquipped.includes('matchesStored(slotQueue[q].id, id)'),
+  'Queue membership must use exact-first, ambiguity-aware queue matching.'
+);
 check(
   setEquipped.includes('local _, active = ItemRack.AutoQueueItemToEquip'),
   'IsSetEquipped must compare the exact queued entry, not AutoQueueItemToEquip\'s base-ID return.'
@@ -88,15 +96,17 @@ check(
 check(
   !buildScript.includes('$version = "') &&
     buildScript.includes('[Parameter(Mandatory = $true)]') &&
+    buildScript.includes('[string]$Ref') &&
+    buildScript.includes("'archive', '--format=zip'") &&
     buildScript.includes('does not identify release version $Version'),
-  'The packager must require an explicit version instead of retaining a stale hard-coded release.'
+  'The packager must require an explicit version and committed ref.'
 );
 check(
   installScript.includes('[string]$SourceRoot') && installScript.includes('SupportsShouldProcess'),
   'Local installation must accept exact staged source and support a dry run.'
 );
 check(
-  releaseWorkflow.includes('Track A: Beta release') && releaseWorkflow.includes('Track B: Primary (stable) release'),
+  releaseWorkflow.includes('Track A: Beta') && releaseWorkflow.includes('Track B: Primary'),
   'The canonical workflow must retain both release tracks.'
 );
 check(

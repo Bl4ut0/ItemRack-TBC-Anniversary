@@ -1,93 +1,106 @@
 # Unified Release Workflow
 
-This is the canonical release workflow. It contains two tracks: **Beta** and **Primary (stable)**. Both start from tested `dev` source, produce an exact release staging folder and zip, publish an existing annotated tag to GitHub, install that exact staged build locally for testing, and finally restore the `dev` TOCs to `Dev`.
+This is the only release workflow. It has two tracks:
 
-Do not use the retired `beta_release.md` or `update_version.md` procedures. Do not use `git add .` in a release. Generated archives and post files live under `.versions/` and are intentionally not committed.
+- **Beta:** stays on `dev`, publishes a GitHub prerelease, installs that exact build locally, then restores the `dev` TOCs.
+- **Primary:** first creates and pushes a locally testable candidate on the production branch. It creates no tag or public release until the user explicitly accepts that exact candidate. Finalization then tags and publishes it, merges it back to `dev`, and restores the `dev` TOCs.
+
+All archives are exported from a committed Git ref. Never publish files copied from the mutable checkout. Generated archives, manifests, hashes, and post files live under `.versions/` and are intentionally not committed.
+
+CurseForge publication remains manual. The final build generates `CURSEFORGE_RELEASE.md`, but testing a primary candidate does not publish anything to CurseForge.
 
 ## Questions to ask first
 
 Ask the user for:
 
-1. Release track: `beta` or `primary`.
+1. Track: `beta` or `primary`.
 2. Version:
-   - Beta: `X.Y[-Z]-betaN`, for example `4.44-beta1`.
-   - Primary: `X.Y[-Z]` with no beta suffix, for example `4.44`.
-3. Release date in `YYYY-MM-DD` (default to the current local date only after confirming it).
-4. Confirmation that GitHub publication, tag pushes, and replacement of detected local WoW addon folders are authorized.
-
-CurseForge publication is not automatic. Both tracks generate a complete `CURSEFORGE_RELEASE.md` for review and posting.
+   - Beta: `X.Y[-Z]-betaN`, such as `4.43-beta5`.
+   - Primary: `X.Y[-Z]`, such as `4.43`.
+3. Release date in `YYYY-MM-DD`.
+4. Authorization appropriate to the phase:
+   - Beta: push `dev` and an annotated tag, publish a GitHub prerelease, and replace detected local addon folders.
+   - Primary candidate: merge/push `dev` to the detected production branch and replace detected local addon folders. This does **not** authorize a tag or public release.
+   - Primary finalize: tag and publish the accepted candidate, merge it back to `dev`, and reset/push the `dev` TOCs.
 
 ## Shared preflight
 
-Run these checks before changing version metadata:
+Run from a clean `dev` checkout:
 
 ```powershell
 git switch dev
 git pull --ff-only origin dev
-git fetch origin --tags
+git fetch origin --prune --tags
 git status --short
 npm.cmd ci
 npm.cmd test
 ```
 
-Stop if tracked files are dirty, addon source contains untracked files, tests fail, or `v{Version}` already exists locally or remotely. Temporary `.release-audit/` and generated `.versions/` content are not release source.
+Stop if tracked files are dirty, addon source contains untracked files, validation fails, or the requested tag already exists locally or remotely. `.versions/` and `.release-audit/` are generated data, not release source.
 
-The repository's production branch is resolved without renaming branches:
+Resolve the production branch without renaming it:
 
 ```powershell
 git show-ref --verify --quiet refs/remotes/origin/main
 $releaseBranch = if ($LASTEXITCODE -eq 0) { 'main' } else { 'master' }
+$releaseBranch
 ```
 
-Record that result as `{ReleaseBranch}` and substitute the literal branch name in later commands; do not assume a PowerShell variable will persist across separate terminal calls.
+Record the printed branch as `{ReleaseBranch}`. Likewise, replace `{CandidateCommit}` and `{TestedSHA256}` below with literal recorded values when commands may run in separate terminal calls.
 
-## Track A: Beta release
+## Track A: Beta
 
-1. Stay on a clean, up-to-date `dev` branch.
-2. Prepare the beta. This promotes a non-empty Development section into the requested beta section. If the requested beta section and TOCs are already prepared, the command verifies and packages them idempotently.
+The beta track never switches to or pushes the production branch.
 
-   ```powershell
-   node .tools/create_release.js beta {Version} --date {Date}
-   ```
-
-3. Review the exact source and generated output:
+1. Prepare release metadata on `dev`. Validation runs before the four metadata files are replaced. The command is retryable if only those generated metadata changes are present.
 
    ```powershell
+   node .tools/create_release.js prepare beta {Version} --date {Date}
    git diff -- CHANGELOG.md ItemRack/Changelog.txt ItemRack/ItemRack.toc ItemRackOptions/ItemRackOptions.toc
    npm.cmd test
-   Get-FileHash -Algorithm SHA256 -LiteralPath ".versions\Compressed\ItemRack-anniversary-{Version}.zip"
-   Get-Content -LiteralPath ".versions\Compressed\ItemRack-anniversary-{Version}.zip.sha256"
    ```
 
-4. If preparation changed tracked metadata, stage only the four reviewed files and commit. If it was already prepared, leave the clean existing `HEAD` unchanged.
+2. Commit only the reviewed metadata, push `dev`, and record the exact commit:
 
    ```powershell
    git add CHANGELOG.md ItemRack/Changelog.txt ItemRack/ItemRack.toc ItemRackOptions/ItemRackOptions.toc
    git diff --cached --check
    git commit -m "Beta release {Version}"
+   git push origin dev
+   git rev-parse HEAD
    ```
 
-5. Create and push an annotated tag, then push `dev`:
+3. Create the annotated beta tag at that recorded commit and push it. Never move an existing tag.
 
    ```powershell
-   git tag -a "v{Version}" -m "Beta release v{Version}"
-   git push origin dev
+   git tag -a "v{Version}" {BetaCommit} -m "Beta release v{Version}"
    git push origin "refs/tags/v{Version}"
    ```
 
-6. Publish the GitHub prerelease from the verified remote tag:
+4. Build from the exact tag. The builder uses `git archive`, verifies every extracted file against the commit's blob tree, and records `SOURCE_COMMIT.txt` and `SOURCE_TREE.txt`.
+
+   ```powershell
+   node .tools/create_release.js build beta {Version} --ref "v{Version}"
+   Get-Content -LiteralPath ".versions\Release\v{Version}\SOURCE_COMMIT.txt"
+   Get-FileHash -Algorithm SHA256 -LiteralPath ".versions\Compressed\ItemRack-anniversary-{Version}.zip"
+   Get-Content -LiteralPath ".versions\Compressed\ItemRack-anniversary-{Version}.zip.sha256"
+   ```
+
+5. Publish the GitHub prerelease from the already-pushed tag:
 
    ```powershell
    gh release create "v{Version}" ".versions\Compressed\ItemRack-anniversary-{Version}.zip" ".versions\Compressed\ItemRack-anniversary-{Version}.zip.sha256" --title "v{Version} (Beta)" --notes-file ".versions\Release\v{Version}\GITHUB_RELEASE.md" --prerelease --latest=false --verify-tag
    ```
 
-7. Install the exact staged beta locally, not the mutable checkout:
+6. Install the exact staged tag locally. Run the script in the current PowerShell process so `-Confirm:$false` remains a switch value on Windows PowerShell 5.1.
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .tools/install_local.ps1 -SourceRoot ".versions\Release\v{Version}" -Confirm:$false
+   & .\.tools\install_local.ps1 -SourceRoot ".versions\Release\v{Version}" -Confirm:$false
    ```
 
-8. Restore `dev` metadata while retaining the beta changelog entry, commit, and push:
+   The installer must list at least one destination or fail. Verify the reported client folders before continuing.
+
+7. Restore only the two `dev` TOCs, retain the beta changelog entry, commit, and push:
 
    ```powershell
    node .tools/create_release.js reset
@@ -97,63 +110,161 @@ Record that result as `{ReleaseBranch}` and substitute the literal branch name i
    git push origin dev
    ```
 
-9. Report the GitHub release URL, archive SHA-256, local client folders updated, and the generated CurseForge post path.
+8. Report the beta tag and commit, GitHub URL, archive SHA-256, installed destinations, and generated CurseForge post path. Do not post the beta to CurseForge unless separately requested.
 
-## Track B: Primary (stable) release
+## Track B: Primary
 
-1. Complete the shared preflight on `dev` and confirm all intended beta commits are pushed.
-2. Resolve `$releaseBranch`, switch to it, fast-forward it, and merge `dev`:
+### Phase 1: Create and test a candidate
+
+1. Complete the shared preflight on `dev`. Confirm every intended fix and beta note is committed and pushed.
+
+2. Merge tested `dev` into the detected production branch:
 
    ```powershell
    git switch {ReleaseBranch}
    git pull --ff-only origin {ReleaseBranch}
-   git merge --no-ff dev -m "Merge dev for {Version} release"
+   git merge --no-ff dev -m "Merge dev for {Version} release candidate"
    ```
 
-3. Prepare the primary release on the production branch:
+3. Prepare stable metadata on the production branch:
 
    ```powershell
-   node .tools/create_release.js stable {Version} --date {Date}
-   ```
-
-   This command gathers every `{Version}-betaN` section plus any final Development notes, orders them newest-first, creates one `[{Version}]` section in both changelogs, removes the consolidated beta headers, updates both TOCs, validates all Lua modules and regression guards, packages the exact tree, writes a SHA-256 file, and generates GitHub and CurseForge post data.
-
-4. Review the consolidated changelogs and artifacts. Confirm that no `{Version}-betaN` header remains and no unrelated version was absorbed:
-
-   ```powershell
+   node .tools/create_release.js prepare stable {Version} --date {Date}
    git diff -- CHANGELOG.md ItemRack/Changelog.txt ItemRack/ItemRack.toc ItemRackOptions/ItemRackOptions.toc
    npm.cmd test
-   Get-FileHash -Algorithm SHA256 -LiteralPath ".versions\Compressed\ItemRack-anniversary-{Version}.zip"
-   Get-Content -LiteralPath ".versions\Compressed\ItemRack-anniversary-{Version}.zip.sha256"
    ```
 
-5. Commit only the reviewed release metadata, create an annotated tag, and push the production branch and tag:
+   The first candidate consolidates all `{Version}-betaN` sections plus Development into one `{Version}` section. A later correction candidate may add new Development notes to that existing stable section without recreating old beta headers.
+
+4. Commit only reviewed release metadata. If it was already prepared, do not create an empty commit.
 
    ```powershell
    git add CHANGELOG.md ItemRack/Changelog.txt ItemRack/ItemRack.toc ItemRackOptions/ItemRackOptions.toc
    git diff --cached --check
-   git commit -m "Release version {Version}"
-   git tag -a "v{Version}" -m "Release v{Version}"
+   git commit -m "Prepare {Version} release candidate"
+   ```
+
+5. Push the production candidate, record its immutable commit ID, and confirm the remote branch points to it:
+
+   ```powershell
    git push origin {ReleaseBranch}
+   git rev-parse HEAD
+   git rev-parse "origin/{ReleaseBranch}"
+   ```
+
+   Record the identical value as `{CandidateCommit}`. Do not create a tag or GitHub release.
+
+6. Build from that literal commit and record the candidate hash:
+
+   ```powershell
+   node .tools/create_release.js build stable {Version} --ref {CandidateCommit}
+   Get-Content -LiteralPath ".versions\Release\v{Version}\SOURCE_COMMIT.txt"
+   Get-FileHash -Algorithm SHA256 -LiteralPath ".versions\Compressed\ItemRack-anniversary-{Version}.zip"
+   Get-Content -LiteralPath ".versions\Compressed\ItemRack-anniversary-{Version}.zip.sha256"
+   ```
+
+   Record the SHA-256 as `{TestedSHA256}`.
+
+7. Install the exact staged candidate locally:
+
+   ```powershell
+   & .\.tools\install_local.ps1 -SourceRoot ".versions\Release\v{Version}" -Confirm:$false
+   ```
+
+8. Stop and report the candidate commit, SHA-256, production branch, installed destinations, and test checklist. Explicitly state that no tag, GitHub release, CurseForge post, merge-back, or `dev` reset has occurred. Wait for the user's test result.
+
+### Candidate correction loop
+
+If testing rejects a candidate, synchronize that exact candidate back into `dev`
+before making the correction. This replaces `dev`'s already-consumed beta and
+Development notes with the candidate's single stable section, preventing the
+next merge from reintroducing or duplicating them.
+
+1. Confirm the production branch still points to the rejected candidate, then
+   merge that literal commit into `dev`:
+
+   ```powershell
+   git switch {ReleaseBranch}
+   git pull --ff-only origin {ReleaseBranch}
+   $currentCandidate = git rev-parse HEAD
+   if ($currentCandidate -ne "{CandidateCommit}") { throw "Production moved; create a new candidate plan before correcting it." }
+   git switch dev
+   git pull --ff-only origin dev
+   git merge --no-ff {CandidateCommit} -m "Synchronize rejected {Version} candidate into dev"
+   ```
+
+2. Restore only the two development TOCs, test the synchronized tree, commit,
+   and push it. The stable changelog section remains intact and Development is
+   empty at this point.
+
+   ```powershell
+   node .tools/create_release.js reset
+   npm.cmd test
+   git add ItemRack/ItemRack.toc ItemRackOptions/ItemRackOptions.toc
+   git diff --cached --check
+   git commit -m "Restore development metadata after {Version} candidate"
+   git push origin dev
+   ```
+
+3. Implement and test the correction on `dev`, add only a fresh Development
+   note for that correction to both changelogs, commit/push `dev`, and repeat
+   Primary Phase 1. The next prepare command folds only those fresh notes into
+   the existing stable section. Record a new candidate commit and hash; the
+   rejected candidate must never be tagged.
+
+### Phase 2: Finalize an accepted candidate
+
+Finalization requires explicit user acceptance of `{CandidateCommit}`.
+
+1. Verify that the clean production branch and its remote still point to the accepted commit:
+
+   ```powershell
+   git switch {ReleaseBranch}
+   git pull --ff-only origin {ReleaseBranch}
+   git status --short
+   git rev-parse HEAD
+   git rev-parse "origin/{ReleaseBranch}"
+   npm.cmd test
+   ```
+
+   All commit IDs must equal `{CandidateCommit}`. If they do not, stop and create/test a new candidate.
+
+2. Create and push an annotated tag at the accepted commit:
+
+   ```powershell
+   git tag -a "v{Version}" {CandidateCommit} -m "Release v{Version}"
    git push origin "refs/tags/v{Version}"
    ```
 
-6. Publish the stable GitHub release from the verified remote tag:
+   On a retry, if the tag already exists, verify that it peels to `{CandidateCommit}` and reuse it. Never delete or move it.
+
+3. Rebuild from the exact tag and verify its SHA-256 equals the locally tested candidate hash:
+
+   ```powershell
+   node .tools/create_release.js build stable {Version} --ref "v{Version}"
+   Get-Content -LiteralPath ".versions\Release\v{Version}\SOURCE_COMMIT.txt"
+   $finalHash = (Get-FileHash -Algorithm SHA256 -LiteralPath ".versions\Compressed\ItemRack-anniversary-{Version}.zip").Hash.ToLowerInvariant()
+   $testedHash = "{TestedSHA256}".ToLowerInvariant()
+   if ($finalHash -ne $testedHash) { throw "Tagged archive differs from the accepted candidate." }
+   ```
+
+4. Publish the stable GitHub release:
 
    ```powershell
    gh release create "v{Version}" ".versions\Compressed\ItemRack-anniversary-{Version}.zip" ".versions\Compressed\ItemRack-anniversary-{Version}.zip.sha256" --title "v{Version}" --notes-file ".versions\Release\v{Version}\GITHUB_RELEASE.md" --latest --verify-tag
    ```
 
-7. Install the exact staged stable release locally:
+5. Reinstall the verified tagged staging folder locally:
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .tools/install_local.ps1 -SourceRoot ".versions\Release\v{Version}" -Confirm:$false
+   & .\.tools\install_local.ps1 -SourceRoot ".versions\Release\v{Version}" -Confirm:$false
    ```
 
-8. Sync the release history back to `dev`, restore both TOCs to `Dev`, commit, and push:
+6. Merge the published history back to `dev`, restore the two TOCs to `Dev`, commit, and push:
 
    ```powershell
    git switch dev
+   git pull --ff-only origin dev
    git merge --no-ff {ReleaseBranch} -m "Merge {Version} release back into dev"
    node .tools/create_release.js reset
    git add ItemRack/ItemRack.toc ItemRackOptions/ItemRackOptions.toc
@@ -162,11 +273,16 @@ Record that result as `{ReleaseBranch}` and substitute the literal branch name i
    git push origin dev
    ```
 
-9. Report the production branch, merge and tag commits, GitHub release URL, archive SHA-256, local installations updated, and `.versions\Release\v{Version}\CURSEFORGE_RELEASE.md` for posting.
+7. Report the production branch, accepted/tagged commit, GitHub release URL, archive SHA-256, local destinations, and `.versions\Release\v{Version}\CURSEFORGE_RELEASE.md`. CurseForge publication happens only after separate review/authorization.
 
 ## Failure handling
 
-- Stop immediately on failed tests, merge conflicts, missing changelog content, version mismatches, tag collisions, hash mismatches, or publication errors.
-- Never delete or move an existing tag to make a rerun pass.
-- Do not reset `dev` metadata until the release commit and remote tag are confirmed. If GitHub publication fails after the tag push, repair or rerun only the publication step against that same verified tag.
-- Never publish a package built from files that differ from the tagged commit.
+- Stop on validation failures, merge conflicts, missing notes, TOC mismatches, tag collisions, source-manifest mismatches, hash changes, failed installation, or publication errors.
+- Metadata preparation validates before replacing files and permits a retry when only its four expected files are dirty.
+- Building is safe with an otherwise dirty checkout because only the named committed ref is archived; untracked and ignored files cannot enter the zip.
+- Never tag a primary candidate before the user accepts its recorded commit and hash.
+- Never reset `dev` after an accepted candidate until the beta prerelease or
+  primary stable release has been successfully published. The only pre-release
+  exception is the documented rejected-candidate correction loop, after the
+  exact rejected candidate has first been synchronized into `dev`.
+- If GitHub publication fails after a tag push, rerun only exact-ref build/verification and publication against that same tag.

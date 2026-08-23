@@ -1,5 +1,6 @@
-# CurseForge Packaging Metadata
-# Specifies how CurseForge auto-packaging should compile the release zip.
+# CurseForge packaging rules
+# Retained for repository-packager compatibility. The canonical release flow
+# uploads the verified staged archive manually after stable approval.
 
 # Ignore all non-addon directories and repository metadata
 ignore:
@@ -9,6 +10,7 @@ ignore:
   - .github
   - .gitignore
   - .rules
+  - .tools
   - .versions
   - .vscode
   - Images
@@ -17,6 +19,9 @@ ignore:
   - CURSEFORGE_DESCRIPTION.md
   - DEAD_ENDS.md
   - README.md
+  - BETA_TEST_CHECKLIST.md
+  - package.json
+  - package-lock.json
   - RELEASE_NOTES.md
   - TECHNICAL_CHANGES.md
   - TEMP_NOTES.md

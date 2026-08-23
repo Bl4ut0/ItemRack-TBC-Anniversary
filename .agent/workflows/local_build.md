@@ -12,9 +12,9 @@ Use this workflow to validate and install the current `dev` source without creat
 3. Ask before replacing any installed addon folders. After approval, install the source tree:
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .tools/install_local.ps1 -SourceRoot . -Confirm:$false
+   & .\.tools\install_local.ps1 -SourceRoot . -Confirm:$false
    ```
 
-4. Verify both installed addon folders contain their TOC and Lua files. Do not commit local game files or generated `.versions` artifacts.
+4. The installer must report at least one destination or fail. Verify every reported client folder contains both addon TOCs and Lua files. Do not commit local game files or generated `.versions` artifacts.
 
 For release testing, use `.agent/workflows/release.md`; it installs the immutable staged release rather than the mutable source checkout.

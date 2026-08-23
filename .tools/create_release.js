@@ -10,8 +10,16 @@ const paths = {
   optionsToc: 'ItemRackOptions/ItemRackOptions.toc',
   markdownChangelog: 'CHANGELOG.md',
   addonChangelog: 'ItemRack/Changelog.txt',
-  buildScript: '.tools/build_release_dev.ps1'
+  buildScript: '.tools/build_release_dev.ps1',
+  structureScript: '.tools/check_addon_structure.js'
 };
+
+const releaseMetadataPaths = new Set([
+  paths.mainToc,
+  paths.optionsToc,
+  paths.markdownChangelog,
+  paths.addonChangelog
+]);
 
 const versionPattern = /^\d+\.\d+(?:\.\d+)?(?:-beta\d+)?$/;
 const stableVersionPattern = /^\d+\.\d+(?:\.\d+)?$/;
@@ -37,13 +45,37 @@ function git(args) {
   return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
-function ensureCleanReleaseSource() {
-  const trackedStatus = git(['status', '--porcelain', '--untracked-files=no']);
+function trackedChanges() {
+  const status = git(['status', '--porcelain', '--untracked-files=no']);
+  if (!status) return [];
+  return status.split(/\r?\n/).map((line) => {
+    const statusPath = line.slice(3);
+    const renameIndex = statusPath.lastIndexOf(' -> ');
+    return (renameIndex >= 0 ? statusPath.slice(renameIndex + 4) : statusPath).replace(/\\/g, '/');
+  });
+}
+
+function ensureNoUntrackedAddonFiles() {
   const untrackedAddonFiles = git([
     'ls-files', '--others', '--exclude-standard', '--', 'ItemRack', 'ItemRackOptions'
   ]);
-  if (trackedStatus || untrackedAddonFiles) {
-    fail('Commit or stash tracked changes and untracked addon files before preparing a release.');
+  if (untrackedAddonFiles) {
+    fail('Remove or commit untracked addon files before continuing a release.');
+  }
+}
+
+function ensureCleanReleaseSource() {
+  ensureNoUntrackedAddonFiles();
+  if (trackedChanges().length > 0) {
+    fail('Commit or stash tracked changes before continuing a release.');
+  }
+}
+
+function ensureRetryablePreparationSource() {
+  ensureNoUntrackedAddonFiles();
+  const disallowed = trackedChanges().filter((filePath) => !releaseMetadataPaths.has(filePath));
+  if (disallowed.length > 0) {
+    fail(`Preparation only permits existing release-metadata changes; also dirty: ${disallowed.join(', ')}`);
   }
 }
 
@@ -151,6 +183,9 @@ function promoteBetaMarkdown(text, version, date) {
   const existing = sections.find((entry) => entry.version === version);
   const development = markdownDevelopment(text);
   if (existing) {
+    if (existing.date !== date) {
+      fail(`CHANGELOG.md already dates ${version} as ${existing.date || '(undated)'}, not ${date}.`);
+    }
     if (development.body) {
       fail(`CHANGELOG.md already contains ${version}, but Development is not empty.`);
     }
@@ -192,10 +227,26 @@ function consolidateStableMarkdown(text, version, date) {
   const development = markdownDevelopment(text);
 
   if (existing) {
-    if (betaSections.length > 0 || development.body) {
-      fail(`Stable section ${version} exists alongside unconsolidated beta or Development notes.`);
+    if (betaSections.length > 0) {
+      fail(`Stable section ${version} exists alongside unconsolidated beta notes.`);
     }
-    return { text, body: existing.body };
+    if (!development.body) {
+      if (existing.date !== date) {
+        fail(`CHANGELOG.md already dates ${version} as ${existing.date || '(undated)'}, not ${date}.`);
+      }
+      return { text, body: existing.body };
+    }
+
+    const combined = [
+      normalizeMarkdownBody(development.body),
+      normalizeMarkdownBody(existing.body)
+    ].filter(Boolean).join('\n');
+    const withoutExisting = removeRanges(text, [existing]);
+    const updated = replaceMarkdownDevelopment(
+      withoutExisting,
+      `## [${version}] - ${date}\n### Bug Fixes & Improvements\n${combined}`
+    );
+    return { text: updated, body: parseMarkdownSections(updated).find((entry) => entry.version === version).body };
   }
   if (betaSections.length === 0 && !development.body) {
     fail(`No ${version}-beta* or Development notes were found to consolidate.`);
@@ -225,10 +276,18 @@ function consolidateStableAddon(text, version) {
   const development = addonDevelopment(text);
 
   if (existing) {
-    if (betaSections.length > 0 || development.body) {
-      fail(`In-addon stable section ${version} exists alongside unconsolidated notes.`);
+    if (betaSections.length > 0) {
+      fail(`In-addon stable section ${version} exists alongside unconsolidated beta notes.`);
     }
-    return text;
+    if (!development.body) {
+      return text;
+    }
+
+    const withoutExisting = removeRanges(text, [existing]);
+    return replaceAddonDevelopment(
+      withoutExisting,
+      `__ New in ${version} - By Bl4ut0 __\n${[development.body, existing.body].filter(Boolean).join('\n')}`
+    );
   }
   if (betaSections.length === 0 && !development.body) {
     fail(`No in-addon ${version}-beta* or Development notes were found.`);
@@ -245,32 +304,68 @@ function consolidateStableAddon(text, version) {
   return updated;
 }
 
-function readTocVersion(filePath) {
-  const match = /^## Version:[ \t]*(\S+)[ \t]*$/m.exec(read(filePath));
-  if (!match) fail(`${filePath} has no Version metadata.`);
-  return match[1];
-}
-
-function setTocVersion(filePath, version) {
-  const source = read(filePath);
-  const updated = source.replace(/^## Version:[ \t]*\S+[ \t]*$/m, `## Version: ${version}`);
-  if (updated === source && readTocVersion(filePath) !== version) {
-    fail(`Could not update ${filePath}.`);
+function readTocVersionFromText(text, label) {
+  const matches = Array.from(text.matchAll(/^## Version:[ \t]*(\S+)[ \t]*$/gm));
+  if (matches.length !== 1) {
+    fail(`${label} must contain exactly one Version metadata field.`);
   }
-  write(filePath, updated);
+  return matches[0][1];
 }
 
-function validateMetadata(version) {
-  for (const tocPath of [paths.mainToc, paths.optionsToc]) {
-    if (readTocVersion(tocPath) !== version) {
-      fail(`${tocPath} does not identify version ${version}.`);
+function tocWithVersion(text, version, label) {
+  readTocVersionFromText(text, label);
+  return text.replace(/^## Version:[ \t]*\S+[ \t]*$/m, `## Version: ${version}`);
+}
+
+function validateMetadataContent(version, markdown, addon, mainToc, optionsToc) {
+  for (const [label, text] of [
+    [paths.mainToc, mainToc],
+    [paths.optionsToc, optionsToc]
+  ]) {
+    if (readTocVersionFromText(text, label) !== version) {
+      fail(`${label} does not identify version ${version}.`);
     }
   }
-  if (!parseMarkdownSections(read(paths.markdownChangelog)).some((entry) => entry.version === version)) {
+  if (!parseMarkdownSections(markdown).some((entry) => entry.version === version)) {
     fail(`CHANGELOG.md does not contain release ${version}.`);
   }
-  if (!parseAddonSections(read(paths.addonChangelog)).some((entry) => entry.version === version)) {
+  if (!parseAddonSections(addon).some((entry) => entry.version === version)) {
     fail(`ItemRack/Changelog.txt does not contain release ${version}.`);
+  }
+}
+
+function writeMetadataTransaction(files) {
+  const token = `${process.pid}-${Date.now()}`;
+  const entries = Object.entries(files).map(([filePath, content]) => ({
+    filePath,
+    content,
+    temporaryPath: `${filePath}.release-${token}.tmp`,
+    backupPath: `${filePath}.release-${token}.bak`,
+    replaced: false
+  }));
+
+  try {
+    for (const entry of entries) write(entry.temporaryPath, entry.content);
+    for (const entry of entries) {
+      fs.renameSync(entry.filePath, entry.backupPath);
+      fs.renameSync(entry.temporaryPath, entry.filePath);
+      entry.replaced = true;
+    }
+  } catch (error) {
+    for (const entry of entries.slice().reverse()) {
+      if (entry.replaced && fs.existsSync(entry.filePath)) fs.unlinkSync(entry.filePath);
+      if (fs.existsSync(entry.backupPath)) fs.renameSync(entry.backupPath, entry.filePath);
+      if (fs.existsSync(entry.temporaryPath)) fs.unlinkSync(entry.temporaryPath);
+    }
+    fail(`Release metadata was not changed: ${error.message}`);
+  }
+
+  for (const entry of entries) {
+    try {
+      fs.unlinkSync(entry.backupPath);
+    } catch (error) {
+      console.warn(`[RELEASE] Metadata is committed, but backup cleanup is needed: ${entry.backupPath}`);
+    }
   }
 }
 
@@ -288,12 +383,16 @@ function requestedDate(args) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) {
     fail('Release date must use YYYY-MM-DD.');
   }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    fail('Release date must be a real calendar date in YYYY-MM-DD form.');
+  }
   return value;
 }
 
-function generatePostData(mode, version, body) {
+function generatePostData(mode, version, body, outputRoot = '.versions') {
   const isBeta = mode === 'beta';
-  const releaseDir = path.join('.versions', 'Release', `v${version}`);
+  const releaseDir = path.join(outputRoot, 'Release', `v${version}`);
   fs.mkdirSync(releaseDir, { recursive: true });
   const channelText = isBeta
     ? '> Beta test build: please report Lua errors, incorrect swaps, or regressions with `/itemrack dump` output.'
@@ -305,8 +404,58 @@ function generatePostData(mode, version, body) {
   write(path.join(releaseDir, 'CURSEFORGE_RELEASE.md'), curseForge);
 }
 
-function buildRelease(mode, version, body) {
-  const powerShell = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
+function validateModeAndVersion(mode, version) {
+  if (!versionPattern.test(version || '')) fail('Specify a valid release version.');
+  if (mode === 'beta' && !betaVersionPattern.test(version)) {
+    fail('Beta versions must end in -betaN (for example, 4.44-beta1).');
+  }
+  if (mode === 'stable' && !stableVersionPattern.test(version)) {
+    fail('Stable versions cannot contain a beta suffix.');
+  }
+  if (mode !== 'beta' && mode !== 'stable') {
+    fail('Release mode must be beta or stable.');
+  }
+}
+
+function resolveCommit(ref) {
+  if (!ref) fail('A committed source ref is required.');
+  try {
+    return git(['rev-parse', '--verify', `${ref}^{commit}`]);
+  } catch (error) {
+    fail(`Could not resolve committed source ref ${ref}.`);
+  }
+}
+
+function readAtRef(commit, filePath) {
+  try {
+    return execFileSync('git', ['show', `${commit}:${filePath}`], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024
+    });
+  } catch (error) {
+    fail(`Could not read ${filePath} from commit ${commit}.`);
+  }
+}
+
+function optionValue(args, name) {
+  const index = args.indexOf(name);
+  if (index < 0 || !args[index + 1] || args[index + 1].startsWith('--')) {
+    fail(`${name} requires a value.`);
+  }
+  return args[index + 1];
+}
+
+function optionalOptionValue(args, name, fallback) {
+  const index = args.indexOf(name);
+  if (index < 0) return fallback;
+  if (!args[index + 1] || args[index + 1].startsWith('--')) {
+    fail(`${name} requires a value.`);
+  }
+  return args[index + 1];
+}
+
+function runValidationSuite(options = {}) {
   run(process.execPath, [
     '.tools/check_lua.js',
     'ItemRack/ItemRack.lua',
@@ -316,33 +465,76 @@ function buildRelease(mode, version, body) {
     'ItemRack/ItemRackQueue.lua',
     'ItemRackOptions/ItemRackOptions.lua'
   ]);
-  run(process.execPath, ['.tools/check_regressions.js']);
-  run(powerShell, [
-    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', paths.buildScript, '-Version', version
+  run(process.execPath, [
+    paths.structureScript,
+    ...(options.allowVersionMismatch ? ['--allow-version-mismatch'] : [])
   ]);
-  generatePostData(mode, version, body);
+  for (const validator of [
+    '.tools/check_regressions.js',
+    '.tools/check_events_runtime.js',
+    '.tools/check_identity_regressions.js',
+    '.tools/check_queue_watchdog_regressions.js',
+    '.tools/check_release_flow.js'
+  ]) {
+    run(process.execPath, [validator]);
+  }
+}
 
-  const zipPath = path.join('.versions', 'Compressed', `ItemRack-anniversary-${version}.zip`);
+function buildRelease(mode, version, args) {
+  validateModeAndVersion(mode, version);
+  const requestedRef = optionValue(args, '--ref');
+  const outputRoot = path.resolve(repoRoot, optionalOptionValue(args, '--output-root', '.versions'));
+  const commit = resolveCommit(requestedRef);
+  const markdown = readAtRef(commit, paths.markdownChangelog);
+  const addon = readAtRef(commit, paths.addonChangelog);
+  const mainToc = readAtRef(commit, paths.mainToc);
+  const optionsToc = readAtRef(commit, paths.optionsToc);
+  validateMetadataContent(version, markdown, addon, mainToc, optionsToc);
+
+  const releaseSection = parseMarkdownSections(markdown).find((entry) => entry.version === version);
+  const powerShell = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
+  run(powerShell, [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', paths.buildScript,
+    '-Version', version, '-Ref', commit, '-OutputRoot', outputRoot
+  ]);
+
+  const releaseDir = path.join(outputRoot, 'Release', `v${version}`);
+  run(process.execPath, [
+    '.tools/check_lua.js',
+    path.join(releaseDir, 'ItemRack/ItemRack.lua'),
+    path.join(releaseDir, 'ItemRack/ItemRackButtons.lua'),
+    path.join(releaseDir, 'ItemRack/ItemRackEquip.lua'),
+    path.join(releaseDir, 'ItemRack/ItemRackEvents.lua'),
+    path.join(releaseDir, 'ItemRack/ItemRackQueue.lua'),
+    path.join(releaseDir, 'ItemRackOptions/ItemRackOptions.lua')
+  ]);
+  run(process.execPath, [paths.structureScript, releaseDir]);
+  generatePostData(mode, version, releaseSection.body, outputRoot);
+
+  const zipPath = path.join(outputRoot, 'Compressed', `ItemRack-anniversary-${version}.zip`);
   const hashPath = `${zipPath}.sha256`;
-  for (const artifact of [zipPath, hashPath]) {
+  for (const artifact of [
+    zipPath,
+    hashPath,
+    path.join(releaseDir, 'SOURCE_COMMIT.txt'),
+    path.join(releaseDir, 'SOURCE_TREE.txt'),
+    path.join(releaseDir, 'SOURCE_FILES.sha256'),
+    path.join(releaseDir, 'GITHUB_RELEASE.md'),
+    path.join(releaseDir, 'CURSEFORGE_RELEASE.md')
+  ]) {
     if (!fs.existsSync(artifact)) fail(`Expected release artifact was not created: ${artifact}`);
   }
-  console.log(`[RELEASE] Prepared ${mode} release v${version}.`);
+  console.log(`[RELEASE] Built ${mode} release v${version} from ${commit}.`);
+  console.log(`[RELEASE] Requested ref: ${requestedRef}`);
   console.log(`[RELEASE] Archive: ${zipPath}`);
-  console.log(`[RELEASE] GitHub notes: .versions/Release/v${version}/GITHUB_RELEASE.md`);
-  console.log(`[RELEASE] CurseForge post: .versions/Release/v${version}/CURSEFORGE_RELEASE.md`);
+  console.log(`[RELEASE] GitHub notes: ${releaseDir}/GITHUB_RELEASE.md`);
+  console.log(`[RELEASE] CurseForge post: ${releaseDir}/CURSEFORGE_RELEASE.md`);
 }
 
 function prepare(mode, version, args) {
-  if (!versionPattern.test(version || '')) fail('Specify a valid release version.');
-  if (mode === 'beta' && !betaVersionPattern.test(version)) {
-    fail('Beta versions must end in -betaN (for example, 4.44-beta1).');
-  }
-  if (mode === 'stable' && !stableVersionPattern.test(version)) {
-    fail('Stable versions cannot contain a beta suffix.');
-  }
+  validateModeAndVersion(mode, version);
 
-  ensureCleanReleaseSource();
+  ensureRetryablePreparationSource();
   ensureTagDoesNotExist(version);
   const branch = git(['branch', '--show-current']);
   if (mode === 'beta' && branch !== 'dev') {
@@ -361,13 +553,30 @@ function prepare(mode, version, args) {
   const updatedAddon = mode === 'beta'
     ? promoteBetaAddon(addon, version)
     : consolidateStableAddon(addon, version);
+  const updatedMainToc = tocWithVersion(read(paths.mainToc), version, paths.mainToc);
+  const updatedOptionsToc = tocWithVersion(read(paths.optionsToc), version, paths.optionsToc);
 
-  write(paths.markdownChangelog, markdownResult.text);
-  write(paths.addonChangelog, updatedAddon);
-  setTocVersion(paths.mainToc, version);
-  setTocVersion(paths.optionsToc, version);
-  validateMetadata(version);
-  buildRelease(mode, version, markdownResult.body);
+  validateMetadataContent(
+    version,
+    markdownResult.text,
+    updatedAddon,
+    updatedMainToc,
+    updatedOptionsToc
+  );
+  runValidationSuite({ allowVersionMismatch: true });
+
+  const files = {
+    [paths.markdownChangelog]: markdownResult.text,
+    [paths.addonChangelog]: updatedAddon,
+    [paths.mainToc]: updatedMainToc,
+    [paths.optionsToc]: updatedOptionsToc
+  };
+  if (Object.entries(files).some(([filePath, content]) => read(filePath) !== content)) {
+    writeMetadataTransaction(files);
+    console.log(`[RELEASE] Prepared ${mode} metadata for v${version}. Review and commit it before building.`);
+  } else {
+    console.log(`[RELEASE] ${mode} metadata for v${version} is already prepared and verified.`);
+  }
 }
 
 function resetDevelopmentMetadata() {
@@ -376,11 +585,13 @@ function resetDevelopmentMetadata() {
   if (branch !== 'dev') {
     fail(`Development metadata can only be reset on dev; current branch is ${branch || '(detached)'}.`);
   }
-  setTocVersion(paths.mainToc, 'Dev');
-  setTocVersion(paths.optionsToc, 'Dev');
-  if (readTocVersion(paths.mainToc) !== 'Dev' || readTocVersion(paths.optionsToc) !== 'Dev') {
-    fail('Failed to restore Dev TOC metadata.');
+  const mainToc = tocWithVersion(read(paths.mainToc), 'Dev', paths.mainToc);
+  const optionsToc = tocWithVersion(read(paths.optionsToc), 'Dev', paths.optionsToc);
+  if (readTocVersionFromText(mainToc, paths.mainToc) !== 'Dev' ||
+      readTocVersionFromText(optionsToc, paths.optionsToc) !== 'Dev') {
+    fail('Could not construct Dev TOC metadata.');
   }
+  writeMetadataTransaction({ [paths.mainToc]: mainToc, [paths.optionsToc]: optionsToc });
   console.log('[RELEASE] Restored both TOC files to Dev. Changelog history was preserved.');
 }
 
@@ -390,20 +601,27 @@ module.exports = {
   promoteBetaMarkdown,
   promoteBetaAddon,
   consolidateStableMarkdown,
-  consolidateStableAddon
+  consolidateStableAddon,
+  runValidationSuite
 };
 
 if (require.main === module) {
   const args = process.argv.slice(2);
   const command = args[0];
-  if (command === 'beta' || command === 'stable') {
+  if (command === 'prepare') {
+    prepare(args[1], args[2], args.slice(3));
+  } else if (command === 'build') {
+    buildRelease(args[1], args[2], args.slice(3));
+  } else if (command === 'beta' || command === 'stable') {
+    console.warn(`[RELEASE] '${command}' is a compatibility alias for 'prepare ${command}'; it no longer builds a mutable checkout.`);
     prepare(command, args[1], args.slice(2));
   } else if (command === 'reset') {
     resetDevelopmentMetadata();
   } else {
     console.error('Usage:');
-    console.error('  node .tools/create_release.js beta <version-betaN> [--date YYYY-MM-DD]');
-    console.error('  node .tools/create_release.js stable <version> [--date YYYY-MM-DD]');
+    console.error('  node .tools/create_release.js prepare beta <version-betaN> [--date YYYY-MM-DD]');
+    console.error('  node .tools/create_release.js prepare stable <version> [--date YYYY-MM-DD]');
+    console.error('  node .tools/create_release.js build <beta|stable> <version> --ref <commit-or-tag> [--output-root <path>]');
     console.error('  node .tools/create_release.js reset');
     process.exit(1);
   }

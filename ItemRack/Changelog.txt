@@ -1,5 +1,10 @@
 __ Development __
 
+- Captures Script event triggers during transition holds and replays them once after addon readiness, while preventing specialization events from claiming or later removing manually equipped matching sets during live evaluation or startup reconstruction.
+- Gives rune-specific queue entries deterministic precedence over migrated base-item wildcards, distinguishes physical rune-copy swaps from slot-scoped explicit re-engraving under either inventory-event order, and preserves saved item fields in tooltip membership.
+- Keeps the newest manual set request authoritative over duplicate automatic work and pauses the lock watchdog during casting or ordinary multi-pass swaps so only persistent inventory locks can time out.
+- Splits stable delivery into a locally installed production candidate and an approved public finalization, with exact committed/tagged-tree packages, verified manifests, and a hard failure when no local client target exists.
+
 __ New in 4.43-beta4 - By Bl4ut0 __
 - Fixed the keybinding overwrite confirmation Lua error by passing dynamic prompt text through Blizzard's formatted-text argument path. Set and event names containing percent signs are now safe, and a failed popup no longer leaves the binding controls disabled.
 - Hardened the complete set and slot hotkey lifecycle: explicit unbinds are saved, rejected replacements restore both prior keys, secondary keys and extended mouse buttons are recognized, screenshot bindings are protected, and all ItemRack click bindings consistently activate on key release.

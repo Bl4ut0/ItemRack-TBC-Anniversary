@@ -4,6 +4,10 @@ param(
     [ValidatePattern('^\d+\.\d+(?:\.\d+)?(?:-beta\d+)?$')]
     [string]$Version,
 
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$Ref,
+
     [string]$OutputRoot = '.versions'
 )
 
@@ -24,65 +28,158 @@ function Assert-ChildPath {
 
     $parentPrefix = $Parent.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
     if (-not $Child.StartsWith($parentPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to write outside the repository: $Child"
+        throw "Refusing to write outside the intended directory: $Child"
+    }
+}
+
+function Invoke-Git {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+
+    $output = @(& git -C $repoRoot @Arguments 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "git $($Arguments -join ' ') failed: $($output -join [Environment]::NewLine)"
+    }
+    return $output
+}
+
+function Read-RefFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    return (Invoke-Git -Arguments @('show', "${Commit}:$Path")) -join "`n"
+}
+
+function Get-SHA256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return (($algorithm.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) -join '')
+    } finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
     }
 }
 
 Assert-ChildPath -Child $outputRootFull -Parent $repoRoot
 
-$itemRackSource = Join-Path $repoRoot 'ItemRack'
-$optionsSource = Join-Path $repoRoot 'ItemRackOptions'
-if (-not (Test-Path -LiteralPath (Join-Path $itemRackSource 'ItemRack.toc'))) {
-    throw 'ItemRack/ItemRack.toc was not found. Run this script from the repository checkout.'
-}
-if (-not (Test-Path -LiteralPath (Join-Path $optionsSource 'ItemRackOptions.toc'))) {
-    throw 'ItemRackOptions/ItemRackOptions.toc was not found.'
+$commitOutput = @(Invoke-Git -Arguments @('rev-parse', '--verify', "$Ref^{commit}"))
+$commit = ([string]$commitOutput[0]).Trim()
+if ($commit -notmatch '^[0-9a-fA-F]{40}$') {
+    throw "Ref '$Ref' did not resolve to a full commit ID."
 }
 
-foreach ($tocPath in @(
-    (Join-Path $itemRackSource 'ItemRack.toc'),
-    (Join-Path $optionsSource 'ItemRackOptions.toc')
-)) {
-    $versionLine = Get-Content -LiteralPath $tocPath | Select-String '^## Version:\s*(\S+)\s*$'
-    if (-not $versionLine -or $versionLine.Matches[0].Groups[1].Value -ne $Version) {
-        throw "$tocPath does not identify release version $Version."
+foreach ($tocPath in @('ItemRack/ItemRack.toc', 'ItemRackOptions/ItemRackOptions.toc')) {
+    $tocContent = Read-RefFile -Commit $commit -Path $tocPath
+    $versionMatch = [regex]::Match($tocContent, '(?m)^## Version:\s*(\S+)\s*$')
+    if (-not $versionMatch.Success -or $versionMatch.Groups[1].Value -ne $Version) {
+        throw "$tocPath at $commit does not identify release version $Version."
     }
 }
 
-$releaseRoot = Join-Path $outputRootFull 'Release'
+$releaseRoot = [System.IO.Path]::GetFullPath((Join-Path $outputRootFull 'Release'))
 $releasePath = [System.IO.Path]::GetFullPath((Join-Path $releaseRoot "v$Version"))
-$compressedPath = Join-Path $outputRootFull 'Compressed'
-$zipPath = Join-Path $compressedPath "ItemRack-anniversary-$Version.zip"
+$compressedPath = [System.IO.Path]::GetFullPath((Join-Path $outputRootFull 'Compressed'))
+$zipPath = [System.IO.Path]::GetFullPath((Join-Path $compressedPath "ItemRack-anniversary-$Version.zip"))
 $hashPath = "$zipPath.sha256"
+$temporarySuffix = [Guid]::NewGuid().ToString('N')
+$temporaryReleasePath = [System.IO.Path]::GetFullPath((Join-Path $releaseRoot ".v$Version.$temporarySuffix.tmp"))
+$temporaryZipPath = [System.IO.Path]::GetFullPath((Join-Path $compressedPath ".ItemRack-anniversary-$Version.$temporarySuffix.tmp.zip"))
 
-Assert-ChildPath -Child $releasePath -Parent $releaseRoot
-Assert-ChildPath -Child $zipPath -Parent $compressedPath
-
-if (Test-Path -LiteralPath $releasePath) {
-    Remove-Item -LiteralPath $releasePath -Recurse -Force
+foreach ($candidate in @($releasePath, $temporaryReleasePath)) {
+    Assert-ChildPath -Child $candidate -Parent $releaseRoot
 }
-New-Item -ItemType Directory -Path $releasePath -Force | Out-Null
+foreach ($candidate in @($zipPath, $hashPath, $temporaryZipPath)) {
+    Assert-ChildPath -Child $candidate -Parent $compressedPath
+}
+
+New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $compressedPath -Force | Out-Null
 
-Copy-Item -LiteralPath $itemRackSource -Destination $releasePath -Recurse -Force
-Copy-Item -LiteralPath $optionsSource -Destination $releasePath -Recurse -Force
+try {
+    Invoke-Git -Arguments @(
+        '-c', 'core.autocrlf=false',
+        'archive', '--format=zip', "--output=$temporaryZipPath", $commit, '--', 'ItemRack', 'ItemRackOptions'
+    ) | Out-Null
+    New-Item -ItemType Directory -Path $temporaryReleasePath -Force | Out-Null
+    Expand-Archive -LiteralPath $temporaryZipPath -DestinationPath $temporaryReleasePath -Force
 
-if (Test-Path -LiteralPath $zipPath) {
-    Remove-Item -LiteralPath $zipPath -Force
+    $expectedFiles = @{}
+    foreach ($line in (Invoke-Git -Arguments @('ls-tree', '-r', $commit, '--', 'ItemRack', 'ItemRackOptions'))) {
+        if ($line -notmatch '^\d+\s+blob\s+([0-9a-fA-F]+)\t(.+)$') {
+            throw "Unsupported entry in release tree: $line"
+        }
+        $expectedFiles[$Matches[2]] = $Matches[1].ToLowerInvariant()
+    }
+    if ($expectedFiles.Count -eq 0) {
+        throw "Commit $commit contains no addon files."
+    }
+
+    $stagedFiles = @(
+        Get-ChildItem -LiteralPath $temporaryReleasePath -Recurse -File | ForEach-Object {
+            $_.FullName.Substring($temporaryReleasePath.Length + 1).Replace('\', '/')
+        }
+    )
+    if ($stagedFiles.Count -ne $expectedFiles.Count) {
+        throw "Archive file count $($stagedFiles.Count) does not match commit tree count $($expectedFiles.Count)."
+    }
+
+    foreach ($relativePath in $stagedFiles) {
+        if (-not $expectedFiles.ContainsKey($relativePath)) {
+            throw "Archive contains a file not present in commit $commit`: $relativePath"
+        }
+        $fullPath = Join-Path $temporaryReleasePath ($relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar))
+        # core.autocrlf is disabled for the archive, so compare its raw bytes
+        # directly with the committed blob rather than with the mutable checkout.
+        $blobHashOutput = @(Invoke-Git -Arguments @('hash-object', '--no-filters', '--', $fullPath))
+        $blobHash = ([string]$blobHashOutput[0]).Trim().ToLowerInvariant()
+        if ($blobHash -ne $expectedFiles[$relativePath]) {
+            throw "Archive content differs from commit $commit`: $relativePath"
+        }
+    }
+
+    if (Test-Path -LiteralPath $releasePath) {
+        Remove-Item -LiteralPath $releasePath -Recurse -Force
+    }
+    Move-Item -LiteralPath $temporaryReleasePath -Destination $releasePath
+
+    if (Test-Path -LiteralPath $zipPath) {
+        Remove-Item -LiteralPath $zipPath -Force
+    }
+    Move-Item -LiteralPath $temporaryZipPath -Destination $zipPath
+
+    $treeManifest = $expectedFiles.GetEnumerator() |
+        Sort-Object -Property Name |
+        ForEach-Object { "$($_.Value)  $($_.Name)" }
+    @(
+        "ref=$Ref"
+        "commit=$commit"
+    ) | Set-Content -LiteralPath (Join-Path $releasePath 'SOURCE_COMMIT.txt') -Encoding ascii
+    $treeManifest | Set-Content -LiteralPath (Join-Path $releasePath 'SOURCE_TREE.txt') -Encoding ascii
+
+    $fileHashManifest = foreach ($relativePath in ($expectedFiles.Keys | Sort-Object)) {
+        $fullPath = Join-Path $releasePath ($relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar))
+        "$(Get-SHA256 -Path $fullPath)  $relativePath"
+    }
+    $fileHashManifest | Set-Content -LiteralPath (Join-Path $releasePath 'SOURCE_FILES.sha256') -Encoding ascii
+
+    $hash = Get-SHA256 -Path $zipPath
+    "$hash  $(Split-Path -Leaf $zipPath)" | Set-Content -LiteralPath $hashPath -Encoding ascii
+
+    Write-Host "Release source ref: $Ref"
+    Write-Host "Release source commit: $commit"
+    Write-Host "Verified addon files: $($expectedFiles.Count)"
+    Write-Host "Release staging: $releasePath"
+    Write-Host "Release archive: $zipPath"
+    Write-Host "SHA-256 file: $hashPath"
+} finally {
+    if (Test-Path -LiteralPath $temporaryReleasePath) {
+        Remove-Item -LiteralPath $temporaryReleasePath -Recurse -Force
+    }
+    if (Test-Path -LiteralPath $temporaryZipPath) {
+        Remove-Item -LiteralPath $temporaryZipPath -Force
+    }
 }
-if (Test-Path -LiteralPath $hashPath) {
-    Remove-Item -LiteralPath $hashPath -Force
-}
-
-$pathsToCompress = @(
-    (Join-Path $releasePath 'ItemRack'),
-    (Join-Path $releasePath 'ItemRackOptions')
-)
-Compress-Archive -LiteralPath $pathsToCompress -DestinationPath $zipPath -CompressionLevel Optimal
-
-$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
-"$hash  $(Split-Path -Leaf $zipPath)" | Set-Content -LiteralPath $hashPath -Encoding ascii
-
-Write-Host "Release staging: $releasePath"
-Write-Host "Release archive: $zipPath"
-Write-Host "SHA-256 file: $hashPath"

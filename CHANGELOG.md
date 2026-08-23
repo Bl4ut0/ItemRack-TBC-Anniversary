@@ -4,6 +4,13 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 
 ## [Development]
 
+### Bug Fixes & Improvements
+- **Deferred Script Event Delivery**: Script triggers that fire during loading, summon, and post-zone settlement holds are now captured with their original arguments and replayed exactly once when item, queue, and bag state are ready. Built-in state events remain reconciled separately without duplicate dispatch.
+- **Specialization Event Ownership**: A specialization event can restore or unequip gear only when it owns an actual event-stack layer. A matching set equipped manually is no longer claimed during a forced same-spec evaluation or startup reconstruction, or removed on the next specialization change.
+- **Deterministic Rune-Copy Handling**: Rune-specific queue entries now take precedence over migrated base-item wildcards across automatic and manual cycling. Physical swaps between identically itemized rune copies retain the normal equip hold, explicit re-engraving is attributed only to Blizzard's affected equipment slot under either event order, and tooltip membership preserves the saved item fields.
+- **Manual Request and Lock-Watchdog Recovery**: A later manual set request now overrides duplicate automatic provenance, while casting and ordinary multi-pass swaps pause the watchdog. Only a persistent item or cursor lock can consume the timeout and bounded retry.
+- **Candidate-First Stable Release Flow**: Stable promotion is split into a locally installed production-branch candidate and a separately approved public finalization. Packages are rebuilt from the exact committed/tagged Git tree, verified against their manifest, and fail when no local client target is installed.
+
 ## [4.43-beta4] - 2026-08-10
 ### Bug Fixes & Improvements
 - **Keybinding Overwrite Confirmation**: Fixed the Lua format error that prevented the overwrite prompt from opening when assigning a key that was already bound. Dynamic popup text now uses Blizzard's formatted-text argument path, safely handles set or event names containing `%`, and no longer leaves the binding controls disabled if the prompt cannot be shown.
