@@ -1,6 +1,6 @@
-# ItemRack - TBC Anniversary Edition
+# ItemRack - Anniversary Edition
 
-A port of the classic ItemRack addon for **World of Warcraft: The Burning Crusade Classic Anniversary Edition (2.5.5)**.
+A maintained port of the classic ItemRack addon for **WoW Classic Era/Hardcore/Season of Discovery (1.15.9)** and **The Burning Crusade Classic Anniversary (2.5.5/2.5.6)**.
 
 ## Credits
 
@@ -14,10 +14,11 @@ This addon is based on the original **ItemRack Classic** maintained by Rottenbee
 
 ## Installation
 
-1. Download the latest release from the [Releases page](https://github.com/Bl4ut0/ItemRack-TBC-Anniversary/releases)
-2. Extract the contents to your WoW addons folder:
+1. Download the latest release from the [Releases page](https://github.com/Bl4ut0/ItemRack-Anniversary/releases)
+2. Extract the contents to the `Interface\AddOns` folder for the client you use, for example:
    ```
    World of Warcraft\_classic_era_\Interface\AddOns\
+   World of Warcraft\_anniversary_\Interface\AddOns\
    ```
 3. You should have two folders:
    - `ItemRack/`
@@ -36,7 +37,7 @@ ItemRack allows you to manage your gear with extreme precision through sets, aut
 - **Open Options:** Type `/itemrack opt` or **Right-Click** the minimap button.
 - **Slot Buttons:** **Alt-Click** any item slot on your Character Sheet to create an on-screen "Quick Access" button for that slot.
 - **Use Item:** **Left-Click** a slot button to use the item (trinkets, on-use effects).
-- **Cycle Queue:** **Right-Click** a slot button to immediately swap to the next item in that slot's queue.
+- **Right-Click:** Opens the slot menu when **Menu on right click** is enabled; otherwise uses the item when **Use on right click** is enabled; with both disabled, advances to the next valid queue item.
 - **Open Slot Menu:** Hover over a slot button to open the item selection flyout menu.
 - **Open Queue Options:** **Alt+Right-Click** a slot button to open the Queue configuration for that slot.
 - **Auto-Queue Toggle:** **Alt+Left-Click** an on-screen slot button to toggle the Auto-Queue system for that specific slot on/off.

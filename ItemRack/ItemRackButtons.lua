@@ -91,6 +91,16 @@ function ItemRack.ButtonOnLoad(self)
 		hotkey:SetText("")
 	end
 
+	-- Slot 20 is the set button and never displays an item stack or charge count.
+	-- Its inherited ActionBarButtonTemplate Count region can otherwise retain an
+	-- action-bar value and cover the set name, even with every addon disabled.
+	local countText = _G[self:GetName().."Count"]
+	if self:GetID() == 20 and countText then
+		countText:SetText("")
+		countText:Hide()
+		countText.SetText = function() end
+	end
+
 	-- Clear the "Name" FontString (macro/action name text from ActionButtonTemplate).
 	-- During ActionBarButtonMixin:OnLoad(), UpdateAction() writes macro text from matching
 	-- action bar slots to self.Name via GetActionText(). We must clear it and prevent
@@ -286,6 +296,9 @@ function ItemRack.InitButtons()
 	local button
 	for i=0,20 do
 		button = _G["ItemRackButton"..i]
+		-- CLICK keybindings are handled consistently on key release regardless of
+		-- the player's ActionButtonUseKeyDown CVar.
+		button:SetAttribute("useOnKeyDown",false)
 		
 		-- Securely wrap Show to prevent external/Blizzard systems from showing inactive buttons
 		local origShow = button.Show
@@ -419,6 +432,7 @@ function ItemRack.AddButton(id)
 	end
 	ItemRack.NewAnchor = id
 	_G["ItemRackButton"..id.."ItemRackIcon"]:SetTexture(ItemRack.GetTextureBySlot(id))
+	ItemRack.SetRuneIconOverlay(button,id<20 and ItemRack.GetID(id) or nil,nil,nil,"BOTTOMLEFT")
 	button:Show()
 	ItemRack.UpdateButtonCooldowns()
 	if ItemRack.RefreshButtonVisibility then
@@ -662,6 +676,7 @@ function ItemRack.UpdateButtons()
 	for i in pairs(ItemRackUser.Buttons) do
 		if i<20 then
 			_G["ItemRackButton"..i.."ItemRackIcon"]:SetTexture(ItemRack.GetTextureBySlot(i))
+			ItemRack.SetRuneIconOverlay(_G["ItemRackButton"..i],ItemRack.GetID(i),nil,nil,"BOTTOMLEFT")
 			
 			-- Update Stack/Charge Count (Hide if <= 1, Show if > 1)
 			local count = GetInventoryItemCount("player", i)
@@ -865,9 +880,19 @@ function ItemRack.ButtonPostClick(self,button)
 		end
 		
 		
-		-- Plain right-click on Slot 20 opens the Settings page
+		-- Slot 20 must honor the same Menu-on-right-click setting as Classic Era.
+		-- Alt+Right-click above remains the shortcut to the Sets options tab.
 		if id==20 then
-			ItemRack.ToggleOptions(self)
+			if ItemRackSettings.MenuOnRight=="ON" then
+				if ItemRackMenuFrame:IsVisible() and ItemRack.menuOpen==id then
+					ItemRackMenuFrame:Hide()
+				else
+					ItemRack.DockMenuToButton(id)
+					ItemRack.BuildMenu(id, nil, 2)
+				end
+			else
+				ItemRack.ToggleOptions(self)
+			end
 			return
 		end
 		

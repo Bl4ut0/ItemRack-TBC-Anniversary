@@ -186,7 +186,7 @@ function ItemRackOpt.OnLoad(self)
 
 		{type="label",label="Global Settings"},
 		{type="check",optset=ItemRackSettings,variable="MenuOnShift",label="Menu on Shift",tooltip="Only show menu while Shift is held down."},
-		{type="check",optset=ItemRackSettings,variable="MenuOnRight",label="Menu on right click",tooltip="Open menu by right clicking buttons.\nWhen unchecked, Alt+Right-Click opens the menu.",combatlock=1},
+		{type="check",optset=ItemRackSettings,variable="MenuOnRight",label="Menu on right click",tooltip="Open item and set flyout menus by right clicking buttons.\nWhen unchecked, flyout menus open on hover; Alt+Right-Click opens configuration.",combatlock=1},
 		{type="check",optset=ItemRackSettings,variable="RightClickUse",label="Use on Right-Click",tooltip="Right-clicking an item button uses the item instead of manually advancing its auto queue."},
 		{type="check",optset=ItemRackSettings,variable="HideOOC",label="Hide out of combat",tooltip="Hide the buttons while out of combat.",combatlock=1},
 		{type="check",optset=ItemRackSettings,variable="HidePetBattle",label="Hide during pet battles",tooltip="Hide the buttons during a pet battle."},
@@ -232,6 +232,20 @@ function ItemRackOpt.OnLoad(self)
 		{type="button",button=ItemRackOptResetEverything,label="Reset Everything",tooltip="Wipe all settings, sets and events to restore mod to a default state.",combatlock=1},
 		{type="button",button=ItemRackOptSoundSettings,label="Sound Settings",tooltip="Open sound settings to control swap and action bar sounds per event."},
 	}
+	if ItemRack.IsEngravingActive() then
+		for i,opt in ipairs(ItemRackOpt.OptInfo) do
+			if opt.variable == "CharacterSheetMenus" then
+				table.insert(ItemRackOpt.OptInfo,i,{
+					type="check",
+					optset=ItemRack.RuneIconSettings,
+					variable="ShowRuneIcons",
+					label="Show SoD rune icons",
+					tooltip="Use Blizzard's always-show setting to display engraved runes on native gear icons and as small markers on ItemRack item, menu, set-editor, and AutoQueue icons.",
+				})
+				break
+			end
+		end
+	end
 
 	ItemRackOpt.InitializeSliders()
 	ItemRackOpt.TabOnClick(self,1) -- start at tab 1 (config)
@@ -333,6 +347,7 @@ function ItemRackOpt.UpdateInv()
 		end
 		icon:SetTexture(texture)
 		item = _G["ItemRackOptInv"..i]
+		ItemRack.SetRuneIconOverlay(item,ItemRackOpt.Inv[i].id)
 		item:UnlockHighlight()
 		if ItemRackOpt.Inv[i].selected then
 			icon:SetVertexColor(1,1,1)
@@ -763,14 +778,20 @@ end
 function ItemRackOpt.DeleteSet()
 	local setname = ItemRackOptSetsName:GetText()
 	if ItemRackUser.Sets[setname] then
-		if not InCombatLockdown() then
-			local buttonName = "ItemRack"..UnitName("player")..GetRealmName()..setname
-			local button = _G[buttonName]
-			if button then
-				ClearOverrideBindings(button)
-			end
-		else
-			ItemRack.Print("Cannot delete set keybindings in combat.")
+		if InCombatLockdown() then
+			ItemRack.Print("Cannot delete sets while in combat.")
+			return
+		end
+		local buttonName = ItemRack.GetSetBindingButtonName(setname)
+		local cleared = ItemRack.ClearBindingAction("CLICK "..buttonName..":LeftButton",true)
+		if not cleared then
+			ItemRack.Print("The set binding could not be removed, so the set was not deleted.")
+			return
+		end
+		local button = _G[buttonName]
+		if button then
+			button:SetAttribute("macrotext","")
+			button:SetScript("PostClick",nil)
 		end
 		ItemRackUser.Sets[setname] = nil
 	end
@@ -922,6 +943,9 @@ function ItemRackOpt.SelectSetList(self)
 		end
 		ItemRackUser.Events.Set[event] = setname
 		ItemRackOpt.PopulateEventList()
+		if ItemRack.SpinUpEvent then
+			ItemRack.SpinUpEvent(event)
+		end
 	else
 		-- fill out set build info if picking a set (ItemRackOptSubFrame2)
 		local set = ItemRackUser.Sets[setname]
@@ -1194,6 +1218,8 @@ function ItemRackOpt.OptListCheckButtonOnClick(self,override)
 		end
 	elseif opt.variable=="ShowHotKeys" then
 		ItemRack.KeyBindingsChanged()
+	elseif opt.variable=="ShowRuneIcons" then
+		ItemRack.SetRuneIconsEnabled(check)
 	elseif opt.variable=="EnableEvents" then
 		ItemRack.RegisterEvents()
 	elseif opt.variable=="DisableAltClick" then
@@ -1285,7 +1311,7 @@ end
 
 function ItemRackOpt.BindSet()
 	local setname = ItemRackOptSetsName:GetText()
-	ItemRackOpt.Binding = { type="Set", name="Set \""..setname.."\"", buttonName="ItemRack"..UnitName("player")..GetRealmName()..setname }
+	ItemRackOpt.Binding = { type="Set", name="Set \""..setname.."\"", buttonName=ItemRack.GetSetBindingButtonName(setname) }
 	ItemRackOpt.Binding.button = _G[ItemRackOpt.Binding.buttonName] or CreateFrame("Button",ItemRackOpt.Binding.buttonName,nil,"SecureActionButtonTemplate")
 	
 	ItemRackOptBindFrame:Show()	
@@ -1316,11 +1342,6 @@ function ItemRackOpt.BindFrameOnKeyDown(self,key)
 		self:Hide()
 		return
 	end
-	local screenshotKey = GetBindingKey("SCREENSHOT");
-	if ( screenshotKey and key == screenshotKey ) then
-		Screenshot();
-		return;
-	end
 	local button
 	-- Convert the mouse button names
 	if ( key == "LeftButton" ) then
@@ -1333,6 +1354,8 @@ function ItemRackOpt.BindFrameOnKeyDown(self,key)
 		button = "BUTTON4"
 	elseif ( key == "Button5" ) then
 		button = "BUTTON5"
+	elseif string.match(key or "","^Button%d+$") then
+		button = string.upper(key)
 	end
 	local keyPressed
 	if ( button ) then
@@ -1356,13 +1379,19 @@ function ItemRackOpt.BindFrameOnKeyDown(self,key)
 		keyPressed = "ALT-"..keyPressed
 	end
 	if keyPressed then
+		if GetBindingAction(keyPressed)=="SCREENSHOT" then
+			Screenshot()
+			return
+		end
 		ItemRackOpt.Binding.keyPressed = keyPressed
+		local bindingAction = "CLICK "..ItemRackOpt.Binding.buttonName..":LeftButton"
 		local oldAction = GetBindingAction(keyPressed)
-		if oldAction~="" and keyPressed~=ItemRackOpt.Binding.currentKey then
+		if oldAction~="" and oldAction~=bindingAction then
 			local bindingName = GetBindingText(oldAction,"BINDING_NAME_")
 			if not bindingName or bindingName == "" then bindingName = oldAction end
+			local confirmationText = NORMAL_FONT_COLOR_CODE..ItemRackOpt.Binding.keyPressed..FONT_COLOR_CODE_CLOSE.." is currently bound to "..NORMAL_FONT_COLOR_CODE..bindingName..FONT_COLOR_CODE_CLOSE.."\n\nDo you want to bind "..NORMAL_FONT_COLOR_CODE..keyPressed..FONT_COLOR_CODE_CLOSE.." to "..NORMAL_FONT_COLOR_CODE..ItemRackOpt.Binding.name..FONT_COLOR_CODE_CLOSE.."?"
 			StaticPopupDialogs["ItemRackCONFIRMBINDING"] = {
-				text = NORMAL_FONT_COLOR_CODE..ItemRackOpt.Binding.keyPressed..FONT_COLOR_CODE_CLOSE.." is currently bound to "..NORMAL_FONT_COLOR_CODE..bindingName..FONT_COLOR_CODE_CLOSE.."\n\nDo you want to bind "..NORMAL_FONT_COLOR_CODE..keyPressed..FONT_COLOR_CODE_CLOSE.." to "..NORMAL_FONT_COLOR_CODE..ItemRackOpt.Binding.name..FONT_COLOR_CODE_CLOSE.."?",
+				text = "%s",
 				button1 = "Yes",
 				button2 = "No",
 				timeout = 0,
@@ -1370,14 +1399,14 @@ function ItemRackOpt.BindFrameOnKeyDown(self,key)
 				OnAccept = ItemRackOpt.SetKeyBinding,
 				OnCancel = ItemRackOpt.ResetBindFrame
 			}
-			ItemRackOptBindFrame:EnableKeyboard(false) -- turn off keyboard catching
-			ItemRackOptBindFrame:EnableMouse(false) -- and mouse
-			ItemRackOptBindCancel:Disable()
-			ItemRackOptBindUnbind:Disable()
-			local popup = StaticPopup_Show("ItemRackCONFIRMBINDING")
-			if not popup then
+			local popup = StaticPopup_Show("ItemRackCONFIRMBINDING",confirmationText)
+			if popup then
+				ItemRackOptBindFrame:EnableKeyboard(false) -- turn off keyboard catching
+				ItemRackOptBindFrame:EnableMouse(false) -- and mouse
+				ItemRackOptBindCancel:Disable()
+				ItemRackOptBindUnbind:Disable()
+			else
 				ItemRackOpt.ResetBindFrame()
-				ItemRackOpt.SetKeyBinding()
 			end
 		else
 			ItemRackOpt.SetKeyBinding()
@@ -1387,11 +1416,16 @@ end
 
 function ItemRackOpt.SetKeyBinding()
 	if not InCombatLockdown() and ItemRackOpt.Binding.keyPressed then
-		ItemRackOpt.UnbindKey()
-		SetBindingClick(ItemRackOpt.Binding.keyPressed,ItemRackOpt.Binding.buttonName)
-		local bindingSet = GetCurrentBindingSet()
-		if bindingSet then
-			SaveBindings(bindingSet)
+		local action = "CLICK "..ItemRackOpt.Binding.buttonName..":LeftButton"
+		local oldKey1,oldKey2 = GetBindingKey(action)
+		local cleared = ItemRack.ClearBindingAction(action,false)
+		if cleared and SetBindingClick(ItemRackOpt.Binding.keyPressed,ItemRackOpt.Binding.buttonName) then
+			ItemRack.SaveCurrentBindings()
+		else
+			-- Restore the prior assignment if Blizzard rejects the new key.
+			if oldKey1 then SetBindingClick(oldKey1,ItemRackOpt.Binding.buttonName) end
+			if oldKey2 then SetBindingClick(oldKey2,ItemRackOpt.Binding.buttonName) end
+			ItemRack.Print("Sorry, that key binding could not be saved.")
 		end
 	else
 		ItemRack.Print("Sorry, you can't bind keys while in combat.")
@@ -1407,12 +1441,10 @@ function ItemRackOpt.ResetBindFrame()
 	ItemRackOptBindUnbind:Enable()
 end
 
-function ItemRackOpt.UnbindKey()
+function ItemRackOpt.UnbindKey(persist)
 	if not InCombatLockdown() and ItemRackOpt.Binding.buttonName then
 		local action = "CLICK "..ItemRackOpt.Binding.buttonName..":LeftButton"
-		while GetBindingKey(action) do
-			SetBinding(GetBindingKey(action))
-		end
+		ItemRack.ClearBindingAction(action,persist~=false)
 	end
 	if ItemRackOpt.prevFrame==ItemRackOptSubFrame6 then
 		ItemRackOpt.prevFrame = nil
@@ -1423,12 +1455,10 @@ function ItemRackOpt.ReconcileSetBindings()
 	local buttonName,key
 	for i in pairs(ItemRackUser.Sets) do
 		ItemRackUser.Sets[i].key = nil
-		buttonName = "ItemRack"..UnitName("player")..GetRealmName()..i
-		if _G[buttonName] then
-			key = GetBindingKey("CLICK "..buttonName..":LeftButton")
-			if key and key~="" then
-				ItemRackUser.Sets[i].key = key
-			end
+		buttonName = ItemRack.GetSetBindingButtonName(i)
+		key = GetBindingKey("CLICK "..buttonName..":LeftButton")
+		if key and key~="" then
+			ItemRackUser.Sets[i].key = key
 		end
 	end
 	ItemRack.SetSetBindings()
@@ -1589,12 +1619,18 @@ function ItemRackOpt.PopulateSortList(slot)
 					i = i + 1
 				end
 			else
-				local baseID = ItemRack.GetIRString(entry.id, true) -- get base item ID
-				if seen[baseID] then
+				local duplicateKey
+				if ItemRack.HasRuneID(entry.id) then
+					local itemFields = tostring(entry.id):match(ItemRack.iSPatternItemFieldsFromIR) or tostring(entry.id)
+					duplicateKey = "rune:"..itemFields..":"..tostring(ItemRack.GetRuneID(entry.id))
+				else
+					duplicateKey = "legacy:"..tostring(ItemRack.GetIRString(entry.id,true))
+				end
+				if seen[duplicateKey] then
 					-- Duplicate item found, remove it
 					table.remove(sortList, i)
 				else
-					seen[baseID] = true
+					seen[duplicateKey] = true
 					i = i + 1
 				end
 			end
@@ -1613,16 +1649,20 @@ end
 
 function ItemRackOpt.AddToSortList(sortList,id)
 	local found
-	-- Use base ID comparison to prevent duplicates when full ID strings differ
-	-- (e.g., same item with different player level encoded, or minor ID format differences)
+	-- Rune-aware entries are duplicates only when their item fields and rune
+	-- match. Legacy entries retain the historical base-ID de-duplication.
 	for i=1,#(sortList) do
 		if sortList[i].id == 0 and id == 0 then
 			found = true
 			
 			break
-		elseif sortList[i].id ~= 0 and id ~= 0 and (sortList[i].id == id or ItemRack.SameID(sortList[i].id, id)) then
-			found = true
-			break
+		elseif sortList[i].id ~= 0 and id ~= 0 then
+			local existingHasRune = ItemRack.HasRuneID(sortList[i].id)
+			local newHasRune = ItemRack.HasRuneID(id)
+			if ItemRack.SameExactID(sortList[i].id,id) or (not existingHasRune and not newHasRune and ItemRack.SameID(sortList[i].id,id)) then
+				found = true
+				break
+			end
 		end
 	end
 	
@@ -1857,6 +1897,7 @@ function ItemRackOpt.SortListScrollFrameUpdate()
 			
 			_G["ItemRackOptSortList"..i.."Name"]:SetText(name)
 			_G["ItemRackOptSortList"..i.."Icon"]:SetTexture(texture)
+			ItemRack.SetRuneIconOverlay(item,sortList[idx].id,_G["ItemRackOptSortList"..i.."Icon"],11)
 			local r,g,b = GetItemQualityColor(quality or 1)
 			_G["ItemRackOptSortList"..i.."Name"]:SetTextColor(r,g,b,1)
 			item:Show()
@@ -1866,6 +1907,7 @@ function ItemRackOpt.SortListScrollFrameUpdate()
 				ItemRackOpt.UnlockHighlight(item)
 			end
 		else
+			ItemRack.SetRuneIconOverlay(item,nil,_G["ItemRackOptSortList"..i.."Icon"],11)
 			item:Hide()
 		end
 
@@ -2298,18 +2340,24 @@ function ItemRackOpt.EventListEnabledOnClick(self)
 	local idx = FauxScrollFrame_GetOffset(ItemRackOptEventListScrollFrame) + self:GetParent():GetID()
 	ItemRackOpt.EventSelected = idx
 	local checked = self:GetChecked()
-	ItemRackUser.Events.Enabled[ItemRackOpt.EventList[idx][1]] = checked
+	local eventName = ItemRackOpt.EventList[idx][1]
+	ItemRackUser.Events.Enabled[eventName] = checked
 	if checked then
 		ItemRackUser.EnableEvents = "ON"
 		ItemRack.ReflectEventsRunning()
+		if ItemRack.SpinUpEvent then
+			ItemRack.SpinUpEvent(eventName)
+		end
+	else
+		ItemRackOpt.EventSelected = nil
+		ItemRackUser.Events.Enabled[eventName] = nil
+		if ItemRack.SpinDownEvent then
+			ItemRack.SpinDownEvent(eventName)
+		end
 	end
-	if checked and ItemRackOpt.EventList[idx][2]~="Script" and not ItemRackUser.Events.Set[ItemRackOpt.EventList[idx][1]] then
+	if checked and ItemRackOpt.EventList[idx][2]~="Script" and not ItemRackUser.Events.Set[eventName] then
 		-- if an event without a set is being checked, choose a set
 		ItemRackOpt.EventListIconOnClick(self)
-	end
-	if not checked then
-		ItemRackOpt.EventSelected = nil
-		ItemRackUser.Events.Enabled[ItemRackOpt.EventList[idx][1]] = nil
 	end
 	ItemRackOpt.PopulateEventList()
 end
@@ -2612,6 +2660,9 @@ end
 function ItemRackOpt.EventEditDelete(override)
 	local eventName = ItemRackOpt.EventList[ItemRackOpt.EventSelected][1]
 	if ItemRackUser.Events.Set[eventName] or ItemRackUser.Events.Enabled[eventName] then
+		if ItemRack.SpinDownEvent then
+			ItemRack.SpinDownEvent(eventName)
+		end
 		ItemRackUser.Events.Set[eventName] = nil
 		ItemRackUser.Events.Enabled[eventName] = nil
 		ItemRackOpt.EventSelected = nil
@@ -2619,8 +2670,9 @@ function ItemRackOpt.EventEditDelete(override)
 		return
 	end
 	if not override then
+		local confirmationText = "Are you sure you want to delete the event \""..eventName.."\"?"
 		StaticPopupDialogs["ItemRackConfirmEventDelete"] = {
-			text = "Are you sure you want to delete the event \""..eventName.."\"?",
+			text = "%s",
 			button1 = "Yes", button2 = "No", timeout = 0, hideOnEscape = 1, whileDead = 1,
 			OnAccept = function() StaticPopupDialogs["ItemRackConfirmEventDelete"].OnCancel() ItemRackOpt.EventEditDelete(1) end,
 			OnCancel = function() ItemRackOptEventNew:Enable() ItemRackOpt.ValidateEventListButtons() end
@@ -2628,7 +2680,7 @@ function ItemRackOpt.EventEditDelete(override)
 		ItemRackOptEventEdit:Disable()
 		ItemRackOptEventDelete:Disable()
 		ItemRackOptEventNew:Disable()
-		StaticPopup_Show("ItemRackConfirmEventDelete")
+		StaticPopup_Show("ItemRackConfirmEventDelete",confirmationText)
 		return
 	end
 	if ItemRack.DefaultEvents[eventName] then

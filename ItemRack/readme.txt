@@ -13,7 +13,7 @@ Dockable buttons:
 * Alt+click slots on the character sheet to create/remove buttons
 * Alt+click yourself in the character sheet to create/remove a set button
 * Alt+click the created buttons to toggle their auto-queue status
-* Right-click a created slot button to advance to the next valid item in that slot's queue
+* Right-click behavior follows Global Settings: Menu on Right-Click opens the flyout; otherwise Use on Right-Click uses the item; with both off it advances to the next valid queue item
 * Burn-on-use queue tracking is exact-item aware, so duplicate same-base items with different enchants or gems won't burn each other
 * Shift+drag buttons to break them apart if they're docked to each other
 * Drag the menu's border around to dock it to a different side of buttons

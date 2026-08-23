@@ -20,7 +20,7 @@ A comprehensive guide to all mouse, keyboard, and command controls available in 
 | Action | Effect |
 |--------|--------|
 | **Left-Click** | Uses the item (activates on-use trinkets, equippables, etc.) |
-| **Right-Click** | Advances to the next item in the queue for that slot |
+| **Right-Click** | Opens the flyout when **Menu on Right-Click** is enabled; otherwise uses the equipped item when **Use on Right-Click** is enabled; otherwise advances to the next valid queue item |
 | **Hover** | Opens the item selection flyout menu |
 | **Shift+Left-Click** | Links the equipped item to chat (if chat edit box is open) |
 | **Alt+Left-Click** | Toggles Auto-Queue ON/OFF for that slot |
@@ -34,10 +34,10 @@ A comprehensive guide to all mouse, keyboard, and command controls available in 
 | Action | Effect |
 |--------|--------|
 | **Left-Click** | Equips the current set (or toggles if "Equip Toggle" is ON). Manually equipping a set suppresses conflicting automated background events. |
-| **Right-Click** | Opens the ItemRack Options window |
+| **Right-Click** | Opens the gear-set list when **Menu on right click** is enabled; otherwise opens ItemRack Options |
 | **Shift+Left-Click** | Unequips the current gear set |
 | **Alt+Left-Click** | Toggles ItemRack Events ON/OFF |
-| **Alt+Right-Click** | Opens the Events tab in Options |
+| **Alt+Right-Click** | Opens the Sets tab in Options |
 
 ---
 
@@ -112,6 +112,7 @@ All 20 ItemRack equipment slots can be bound directly via the native WoW interfa
 | **Disable Alt+Click** | Disables Alt+Click toggling Auto-Queue (useful for self-cast macros) |
 | **Menu on Shift** | Requires holding Shift to open flyout menus (Mutually exclusive with Menu on Right-Click) |
 | **Menu on Right-Click** | Opens menus on right-click instead of hover (Mutually exclusive with Menu on Shift) |
+| **Use on Right-Click** | When Menu on Right-Click is off, uses the equipped item instead of advancing its queue |
 | **Allow Hidden** | Enables hiding items from menus via Alt+Click |
 | **Lock** | Prevents all button movement |
 

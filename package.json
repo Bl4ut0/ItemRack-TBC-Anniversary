@@ -1,4 +1,15 @@
 {
+  "private": true,
+  "scripts": {
+    "validate:lua": "node .tools/check_lua.js ItemRack/ItemRack.lua ItemRack/ItemRackButtons.lua ItemRack/ItemRackEquip.lua ItemRack/ItemRackEvents.lua ItemRack/ItemRackQueue.lua ItemRackOptions/ItemRackOptions.lua",
+    "validate:structure": "node .tools/check_addon_structure.js",
+    "test:regressions": "node .tools/check_regressions.js",
+    "test:events": "node .tools/check_events_runtime.js",
+    "test:identity": "node .tools/check_identity_regressions.js",
+    "test:queue-watchdog": "node .tools/check_queue_watchdog_regressions.js",
+    "test:release": "node .tools/check_release_flow.js",
+    "test": "npm run validate:lua && npm run validate:structure && npm run test:regressions && npm run test:events && npm run test:identity && npm run test:queue-watchdog && npm run test:release"
+  },
   "dependencies": {
     "luaparse": "^0.3.1"
   }

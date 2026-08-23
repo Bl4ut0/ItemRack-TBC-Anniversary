@@ -6,21 +6,17 @@ This document details all modifications made to port ItemRack Classic to the TBC
 
 The TBC Anniversary Edition runs on a modern WoW client engine (similar to Retail), which means many APIs have been moved to new namespaces or deprecated. This port adds compatibility shims and fixes to ensure ItemRack functions correctly.
 
-## Action Bar Button Taint Fix (GameTooltip:Show)
-**File:** [ItemRack.lua](file:///c:/Dev%20Projects/ItemRack/ItemRack/ItemRack.lua) — `ItemRack.ListSetsHavingItem`
+## Tooltip Post-Hook Taint Containment
+**File:** `ItemRack/ItemRack.lua` — `ItemRack.ListSetsHavingItem`
 
 ### Problem
-Hovering over Blizzard action bar buttons would intermittently throw `ADDON_ACTION_BLOCKED` errors on protected calls like `ActionButton1:SetAttribute()` within `UpdatePressAndHoldAction`.
+`ListSetsHavingItem` runs from insecure post-hooks on Blizzard tooltip methods. Calling `tooltip:Show()` from those hooks can propagate taint into protected action-button update paths and produce `ADDON_ACTION_BLOCKED` errors after an otherwise harmless item hover.
 
-### Root Cause
-Whenever the player hovered over items in their bags or character sheet slots, `ItemRack` appended the set names containing the item to the tooltip.
-In the secure hooks (`SetBagItem`, `SetInventoryItem`, `SetHyperlink`), `ListSetsHavingItem` called `tooltip:Show()` to force the tooltip to resize and update.
-Because `hooksecurefunc` callbacks execute in the addon's insecure context, calling `Show()` on the shared `GameTooltip` tainted the tooltip frame.
-When the user subsequently hovered over an Action Bar button, the Blizzard UI called `GameTooltip:SetOwner(ActionButton, ...)` which propagated the taint to the Action Button.
-Once the secure button became tainted, any internal Blizzard ActionButton functions attempting protected operations (like `SetAttribute`) were blocked.
+### Correct boundary
+The hook may append ItemRack's set-name lines with `AddDoubleLine`, but Blizzard retains ownership of the tooltip's `Show` lifecycle. Avoiding direct assignments to `GameTooltip.SetOwner` fixes a separate taint source; it does **not** make an insecure `Show()` call safe. Earlier versions of this document incorrectly combined those two issues.
 
 ### Solution
-Removed the redundant `tooltip:Show()` call from `ListSetsHavingItem`. Since Blizzard's default UI already calls `Show()` at the end of the item-hover execution path, the tooltip is refreshed and drawn in a secure context with our added lines, completely preventing taint propagation.
+`ListSetsHavingItem` now only appends and clears its lines. It never calls `Show()` or replaces a secure tooltip method. Character-sheet positioning is applied after Blizzard's handler completes. Backdrop sizing should be verified in-game on each supported client; any future sizing adjustment must preserve this protected-method boundary.
 
 ---
 
@@ -75,7 +71,7 @@ Instead of intercepting `GameTooltip.SetOwner`, we now:
 2. Call the original Blizzard handler **completely untouched** (secure, no taint)
 3. **After** it finishes, reposition using `ClearAllPoints()`/`SetPoint()` — these are method calls, not table key assignments, so they don't cause taint
 4. **Reveal** the tooltip at the correct position with `SetAlpha(1)`
-5. Store the desired anchor in `ItemRack.pendingTooltipAnchor` so it can be **re-applied** after `tooltip:Show()` calls from hooks (e.g. `ListSetsHavingItem`) which would otherwise re-snap the tooltip
+5. Store the desired anchor in `ItemRack.pendingTooltipAnchor` so it can be **re-applied** after asynchronous native tooltip refreshes that restore Blizzard's default anchor
 6. If the repositioned tooltip is **too wide** and overlaps the menu, fall back to below the menu frame
 
 ```lua
@@ -408,3 +404,65 @@ When the player is in combat and triggers a manual item or set swap, the swap is
 - Updated the queue removal condition in `ItemRack.ProcessAutoQueue()` to verify the swap's origin.
 - Guarded the cleanup check with `ItemRack.AutoQueueFlag` and `ItemRack.AutoQueueFlag[slot]`.
 - This ensures that only auto-queued swaps (which have `AutoQueueFlag[slot] = true`) are removed from the queue when the equipped item is ready, while manual item/set swaps are safely preserved.
+
+---
+
+## Forced-Dismount & Mounted Zone Transition Recovery
+**File:** `ItemRack/ItemRackEvents.lua`, `ItemRack/ItemRack.lua`
+
+### Problem
+When teleported via portal, summoned, or entering instances while mounted, the client forcibly dismounts the player before or during the zone load. Previously, destination `Zone` events executed before the mount set was popped, causing the new `Zone` set to record `Mounted` as its `oldset` (previous gear history). This resulted in inactive mount entries trapped on `ItemRackUser.EventStack` and circular `Zone -> Mounted -> Zone` gear restoration loops.
+
+### Solution
+1. **Unwinding Invalid Mount Events:** Implemented `reconcileInvalidMountEvents(isMounted, instanceType)` which scans `EventStack` topmost-first and unwinds any invalid/excluded mount layers *before* any destination Zone event is evaluated.
+2. **Mounted Zone Re-Basing:** Implemented `prepareMountRebase(eventName)`: When moving between zones while remaining mounted, old mount layers unwind one step first so the destination Zone set records clean base gear history before the mount layer is re-applied.
+3. **Zone Placement Under Mount:** Implemented `ensureZoneEventBelowMount(zoneEventName, mountEventName)` to place matching Zone events underneath active mount layers without forcing redundant item swaps.
+4. **Transition Deferral Guards:** Added `mountZoneSwapBusy()` checks (combat, casting, death, active locks) and `scheduleMountZoneRecheck(...)` to safely defer transition processing when restrictions exist. `ProcessBuffEvent()` is paused while `ItemRack.MountZoneTransitionDeferred` is set.
+
+---
+
+## Live Set Restoration Cycle Prevention
+**File:** `ItemRack/ItemRackEquip.lua`
+
+### Problem
+If a user manually or automatically toggles back and forth between two sets during gameplay (e.g. `SetA` -> `SetB` -> `SetA`), `SetA.oldset` was recorded as `SetB` while `SetB.oldset` remained `SetA`. This created a live circular restoration loop (`SetA <-> SetB`) in the database during gameplay, causing `UnequipSet` to bounce infinitely between sets, freeze UI swaps, and require a UI reload or addon restart.
+
+### Solution
+Implemented `ItemRack.PreventLiveOldsetCycle(targetSet, proposedOldSet)` in `ItemRackEquip.lua`:
+- Executed before `set.oldset = ItemRackUser.CurrentSet` in `EquipSet`.
+- Traverses `proposedOldSet`'s `oldset` chain. If `targetSet` is already present anywhere in `proposedOldSet`'s chain, a cycle is detected.
+- Splices `targetSet` out of its previous position in the chain by updating `targetSet`'s ancestor to point to `targetSet`'s current `oldset`, and then places `targetSet` cleanly at the top of the linear chain.
+- Guarantees that the `oldset` chain remains strictly linear (`Base -> SetB -> SetA`) regardless of how many times the user toggles between sets back and forth.
+
+---
+
+## In-Combat Weapon Swapping
+**Files:** `ItemRack/ItemRackEquip.lua`, `ItemRack/ItemRack.lua`
+
+### Problem
+While WoW blocks armor slot swaps (slots 0–15, 19) in combat, weapon slot swaps (slots 16 Mainhand, 17 Offhand, 18 Ranged) are permitted by the game engine. Previously, `EquipSet` and `ProcessCombatQueue` deferred all item slots (including weapons) to `CombatQueue` until out of combat (`InCombatLockdown() == false`).
+
+### Solution
+- Updated `EquipSet` in `ItemRackEquip.lua`: When in combat, `canSwapWeaponInCombat` checks if a slot is a weapon slot (16, 17, 18). If the player is not spellcasting (`NowCasting`) and not dead, weapon slots bypass the `CombatQueue` deferral and execute **immediately in combat** via `IterateSwapList`. Non-weapon armor slots continue to defer safely to `CombatQueue`.
+- Updated `ProcessCombatQueue` in `ItemRack/ItemRack.lua`: Weapon slots (16, 17, 18) in `CombatQueue` evaluate `canSwap = (not inCombat) or (isWeaponSlot and not ItemRack.NowCasting and not ItemRack.IsPlayerReallyDead())`. If a weapon swap was queued while mid-cast, as soon as the spellcast finishes (`OnCastingStop`), `ProcessCombatQueue` executes the weapon swap mid-combat without waiting for combat to end.
+
+---
+
+## Event Enable/Disable Spin-Down & Spin-Up
+**Files:** `ItemRack/ItemRackEvents.lua`, `ItemRackOptions/ItemRackOptions.lua`
+
+### Problem
+Previously, unchecking (disabling) an event in the Events Options menu or deleting an active event left its set equipped on the player if the event was currently active (`eventData.Active == true` or present on `ItemRackUser.EventStack`). The user had to manually unequip the set or re-log to revert back to their base gear. Conversely, enabling an event did not evaluate whether the event condition was currently true until the next game event (e.g. movement or stance change) fired.
+
+### Solution
+1. **Event Spin-Down (`ItemRack.SpinDownEvent`):**
+   - Implemented `ItemRack.SpinDownEvent(eventName)` in `ItemRackEvents.lua`.
+   - When an event is unchecked, deleted, or disabled in `ItemRackOptions.lua`, `SpinDownEvent` clears `eventData.Active`, `ManualOverride`, and zone signatures.
+   - If the event is on `ItemRackUser.EventStack` or currently equipped, it pops the event via `PopEvent(eventName)` or unequips the set, restoring the underlying gear layer.
+2. **Event Spin-Up (`ItemRack.SpinUpEvent`):**
+   - Implemented `ItemRack.SpinUpEvent(eventName)` in `ItemRackEvents.lua`.
+   - When an event is checked (enabled) or assigned a set, `SpinUpEvent` invokes `RunAllEvents`, immediately checking whether the event condition currently applies (e.g. player is mounted, in stance, or in zone) and equipping the set.
+3. **Global Toggle Spin-Down (`ItemRack.SpinDownAllEvents`):**
+   - Toggling events OFF globally via `ItemRack.ToggleEvents` invokes `SpinDownAllEvents()`, unwinding all active event stack layers and returning the player to their base gear.
+
+

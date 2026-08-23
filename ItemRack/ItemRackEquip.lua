@@ -25,6 +25,107 @@ ItemRack.AbortSwap = nil -- reasons: 1=not enough room, 2=item on cursor, 3=in s
 ItemRack.AbortReasons = {"Not enough room.","Something is on the cursor.","In spell targeting mode.","Another swap is in progress."}
 
 ItemRack.SetsWaiting = {} -- numerically indexed table of {"setname",func} ie {"pvp",ItemRack.EquipSet}
+ItemRack.SetsWaitingTimeout = 10
+
+function ItemRack.StopSetsWaitingWatchdog()
+	ItemRack.SetsWaitingWatchGeneration = (ItemRack.SetsWaitingWatchGeneration or 0) + 1
+	ItemRack.SetsWaitingStartedAt = nil
+end
+
+-- ITEM_LOCK_CHANGED can be lost when an item transaction overlaps a loading
+-- screen. Poll the lock state as a fallback, then abandon only ItemRack's
+-- pending callbacks if the client continues reporting the same hard lock.
+-- This cannot clear a server/client item lock, but it prevents every later set
+-- request from accumulating behind it and appearing as a permanent queue.
+function ItemRack.StartSetsWaitingWatchdog()
+	if ItemRack.SetsWaitingStartedAt then return end
+	ItemRack.SetsWaitingStartedAt = GetTime()
+	ItemRack.SetsWaitingWatchGeneration = (ItemRack.SetsWaitingWatchGeneration or 0) + 1
+	local generation = ItemRack.SetsWaitingWatchGeneration
+
+	local function PollSetsWaiting()
+		if generation ~= ItemRack.SetsWaitingWatchGeneration then return end
+		if #ItemRack.SetsWaiting == 0 then
+			ItemRack.StopSetsWaitingWatchdog()
+			return
+		end
+
+		local automaticSwapBlocked = ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked()
+		local ordinarySwapBlocked = ItemRack.SetSwapping or ItemRack.NowCasting
+		local hardLocked
+		if not automaticSwapBlocked and not ordinarySwapBlocked then
+			hardLocked = ItemRack.AnythingLocked()
+		end
+		if automaticSwapBlocked or ordinarySwapBlocked then
+			-- Loading screens, summon confirmation, casting, and an ordinary
+			-- multi-pass set swap do not prove an inventory lock is stuck. Give a
+			-- real lock its full recovery window after those blockers finish.
+			ItemRack.SetsWaitingStartedAt = GetTime()
+		end
+		if not automaticSwapBlocked and not ordinarySwapBlocked and not hardLocked then
+			ItemRack.Debug("API", "SetsWaiting watchdog observed unlocked inventory; resuming without ITEM_LOCK_CHANGED")
+			ItemRack.ProcessSetsWaiting()
+			if #ItemRack.SetsWaiting == 0 then
+				ItemRack.StopSetsWaitingWatchdog()
+				return
+			end
+		elseif not automaticSwapBlocked and not ordinarySwapBlocked and hardLocked
+		and (GetTime() - ItemRack.SetsWaitingStartedAt) >= ItemRack.SetsWaitingTimeout then
+			local count = #ItemRack.SetsWaiting
+			local reason = ItemRack.GetLockedReason()
+			local retryRequest
+			for i = count, 1, -1 do
+				local request = ItemRack.SetsWaiting[i]
+				if not request[5] and not request[6] and not request[7] then
+					retryRequest = request
+					break
+				end
+			end
+			for i = count, 1, -1 do
+				table.remove(ItemRack.SetsWaiting, i)
+			end
+			ItemRack.ClearLockList()
+			if retryRequest then
+				retryRequest[7] = true
+				table.insert(ItemRack.SetsWaiting, retryRequest)
+				ItemRack.SetsWaitingStartedAt = GetTime()
+				ItemRack.Debug("API", "SetsWaiting watchdog retained the newest manual request and canceled", count - 1, "stale/automatic request(s):", reason)
+				ItemRack.Print("WoW still reports "..reason.." locked. Retrying your most recent manual set once; older automatic requests were canceled.")
+			else
+				ItemRack.Debug("API", "SetsWaiting watchdog canceled", count, "request(s) after persistent lock:", reason)
+				ItemRack.Print("Canceled "..count.." pending set swap(s): WoW still reports "..reason.." locked.")
+				ItemRack.StopSetsWaitingWatchdog()
+				return
+			end
+		end
+
+		C_Timer.After(0.25, PollSetsWaiting)
+	end
+
+	C_Timer.After(0.25, PollSetsWaiting)
+end
+
+function ItemRack.PauseAutomaticSwapForWorldTransition(reason)
+	local waitingAutomaticRequests = 0
+	for _, queued in ipairs(ItemRack.SetsWaiting) do
+		if queued[5] or queued[6] then
+			waitingAutomaticRequests = waitingAutomaticRequests + 1
+		end
+	end
+	if waitingAutomaticRequests > 0 then
+		ItemRack.Debug("API", "Pausing", waitingAutomaticRequests, "automatic waiting set request(s):", reason or "automatic swap suspended")
+	end
+	if ItemRack.PendingQueueEquipSet
+	and (ItemRack.PendingQueueEquipSet.isEventEquipment or ItemRack.PendingQueueEquipSet.isDeferredEquipment) then
+		ItemRack.Debug("Equip", "Pausing event-driven pending queue-state set:", ItemRack.PendingQueueEquipSet.setname)
+	end
+	if ItemRack.SetSwapping and ItemRack.SetSwappingIsAutomatic then
+		-- Preserve the remaining swap plan but do not issue another item API call
+		-- until the destination is settled. This also lets a canceled summon
+		-- continue the original event swap instead of leaving it half-equipped.
+		ItemRack.Debug("Equip", "Pausing automatic multi-pass swap for world transition:", ItemRack.SetSwapping, reason or "")
+	end
+end
 
 -- Legion artifact items that act as two items
 ItemRack.PhantomItem = {
@@ -120,11 +221,28 @@ ItemRack.UniqueGems = {
 ItemRack.eqBackOfTheBusOffset = 100
 
 function ItemRack.ProcessSetsWaiting()
-	local setwaiting = ItemRack.SetsWaiting[1][1]
-	local whichequip = ItemRack.SetsWaiting[1][2]
-	local disableSound = ItemRack.SetsWaiting[1][3]
-	local isSecureKeybind = ItemRack.SetsWaiting[1][4]
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		if #ItemRack.SetsWaiting > 0 then
+			ItemRack.StartSetsWaitingWatchdog()
+		end
+		return
+	end
+	local queued = ItemRack.SetsWaiting[1]
+	if not queued then
+		ItemRack.StopSetsWaitingWatchdog()
+		return
+	end
+	local setwaiting = queued[1]
+	local whichequip = queued[2]
+	local disableSound = queued[3]
+	local isSecureKeybind = queued[4]
+	local isEventEquipment = queued[5]
+	local isDeferredEquipment = queued[6]
+	local isWatchdogRetry = queued[7]
 	table.remove(ItemRack.SetsWaiting,1)
+	-- Each dequeued request gives the next request its own recovery window
+	-- instead of inheriting the first request's timeout budget.
+	ItemRack.SetsWaitingStartedAt = GetTime()
 	
 	-- Safety: Skip sets that no longer exist (prevents getting stuck)
 	if not ItemRackUser.Sets[setwaiting] then
@@ -132,24 +250,77 @@ function ItemRack.ProcessSetsWaiting()
 		-- Set was deleted, skip it and try the next one
 		if #ItemRack.SetsWaiting > 0 then
 			ItemRack.ProcessSetsWaiting()
+		else
+			ItemRack.StopSetsWaitingWatchdog()
 		end
 		return
 	end
 	
 	ItemRack.Debug("API", "ProcessSetsWaiting executing callback for:", setwaiting)
+	local previousEventEquipment = ItemRack.IsEventEquipment
+	local previousDeferredEquipment = ItemRack.IsDeferredEquipment
+	local previousWatchdogRetry = ItemRack.IsWatchdogRetry
+	if isEventEquipment then
+		ItemRack.IsEventEquipment = true
+	end
+	if isDeferredEquipment then
+		ItemRack.IsDeferredEquipment = true
+	end
+	if isWatchdogRetry then
+		ItemRack.IsWatchdogRetry = true
+	end
 	whichequip(setwaiting, disableSound, isSecureKeybind)
+	ItemRack.IsEventEquipment = previousEventEquipment
+	ItemRack.IsDeferredEquipment = previousDeferredEquipment
+	ItemRack.IsWatchdogRetry = previousWatchdogRetry
+	if #ItemRack.SetsWaiting == 0 then
+		ItemRack.StopSetsWaitingWatchdog()
+	else
+		ItemRack.StartSetsWaitingWatchdog()
+	end
 end
 
 function ItemRack.AddSetToSetsWaiting(setwaiting,whichequip,disableSound,isSecureKeybind)
 	local wait = ItemRack.SetsWaiting
-	for i in pairs(wait) do
-		if wait[i][1]==setwaiting and wait[i][2]==whichequip then
-			ItemRack.Debug("API", "AddSetToSetsWaiting ignored duplicate for:", setwaiting)
+	local incomingEvent = ItemRack.IsEventEquipment and true or nil
+	local incomingDeferred = ItemRack.IsDeferredEquipment and true or nil
+	local incomingAutomatic = incomingEvent or incomingDeferred
+	for i,request in ipairs(wait) do
+		if request[1]==setwaiting and request[2]==whichequip then
+			local existingAutomatic = request[5] or request[6]
+			if not incomingAutomatic then
+				-- Manual intent is authoritative. Replace automatic provenance and
+				-- move this request to the tail so "newest manual request" remains
+				-- true even when de-duplication collapses an older queue entry.
+				request[3] = disableSound
+				request[4] = isSecureKeybind
+				request[5] = nil
+				request[6] = nil
+				request[7] = nil
+				table.remove(wait,i)
+				table.insert(wait,request)
+				if ItemRack.SetsWaitingStartedAt then
+					ItemRack.SetsWaitingStartedAt = GetTime()
+				end
+			elseif existingAutomatic then
+				-- Automatic duplicates may merge provenance, but they must never
+				-- downgrade an already queued manual request.
+				request[3] = disableSound
+				request[4] = isSecureKeybind
+				request[5] = request[5] or incomingEvent
+				request[6] = request[6] or incomingDeferred
+				if ItemRack.IsWatchdogRetry then
+					request[7] = true
+				end
+			end
+			ItemRack.Debug("API", "AddSetToSetsWaiting merged duplicate for:", setwaiting, incomingAutomatic and "automatic" or "manual")
+			ItemRack.StartSetsWaitingWatchdog()
 			return
 		end
 	end
 	ItemRack.Debug("API", "AddSetToSetsWaiting added set to API lock queue:", setwaiting)
-	table.insert(wait,{setwaiting,whichequip,disableSound,isSecureKeybind})
+	table.insert(wait,{setwaiting,whichequip,disableSound,isSecureKeybind,incomingEvent,incomingDeferred,ItemRack.IsWatchdogRetry and true or nil})
+	ItemRack.StartSetsWaitingWatchdog()
 end
 
 function ItemRack.OrderSwaps(swap)
@@ -196,14 +367,85 @@ function ItemRack.IsWeaponOnlySet(setname)
 	return hasWeapons
 end
 
+function ItemRack.PreventLiveOldsetCycle(targetSet, proposedOldSet)
+	if not targetSet or not proposedOldSet or targetSet == proposedOldSet then
+		return
+	end
+	if not ItemRackUser or not ItemRackUser.Sets then
+		return
+	end
+
+	-- Search proposedOldSet's oldset chain to see if targetSet is already present.
+	-- If proposedOldSet (or an ancestor in its chain) points to targetSet,
+	-- setting targetSet.oldset = proposedOldSet would create a live circular loop (e.g. SetA -> SetB -> SetA).
+	local current = proposedOldSet
+	local parentPointingToTarget = nil
+	local visited = { [targetSet] = true }
+
+	while current do
+		if visited[current] then
+			break
+		end
+		visited[current] = true
+
+		local nextOld = ItemRackUser.Sets[current] and ItemRackUser.Sets[current].oldset
+		if nextOld == targetSet then
+			parentPointingToTarget = current
+			break
+		end
+		current = nextOld
+	end
+
+	if parentPointingToTarget and ItemRackUser.Sets[parentPointingToTarget] then
+		-- Splice targetSet out of the chain: point parentPointingToTarget to targetSet's current oldset
+		local targetOldSet = ItemRackUser.Sets[targetSet] and ItemRackUser.Sets[targetSet].oldset
+		if targetOldSet == parentPointingToTarget then
+			targetOldSet = nil
+		end
+		ItemRackUser.Sets[parentPointingToTarget].oldset = targetOldSet
+		ItemRack.Debug("Equip", "Live cycle prevented: spliced '" .. tostring(targetSet) .. "' out of '" .. tostring(parentPointingToTarget) .. "' oldset chain.")
+	elseif proposedOldSet == targetSet then
+		ItemRackUser.Sets[proposedOldSet].oldset = nil
+	end
+end
+
 function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	ItemRack.Debug("Equip", "EquipSet invoked for set:", setname or "nil")
 	if not setname or not ItemRackUser.Sets[setname] then
 		ItemRack.Print("Set \""..tostring(setname).."\" doesn't exist.")
 		return
 	end
-	if ItemRack.AnythingLocked() then
-		ItemRack.Debug("Equip", "EquipSet deferred set:", setname, "- locked item:", ItemRack.GetLockedReason())
+	local unresolvedSetSlot
+	if ItemRackUser.EnableQueues == "ON" and ItemRack.QueueStateReady == true then
+		for slot in pairs(ItemRackUser.Sets[setname].equip) do
+			if type(slot) == "number" and not ItemRack.IsEquippedSlotStateReady(slot) then
+				unresolvedSetSlot = slot
+				break
+			end
+		end
+	end
+	if (ItemRackUser.EnableQueues == "ON" and ItemRack.QueueStateReady ~= true) or unresolvedSetSlot then
+		ItemRack.PendingQueueEquipSet = {
+			setname = setname,
+			disableSound = disableSound,
+			isSecureKeybind = isSecureKeybind,
+			isEventEquipment = ItemRack.IsEventEquipment and true or nil,
+			isDeferredEquipment = ItemRack.IsDeferredEquipment and true or nil
+		}
+		ItemRack.PendingQueueStateEventReason = "Deferred EquipSet"
+		if ItemRack.ScheduleQueueStateRetry then
+			ItemRack.ScheduleQueueStateRetry()
+		end
+		if unresolvedSetSlot and ItemRack.ScheduleEquippedStateRetry then
+			ItemRack.ScheduleEquippedStateRetry()
+		end
+		ItemRack.Debug("Equip", "EquipSet deferred until exact equipped state is ready:", setname, unresolvedSetSlot or "")
+		return
+	end
+	ItemRack.PendingQueueEquipSet = nil
+	if ItemRack.SetSwapping or ItemRack.AnythingLocked() then
+		local blockReason = ItemRack.SetSwapping and ("SetSwapping("..tostring(ItemRack.SetSwapping)..")") or ItemRack.GetLockedReason()
+		ItemRack.Debug("Equip", "EquipSet deferred set:", setname, "- locked item:", blockReason)
 		-- a swap is in progress, add this set to the wait list and leave
 		ItemRack.AddSetToSetsWaiting(setname,ItemRack.EquipSet, disableSound, isSecureKeybind)
 		return
@@ -225,10 +467,10 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 			end
 		end
 	end
-	if ItemRack.BurntQueueItems and not isInternalSet then
+	if not isInternalSet then
 		for i in pairs(set.equip) do
-			if type(i) == "number" then
-				ItemRack.BurntQueueItems[i] = nil
+			if type(i) == "number" and ItemRack.ClearBurntQueueItems then
+				ItemRack.ClearBurntQueueItems(i)
 			end
 		end
 	end
@@ -268,7 +510,11 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 			for i in pairs(set.old) do
 				set.old[i] = nil -- wipe old items
 			end
-			set.oldset = ItemRackUser.CurrentSet
+			local proposedOldSet = ItemRackUser.CurrentSet
+			if proposedOldSet and proposedOldSet ~= setname then
+				ItemRack.PreventLiveOldsetCycle(setname, proposedOldSet)
+			end
+			set.oldset = proposedOldSet
 			-- Pre-populate old with current gear for every slot this set defines.
 			for i in pairs(set.equip) do
 				if type(i) == "number" then
@@ -289,17 +535,21 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	for k,v in pairs(swap) do swapStr = swapStr .. k..":"..v.." " end
 	ItemRack.Debug("Equip", "EquipSet swap list generated:", swapStr)
  
-	-- if in combat, dead, or casting, queue ALL items for later
-	-- PickupInventoryItem is blocked by the game during InCombatLockdown() for all items including weapons
+	-- if in combat, dead, or casting, queue non-weapon items for later
+	-- PickupInventoryItem is blocked by the game during InCombatLockdown() for armor, but weapons (16, 17, 18) can swap in combat if not casting/dead
 	if InCombatLockdown() or ItemRack.IsPlayerReallyDead() or ItemRack.NowCasting then
 		local reason = InCombatLockdown() and "combat" or (ItemRack.NowCasting and "casting" or "dead")
-		ItemRack.Debug("Equip", "EquipSet DEFERRED to CombatQueue: set=" .. tostring(setname) .. " reason=" .. reason .. " slots queued:")
+		ItemRack.Debug("Equip", "EquipSet checking swap deferrals: set=" .. tostring(setname) .. " reason=" .. reason .. " slots queued:")
 		local isWeaponOnly = InCombatLockdown() and ItemRack.IsWeaponOnlySet(setname)
 		for i in pairs(swap) do
-			if isWeaponOnly and isSecureKeybind then
-				swap[i] = nil
+			local isWeaponSlot = (i >= 16 and i <= 18)
+			local canSwapWeaponInCombat = InCombatLockdown() and isWeaponSlot and not ItemRack.NowCasting and not ItemRack.IsPlayerReallyDead()
+			local secureMacroMismatch = isWeaponOnly and isSecureKeybind
+			if canSwapWeaponInCombat and not secureMacroMismatch then
+				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> weapon swap allowed in combat")
 			else
-				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]))
+				local detail = secureMacroMismatch and "secure macro left an item-identity mismatch" or reason
+				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> " .. tostring(swap[i]) .. " DEFERRED to CombatQueue (" .. detail .. ")")
 				ItemRack.AddToCombatQueue(i,swap[i])
 				swap[i] = nil
 				if set.old then
@@ -335,8 +585,20 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 
 	ItemRack.IterateSwapList(setname, disableSound) -- run SwapList swaps
 	if not next(swap) then
-		ItemRack.EndSetSwap(setname)
-		return -- leave if swap completed on first pass
+		if not ItemRack.AnythingLocked() then
+			ItemRack.EndSetSwap(setname)
+		else
+			-- Pickup APIs are asynchronous. A one-item set can have no remaining
+			-- SwapList entries while its equipment/bag transaction is still locked.
+			-- Keep it tracked until the client confirms the unlock instead of
+			-- declaring completion and allowing another event swap to stack on it.
+			ItemRack.SetSwapping = setname
+			ItemRack.SetSwappingDisableSound = disableSound
+			ItemRack.SetSwappingIsAutomatic = (ItemRack.IsEventEquipment or ItemRack.IsDeferredEquipment) and true or nil
+			ItemRack.Debug("Equip", "First-pass moves submitted; waiting for client unlock before completing set:", setname, ItemRack.GetLockedReason())
+			ItemRack.StartSetSwapTimeout()
+		end
+		return
 	end
 
 	-- If we're in combat and weapon swaps failed (e.g. cursor issue), move remaining
@@ -359,6 +621,7 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	-- to determine when to run a second pass.
 	ItemRack.SetSwapping = setname
 	ItemRack.SetSwappingDisableSound = disableSound
+	ItemRack.SetSwappingIsAutomatic = (ItemRack.IsEventEquipment or ItemRack.IsDeferredEquipment) and true or nil
 
 	-- Safety timeout: if SetSwapping is never cleared (e.g. locks never fire for a failed swap),
 	-- force-clear after 5s to prevent the permanent "stuck until logout" state.
@@ -373,16 +636,35 @@ function ItemRack.StartSetSwapTimeout()
 	end
 	ItemRack.SetSwapTimeout = C_Timer.NewTimer(5, function()
 		if ItemRack.SetSwapping then
-			ItemRack.Debug("Equip", "SetSwapping safety timeout — force clearing stuck state for:", ItemRack.SetSwapping)
+			if ItemRack.SetSwappingIsAutomatic
+			and ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+				ItemRack.SetSwapTimeout = nil
+				ItemRack.StartSetSwapTimeout()
+				return
+			end
+			if not ItemRack.AnythingLocked() then
+				ItemRack.SetSwapTimeout = nil
+				ItemRack.Debug("Equip", "SetSwapping watchdog observed unlocked inventory; resuming without ITEM_LOCK_CHANGED")
+				ItemRack.LockChangedDuringSetSwap()
+				return
+			end
+			local timedOutSet = ItemRack.SetSwapping
+			local lockReason = ItemRack.GetLockedReason()
+			ItemRack.Debug("Equip", "SetSwapping safety timeout - force clearing stuck state for:", timedOutSet)
 			ItemRack.SetSwapping = nil
 			ItemRack.SetSwappingDisableSound = nil
+			ItemRack.SetSwappingIsAutomatic = nil
 			ItemRack.SetSwapTimeout = nil
 			-- Clear any remaining swap list entries that can't complete
 			for i in pairs(ItemRack.SwapList) do
 				ItemRack.SwapList[i] = nil
 			end
+			ItemRack.ClearLockList()
+			ItemRack.UpdateCurrentSet()
+			ItemRack.Print("Set swap timed out for \""..tostring(timedOutSet).."\": WoW still reports "..tostring(lockReason).." locked. ItemRack reconciled the displayed set state.")
 			-- Try to process any sets that were waiting
-			if #ItemRack.SetsWaiting > 0 and not ItemRack.AnythingLocked() and not ItemRack.NowCasting then
+			if #ItemRack.SetsWaiting > 0 and not ItemRack.AnythingLocked() and not ItemRack.NowCasting
+			and not (ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked()) then
 				ItemRack.ProcessSetsWaiting()
 			end
 		end
@@ -431,9 +713,11 @@ function ItemRack.LockChangedDuringSetSwap()
 	if not ItemRack.AnythingLocked() then
 		local setname = ItemRack.SetSwapping
 		local disableSound = ItemRack.SetSwappingDisableSound
+		local isAutomatic = ItemRack.SetSwappingIsAutomatic
 		ItemRack.Debug("API", "Locks cleared. Resuming interrupted swap list for:", setname)
 		ItemRack.SetSwapping = nil
 		ItemRack.SetSwappingDisableSound = nil
+		ItemRack.SetSwappingIsAutomatic = nil
 		ItemRack.IterateSwapList(setname, disableSound)
 
 		-- Re-check: if the second pass locked new items or left work undone,
@@ -442,12 +726,20 @@ function ItemRack.LockChangedDuringSetSwap()
 			ItemRack.Debug("API", "Secondary locks detected. Pausing swap again for:", setname)
 			ItemRack.SetSwapping = setname
 			ItemRack.SetSwappingDisableSound = disableSound
+			ItemRack.SetSwappingIsAutomatic = isAutomatic
 			-- Restart the safety timeout for this new waiting period
 			ItemRack.StartSetSwapTimeout()
 			return
 		end
 
 		ItemRack.EndSetSwap(setname)
+
+		if next(ItemRack.CombatQueue) and not ItemRack.NowCasting and not InCombatLockdown() then
+			ItemRack.ProcessCombatQueue()
+			if ItemRack.AnythingLocked() then
+				return
+			end
+		end
 
 		if #ItemRack.SetsWaiting > 0 and not ItemRack.NowCasting then
 			-- Defer to next frame to let lock state fully settle before starting
@@ -507,6 +799,7 @@ function ItemRack.IterateSwapList(setname, disableSound)
 				else
 					ItemRack.Debug("Equip", "IterateSwapList aborted: No space to empty slot", i)
 					ItemRack.AbortSwap = 1
+					ItemRack.ClearLockList()
 					return
 				end
 			else
@@ -561,7 +854,7 @@ function ItemRack.IterateSwapList(setname, disableSound)
 							swap[k] = nil
 						end
 					end
-				elseif inv==(i+1) and ItemRack.SameID(swap[k+1],ItemRack.GetID(i)) then
+				elseif inv==(i+1) and ItemRack.MatchesStoredItemID(swap[k+1],ItemRack.GetID(i)) then
 					-- item is in other slot and other slot wants to go to this one
 					ItemRack.Debug("Equip", "IterateSwapList executing localized inner-slot shuffle from slot", i, "to", i+1)
 					if set.old then
@@ -584,6 +877,9 @@ function ItemRack.IterateSwapList(setname, disableSound)
 	if ItemRack.AbortSwap and not InCombatLockdown() and not next(swap) then
 		ItemRack.Print("Swap stopped. "..(ItemRack.AbortReasons[ItemRack.AbortSwap] or ""))
 	end
+	if ItemRack.AbortSwap then
+		ItemRack.ClearLockList()
+	end
 	-- Safety: if cursor still has an item from a partial swap, clear it so it doesn't
 	-- block subsequent swaps. ClearCursor() returns the item to its original location.
 	if CursorHasItem() then
@@ -604,6 +900,8 @@ end
 function ItemRack.EndSetSwap(setname)
 	ItemRack.Debug("Equip", "EndSetSwap called for set:", setname or "nil")
 	ItemRack.SetSwapping = nil
+	ItemRack.SetSwappingDisableSound = nil
+	ItemRack.SetSwappingIsAutomatic = nil
 	-- Cancel safety timeout since swap completed normally
 	if ItemRack.SetSwapTimeout then
 		ItemRack.SetSwapTimeout:Cancel()
@@ -625,6 +923,22 @@ function ItemRack.EndSetSwap(setname)
 					if numGroups > 1 and currentSpec ~= neededSpec then
 						ItemRack.Print("Set "..setname.." requires Spec "..neededSpec.." (Current: "..currentSpec.."). Switching...")
 						if SetActiveTalentGroup then
+							-- Preserve the exact set that initiated this spec switch. The
+							-- destination Specialization event may point at a different set
+							-- that shares the same spec and must not overwrite this choice.
+							local request = {
+								setname = setname,
+								spec = neededSpec,
+								expiresAt = GetTime() + 15,
+							}
+							ItemRack.PendingSpecSet = request
+							ItemRack.Debug("Events", "Associated set requested spec switch:", setname, "->", neededSpec)
+							C_Timer.After(15,function()
+								if ItemRack.PendingSpecSet == request then
+									ItemRack.Debug("Events", "Associated spec-set request expired:", setname)
+									ItemRack.PendingSpecSet = nil
+								end
+							end)
 							SetActiveTalentGroup(neededSpec)
 						end
 					else
@@ -690,9 +1004,25 @@ function ItemRack.MoveItem(fromBag,fromSlot,toBag,toSlot)
 			end
 			PickupInventoryItem(toBag)
 		end
-		-- Post-swap safety: if cursor still has an item, the target pickup was
-		-- blocked (e.g. by combat timing, GCD, animation). Return the item to
-		-- its source immediately so nothing gets stuck on the cursor.
+
+		-- Return displaced items to source locations to complete swaps:
+		if fromSlot and not toSlot and CursorHasItem() then
+			-- Moving from container to inventory: place displaced item into source container slot
+			PickupContainerItem(fromBag, fromSlot)
+		elseif not fromSlot and toSlot and CursorHasItem() then
+			-- Moving from inventory to container: place displaced item into source inventory slot
+			PickupInventoryItem(fromBag)
+		elseif not fromSlot and not toSlot and CursorHasItem() then
+			-- Inner-slot shuffle (inventory to inventory): place displaced item into source inventory slot
+			PickupInventoryItem(fromBag)
+		elseif fromSlot and toSlot and CursorHasItem() then
+			-- Container to container: place displaced item into source container slot
+			PickupContainerItem(fromBag, fromSlot)
+		end
+
+		-- Post-swap safety: if cursor still has an item after return pickup, the swap
+		-- was blocked (e.g. by combat timing, GCD, animation, full bag). Clear the cursor
+		-- to return whatever is held back to its origin and mark as aborted.
 		if CursorHasItem() then
 			ItemRack.Debug("CombatQueue", "MoveItem POST-SWAP FAIL: cursor still has item after swap to dest="..tostring(destSlot)..". ClearCursor called.")
 			ClearCursor()
@@ -707,7 +1037,7 @@ function ItemRack.IsSetEquipped(setname,exact)
 	if setname and ItemRackUser.Sets[setname] then
 		local set = ItemRackUser.Sets[setname].equip
 		local id
-		local same = ItemRack.SameID
+		local matchesStored = ItemRack.MatchesStoredItemID
 		
 		-- Special handling for Trinkets and Rings to allow swapped slots
 		local check11_12 = (set[11] and set[12])
@@ -716,21 +1046,25 @@ function ItemRack.IsSetEquipped(setname,exact)
 		local anyChecked = false
 		for i in pairs(set) do
 			if type(i) == "number" then
+				if ItemRackUser.EnableQueues == "ON"
+				and (ItemRack.QueueStateReady ~= true or not ItemRack.IsEquippedSlotStateReady(i)) then
+					return false
+				end
 				anyChecked = true
 				id = ItemRack.GetID(i)
 				local match = false
 				
-				if (exact and set[i]==id) or (not exact and same(set[i],id)) then
+				if (exact and set[i]==id) or (not exact and matchesStored(set[i],id)) then
 					match = true
 				elseif not exact then
 					-- Try cross-slot check for Rings (11/12)
 					if (i==11 or i==12) and check11_12 then
 						local otherID = ItemRack.GetID(i==11 and 12 or 11)
-						if same(set[i], otherID) then match = true end
+						if matchesStored(set[i], otherID) then match = true end
 					-- Try cross-slot check for Trinkets (13/14)
 					elseif (i==13 or i==14) and check13_14 then
 						local otherID = ItemRack.GetID(i==13 and 14 or 13)
-						if same(set[i], otherID) then match = true end
+						if matchesStored(set[i], otherID) then match = true end
 					end
 				end
 				
@@ -744,23 +1078,21 @@ function ItemRack.IsSetEquipped(setname,exact)
 					local currentCustomTime
 					local currentInQueue = false
 					if currentBaseID and currentBaseID ~= 0 then
-						for q=1,#slotQueue do
-							if slotQueue[q].id == 0 then
-								break
-							end
-							local queueBaseID = ItemRack.GetIRString(slotQueue[q].id,true)
-							if ItemRack.SameExactID(slotQueue[q].id, id) or queueBaseID == currentBaseID then
-								currentInQueue = true
-								currentCustomTime = slotQueue[q].swapInEnabled and slotQueue[q].swapIn or nil
-								break
-							end
+						-- Use the queue's exact-first migration boundary here too. A
+						-- legacy wildcard beside rune-specific entries cannot establish
+						-- that an unlisted rune copy is intentionally active for the set.
+						local currentQueueIndex = ItemRack.FindQueueEntryIndex(slotQueue,id)
+						if currentQueueIndex then
+							local currentEntry = slotQueue[currentQueueIndex]
+							currentInQueue = true
+							currentCustomTime = currentEntry.swapInEnabled and currentEntry.swapIn or nil
 						end
 						local start,duration,enable = GetInventoryItemCooldown("player",i)
-						local ready = ItemRack.ItemNearReady(currentBaseID, i, currentCustomTime)
-						local active = ItemRack.AutoQueueItemToEquip(i, currentBaseID, enable, ready, setname)
+						local ready = ItemRack.ShouldHoldEquippedItem and ItemRack.ShouldHoldEquippedItem(i, id, currentBaseID, currentCustomTime) or ItemRack.ItemNearReady(currentBaseID, i, currentCustomTime)
+						local _, active = ItemRack.AutoQueueItemToEquip(i, currentBaseID, enable, ready, setname)
 						if currentInQueue then
-							match = not active or same(active, id)
-						elseif match and active and not same(active, id) then
+							match = not active or matchesStored(active, id)
+						elseif match and active and not matchesStored(active, id) then
 							match = false
 						end
 					elseif match then
@@ -784,8 +1116,9 @@ function ItemRack.UnequipSet(setname, disableSound)
 	-- Otherwise, it restores the set's 'old' to 'ItemRackUser.CurrentSet' via '~Unequip'.
 	if setname and ItemRackUser.Sets[setname] then
 		ItemRack.Debug("Equip", "UnequipSet called for:", setname, "- CurrentSet is:", ItemRackUser.CurrentSet)
-		if ItemRack.AnythingLocked() then
-			ItemRack.Debug("Equip", "UnequipSet deferred set:", setname, "- locked item:", ItemRack.GetLockedReason())
+		if ItemRack.SetSwapping or ItemRack.AnythingLocked() then
+			local blockReason = ItemRack.SetSwapping and ("SetSwapping("..tostring(ItemRack.SetSwapping)..")") or ItemRack.GetLockedReason()
+			ItemRack.Debug("Equip", "UnequipSet deferred set:", setname, "- locked item:", blockReason)
 			ItemRack.AddSetToSetsWaiting(setname,ItemRack.UnequipSet, disableSound)
 			return
 		end
