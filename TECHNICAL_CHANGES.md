@@ -465,4 +465,23 @@ Previously, unchecking (disabling) an event in the Events Options menu or deleti
 3. **Global Toggle Spin-Down (`ItemRack.SpinDownAllEvents`):**
    - Toggling events OFF globally via `ItemRack.ToggleEvents` invokes `SpinDownAllEvents()`, unwinding all active event stack layers and returning the player to their base gear.
 
+---
 
+## Cooldown Proxy Trinkets
+**Files:** `ItemRack/ItemRack.lua`, `ItemRack/ItemRackQueue.lua`, `ItemRack/ItemRackButtons.lua`
+
+### Problem
+Some trinkets have no cooldown of their own because their effect is driven by a separate item. Serpent-Coil Braid (30720) keys off mana gems. `GetItemCooldown` therefore reports the braid as permanently ready, and AutoQueue would swap it in while its gem was still on cooldown and the trinket was doing nothing.
+
+### Solution
+`ItemRack.CooldownProxies` in `ItemRack.lua` maps such an item to the item that gates it:
+
+```lua
+ItemRack.CooldownProxies = {
+	[30720] = { id = 22044, buff = 37445 }, -- Serpent-Coil Braid <- mana gems (Mana Surge)
+}
+```
+
+1. **Readiness:** `ItemRack.GetItemCooldownLeft` resolves through the proxy, so `IsCandidateReady` and `ShouldHoldEquippedItem` see the gating item's remaining cooldown. `hold_decision` diagnostics record the gating item's ID when one stands in, so a dump explains a remaining time that belongs to no cooldown on the equipped item.
+2. **Buff hold:** the queue's existing "hold while this item's buff runs" check keys on `GetItemSpell`, which cannot see an equip effect, so `buff` names the aura instead. `ItemRack.GetProxyBuff` supplies the name instead, and takes precedence over `GetItemSpell` because a `CooldownProxies` entry is an explicit declaration of what gates the item. Give it as a spell ID so the name resolves in the client's own locale; a literal name is also accepted.
+3. **Display:** `ItemRack.ApplyProxyCooldown` substitutes the gating item's cooldown into the slot button and flyout menu swirls and countdown text.

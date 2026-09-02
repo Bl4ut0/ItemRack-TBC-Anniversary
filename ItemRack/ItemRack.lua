@@ -378,6 +378,17 @@ ItemRack.NoTitansGrip = {
 	["Staves"] = 1
 }
 
+-- Items whose usefulness is gated by another item's cooldown (e.g. Serpent-Coil
+-- Braid keys off mana gems). id = the gating item. buff = the aura the pairing
+-- grants. The queue's existing "hold while this item's buff runs" check keys on
+-- GetItemSpell, which cannot see an equip effect, so the aura has to be named
+-- here. Give buff as a spell ID so the name resolves in the client's own locale.
+-- Mana gem ranks share one cooldown category tracked independent of possession,
+-- so any single rank ID is a valid probe.
+ItemRack.CooldownProxies = {
+	[30720] = { id = 22044, buff = 37445 }, -- Serpent-Coil Braid <- mana gems (Mana Surge)
+}
+
 ItemRack.Menu = {}
 ItemRack.LockList = {} -- index -2 to 11, flag whether item is tagged already for swap
 if ItemRack.IsClassic() then
@@ -3439,6 +3450,9 @@ function ItemRack.UpdateMenuCooldowns()
 		if baseID and baseID>0 and ItemRack.menuOpen<20 then
 			local cdFrame = _G["ItemRackMenu"..i.."Cooldown"]
 			local start, duration, enable = GetItemCooldown(baseID)
+			-- Items gated by another item's cooldown (see ItemRack.CooldownProxies)
+			-- have no cooldown of their own. Show the gating item's instead.
+			start, duration, enable = ItemRack.ApplyProxyCooldown(baseID, start, duration, enable)
 
 			-- Suppress Blizzard's built-in countdown numbers
 			if cdFrame and cdFrame.SetHideCountdownNumbers and not _G["OmniCC"] then
@@ -3499,6 +3513,7 @@ function ItemRack.WriteMenuCooldowns()
 			if baseID then
 				local numID = tonumber(baseID)
 				local start, duration, enable = GetItemCooldown(baseID)
+				start, duration, enable = ItemRack.ApplyProxyCooldown(baseID, start, duration, enable)
 				if enable and enable == 1 then
 					ItemRack.WriteCooldown(_G["ItemRackMenu"..i.."Time"], start, duration)
 				elseif enable == 0 then

@@ -1,4 +1,5 @@
 __ Development __
+- Trinkets gated by another item's cooldown are no longer treated as permanently ready by AutoQueue. ItemRack.CooldownProxies maps such an item to the item that gates it, readiness and the existing buff hold resolve through the proxy, and the slot buttons and flyout menu show the gating item's cooldown. Ships with Serpent-Coil Braid keyed to mana gems.
 
 __ New in 4.43 - By Bl4ut0 __
 - Captures Script event triggers during transition holds and replays them once after addon readiness, while preventing specialization events from claiming or later removing manually equipped matching sets during live evaluation or startup reconstruction.
