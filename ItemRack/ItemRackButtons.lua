@@ -967,6 +967,9 @@ function ItemRack.UpdateButtonCooldowns()
 			local cdFrame = _G["ItemRackButton"..i.."Cooldown"]
 			local start, duration, enable = GetInventoryItemCooldown("player",i)
 			local currentItemID = GetInventoryItemID("player", i)
+			-- Items gated by another item's cooldown (see ItemRack.CooldownProxies)
+			-- have no cooldown of their own. Show the gating item's instead.
+			start, duration, enable = ItemRack.ApplyProxyCooldown(currentItemID, start, duration, enable)
 
 			-- Suppress Blizzard's built-in countdown numbers; ItemRack draws its own
 			if cdFrame.SetHideCountdownNumbers and not _G["OmniCC"] then
@@ -1093,14 +1096,15 @@ end
 function ItemRack.WriteButtonCooldowns()
 	if ItemRackSettings.CooldownCount=="ON" then
 		for i in pairs(ItemRackUser.Buttons) do
+			local currentItemID = GetInventoryItemID("player", i)
 			local start, duration, enable = GetInventoryItemCooldown("player", i)
+			start, duration, enable = ItemRack.ApplyProxyCooldown(currentItemID, start, duration, enable)
 			if enable and enable == 1 then
 				if start and start > 0 and duration and duration > 1.5 then
 					ItemRack.WriteCooldown(_G["ItemRackButton"..i.."Time"], start, duration)
 				elseif not start or start == 0 or (duration and duration <= 1.5) then
 					-- CC-guard: check cache before showing "no CD" text
 					local cache = ItemRack.CooldownCache[i]
-					local currentItemID = GetInventoryItemID("player", i)
 					if cache and cache.itemID == currentItemID then
 						local remaining = cache.duration - (GetTime() - cache.start)
 						if remaining > 0 then
@@ -1117,7 +1121,6 @@ function ItemRack.WriteButtonCooldowns()
 			elseif enable == 0 then
 				-- Stunned/LoC: use cache so real CD text persists
 				local cache = ItemRack.CooldownCache[i]
-				local currentItemID = GetInventoryItemID("player", i)
 				if cache and cache.itemID == currentItemID then
 					local remaining = cache.duration - (GetTime() - cache.start)
 					if remaining > 0 then

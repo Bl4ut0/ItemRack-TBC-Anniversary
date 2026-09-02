@@ -7,6 +7,16 @@ local GetItemCooldown = _G.GetItemCooldown or (C_Container and C_Container.GetIt
 local GetItemSpell = _G.GetItemSpell or (C_Item and C_Item.GetItemSpell)
 local IsEquippedItem = _G.IsEquippedItem or (C_Item and C_Item.IsEquippedItem)
 
+-- Compatibility shim for GetSpellInfo (deprecated in 11.0.0, changed in 1.15.0)
+local GetSpellInfo = GetSpellInfo or function(spellID)
+	if not spellID then return nil end
+	local info = C_Spell and C_Spell.GetSpellInfo(spellID)
+	if info then
+		local subtext = C_Spell.GetSpellSubtext and C_Spell.GetSpellSubtext(spellID)
+		return info.name, subtext, info.iconID, info.castTime, info.minRange, info.maxRange, info.spellID
+	end
+end
+
 -- Queue debug prints use the global system:
 -- Enable:  /script ItemRack.DebugTags.Queue = true
 -- Disable: /script ItemRack.DebugTags.Queue = false
@@ -463,10 +473,68 @@ function ItemRack.IsRecentEquip(slot, exactID)
 	return false
 end
 
+local function ResolveProxy(itemID)
+	local numericID = tonumber(ItemRack.GetIRString(itemID,true))
+	return numericID and ItemRack.CooldownProxies[numericID]
+end
+
+-- Raw cooldown of the gating item, for display. Returns nil when itemID has no
+-- proxy, so callers fall through to the item's own (absent) cooldown.
+local function GetProxyCooldown(itemID)
+	if not GetItemCooldown then return nil end
+	local proxy = ResolveProxy(itemID)
+	if not proxy then return nil end
+	return GetItemCooldown(proxy.id)
+end
+
+-- Substitutes the gating item's cooldown into a display triple, for the slot
+-- buttons and flyout menu. Passes the original values through untouched when
+-- itemID has no proxy.
+function ItemRack.ApplyProxyCooldown(itemID, start, duration, enable)
+	local proxyStart, proxyDuration, proxyEnable = GetProxyCooldown(itemID)
+	if proxyStart then
+		return proxyStart, proxyDuration, proxyEnable
+	end
+	return start, duration, enable
+end
+
+-- Stands in for GetItemSpell on proxied items so the existing buff-hold check
+-- keeps them equipped for as long as the aura actually runs. Returns a localized
+-- name to match what GetItemSpell yields; a literal name string is accepted
+-- too. Callers prefer this over GetItemSpell: a CooldownProxies entry is an
+-- authored declaration of what gates the item, so it wins over any on-use
+-- spell the item also carries.
+function ItemRack.GetProxyBuff(itemID)
+	local proxy = ResolveProxy(itemID)
+	if not proxy or not proxy.buff then return nil end
+	if type(proxy.buff) == "number" then
+		return (GetSpellInfo(proxy.buff))
+	end
+	return proxy.buff
+end
+
+-- Remaining seconds on the gating item, for readiness. Distinct from
+-- GetProxyCooldown above, which returns the raw triple for display. Returns 0
+-- when the gating item is ready, and nil when itemID has no proxy, so the
+-- caller can tell "ready" from "not proxied".
+local function GetProxyCooldownLeft(itemID)
+	if not GetItemCooldown then return nil end
+	local proxy = ResolveProxy(itemID)
+	if not proxy then return nil end
+	local start, duration = GetItemCooldown(proxy.id)
+	start = tonumber(start)
+	duration = tonumber(duration)
+	if not start or not duration then return nil end
+	if start == 0 or duration == 0 then return 0 end
+	return math.max(start + duration - GetTime(), 0)
+end
+
 function ItemRack.GetItemCooldownLeft(itemID)
 	if not itemID or itemID == 0 or not GetItemCooldown then return nil end
 	local numericID = tonumber(itemID) or tonumber(string.match(tostring(itemID), "^(%d+)"))
 	if not numericID then return nil end
+	local proxied = GetProxyCooldownLeft(numericID)
+	if proxied then return proxied end
 	local start, duration = GetItemCooldown(numericID)
 	start = tonumber(start)
 	duration = tonumber(duration)
@@ -501,7 +569,10 @@ function ItemRack.ShouldHoldEquippedItem(slot, exactID, baseID, customReadyTime)
 	end -- nil-safe: unknown cooldown state -> hold current gear safely
 	local hold = timeLeft <= threshold
 	if ItemRack.QueueDiagnostic then
-		ItemRack.QueueDiagnostic("hold_decision", { hold = hold, remaining = string.format("%.2f", timeLeft), slot = slot, threshold = threshold })
+		-- Report the gating item when one stands in, so a dump explains a
+		-- remaining time that belongs to no cooldown on the equipped item.
+		local proxy = ResolveProxy(exactID or baseID)
+		ItemRack.QueueDiagnostic("hold_decision", { hold = hold, proxy = proxy and proxy.id or nil, remaining = string.format("%.2f", timeLeft), slot = slot, threshold = threshold })
 	end
 	return hold
 end
@@ -545,7 +616,7 @@ function ItemRack.ProcessAutoQueue(slot)
 	end
 	
 	-- Visual updates logic (keep/delay/buff checks)
-	local buff = GetItemSpell(baseID)
+	local buff = ItemRack.GetProxyBuff(baseID) or GetItemSpell(baseID)
 	if buff and AuraUtil.FindAuraByName(buff,"player") then
 		if icon then icon:SetDesaturated(true) end
 		return
@@ -625,7 +696,7 @@ function ItemRack.AutoQueueItemToEquip(slot, baseID, enable, ready, setname)
 	local matchedCurrent = currentMatchIndex ~= nil
 	if currentMatchIndex then
 		local currentEntry = list[currentMatchIndex]
-		local buff = GetItemSpell(baseID)
+		local buff = ItemRack.GetProxyBuff(baseID) or GetItemSpell(baseID)
 		if buff and AuraUtil.FindAuraByName(buff,"player") then
 			return nil
 		end
