@@ -1,6 +1,6 @@
 # ItemRack v4.24-to-Dev Code Audit and Remediation Plan
 
-> Status: code remediation implemented and automated closure verified; release-candidate validation remains active. The current decision is still **NO-GO** until the in-client, historical SavedVariables, reporter, and exact-package gates below are completed.
+> Status: code remediation implemented, automated closure verified, and `v4.45-beta1` published for live-client validation. Stable promotion remains **NO-GO** until the in-client, historical SavedVariables, reporter, and performance gates below are completed.
 >
 > Audit snapshot: 2026-09-02, branch `dev`, commit `04a6efea4f5c06748acba945103160215566cef2` (`origin/dev` at the time of inspection).
 >
@@ -63,8 +63,10 @@ Known upgrade limitation: a pre-canonical profile with several simultaneously ac
 
 ### Release branch state
 
-- After `git fetch origin --prune --tags` on 2026-09-03, `origin/master` is the untagged 4.43 candidate commit `9b0af69036fb4c038b05fc35bf0a2ef1911113f6` dated 2026-08-22. `origin/dev` is `04a6efea4f5c06748acba945103160215566cef2`; this remediation currently exists as an uncommitted working tree on top of that dev commit.
-- The next exact candidate cannot be built yet because release archives deliberately accept only committed refs. After maintainer review/authorization, commit the remediation on `dev`, synchronize the prior 4.43 candidate metadata into `dev`, retain these remediation notes under Development with both TOCs restored to `Dev`, then create a replacement 4.43 candidate on `master`. Do not tag or publish the rejected candidate.
+- The audited implementation is committed at `b32c7eb`; beta metadata and final overhaul notes culminate in immutable release commit `c5e208ae1ac2ec25dadfff4600c9088f353a8904`.
+- Annotated tag `v4.45-beta1` points to `c5e208a`. The GitHub prerelease is published at https://github.com/Bl4ut0/ItemRack-Anniversary/releases/tag/v4.45-beta1 with archive SHA-256 `982b09689b6c7a4dba7d808f810d67917d9d375bbd03429029dbbe9fa138d38e`.
+- The exact tagged staging tree is installed in `_anniversary_`, `_classic_`, `_classic_era_`, and `_classic_era_ptr_`; each installed core file matches staging. SavedVariables were not modified by installation.
+- `dev` was restored to `## Version: Dev` after publication. The older untagged 4.43 candidate remains on `master`; it was not tagged or published and must not be mistaken for the tested 4.45 beta.
 - A historical annotated `v5.0` tag points to `f12feebb02f03448219550c3de1840ad9d64c657` (`Beta version 5.0`, 2026-03-11). That branch was merged/renumbered as v4.30 at `7bab169`; the tag is lineage evidence, not the current release version, and must never be moved or deleted.
 - Local AddOns destinations exist for `_anniversary_`, `_classic_`, `_classic_era_`, and `_classic_era_ptr_`. Installation is intentionally deferred until an exact committed candidate and version are selected; replacing those folders is a destructive deployment step and must use the verified staging installer.
 
@@ -794,15 +796,15 @@ When removing a buried frame, restoration should affect only slots whose value i
 
 ### Phase 7 — staged release and observability
 
-- [ ] Produce packages from an exact committed tree with manifest and version traceability.
+- [x] Produce `v4.45-beta1` from exact commit `c5e208a`, with source manifests and archive SHA-256 traceability.
 - [ ] Run fresh install plus upgrades from v4.24/v4.25, v4.27, v4.29.4, v4.30, v4.39.2, v4.42, and latest beta SavedVariables.
-- [ ] Beta in rings: internal fixtures → targeted reporters/classes → opt-in public beta → stable.
+- [ ] Beta in rings: automated/internal package installation complete; targeted reporters/classes and public beta soak are active; stable remains gated.
 - [x] Include bounded, opt-in diagnostics/support state for event frames, transactions, queue provenance, observed locks, and exact version/build.
 - [x] Document migration backups, the ambiguous-legacy limitation, and the rule that SavedVariables must be copied before reset/rollback.
 
 ## Release-candidate acceptance gate
 
-**Current decision: NO-GO.** An RC is not eligible while a known P0/P1 finding is merely described, guarded by a source-string test, or hidden by a timeout. “All reported problems resolved” means every catalogue cluster and confirmed finding has a traceable disposition; it does not mean silently excluding an unreproduced report.
+**Current stable decision: NO-GO; beta validation is active.** `v4.45-beta1` is the instrumented validation build. Stable promotion is not eligible while a known P0/P1 finding is merely described, guarded only by a source-string test, hidden by a timeout, or untested in its required client scenario. “All reported problems resolved” means every catalogue cluster and confirmed finding has a traceable disposition; it does not mean silently excluding an unreproduced report.
 
 For each finding/report cluster, the release ledger must record: affected versions, reproduction fixture, root cause or disproof evidence, implementation commit, regression test, supported client/flavor runs, SavedVariables/package fixture where applicable, result, and any explicitly accepted limitation. A symptom may close only when its causally relevant fixture passes; a general `npm test` result is not sufficient evidence.
 
@@ -815,7 +817,7 @@ For each finding/report cluster, the release ledger must record: affected versio
 | Cooldown and performance | One generation-aware cooldown authority survives CC and honors arena reset; inventory changes are coalesced and remain within an agreed frame/CPU budget with menus, diagnostics, and Masque combinations. | **Automated cooldown/coalescing closure complete. Pending:** arena/CC timing in client plus measured macro-swap profile and approved budget. |
 | Complaint traceability | Every CurseForge/GitHub/user cluster is reproduced, disproved with captured evidence, or listed as a named known limitation with impact and workaround. P0/P1 limitations require explicit maintainer go/no-go approval and cannot be marketed as fixed. | **Open:** cooldown and macro-hitch paths are now identified but not yet reproduced against exact reporter builds; several version-poor reports remain. |
 | Client and upgrade matrix | Clean install and SavedVariables upgrades from the phase-7 checkpoints on every supported WoW flavor/build, including class/spec-specific event paths. | **Not run.** |
-| Package integrity and rollback | RC archive is generated from one committed tree; TOC/version/changelog/tag/manifest hashes agree; extracted archive passes tests; backup and rollback instructions are exercised. | **Open:** historical identity map exists, but the RC artifact procedure has not been executed. |
+| Package integrity and rollback | Beta archive is generated from one committed tree; TOC/version/changelog/tag/manifest hashes agree; extracted archive passes tests; rollback remains available. | **Beta gate complete:** tag `v4.45-beta1` resolves to `c5e208a`; the verified archive and checksum are published and the same staging tree is installed locally. Stable will require a new exact-candidate verification. |
 | Test quality | Critical tests execute production Lua with mocked WoW APIs and deterministic timers; in-client cases cover protected/secure behavior; static guard checks remain supplemental. | **Offline gate complete:** 445 assertions execute production Lua/pure production reducers. **Pending:** in-client protected/secure and timing evidence. |
 
 ### Go/no-go procedure
@@ -956,6 +958,7 @@ Still outside automated proof: Blizzard's protected execution and taint engine, 
 | 2026-09-03 | Adopt schema-v2 queue migration and schema-v1 event-state migration with backup, quarantine, idempotence, and future-schema fail-closed behavior. | Direct upgrades must retain recoverable user data; unknown representations must never be guessed or downgraded. |
 | 2026-09-03 | Replace synthetic in-combat set macros with an empty protected carrier and out-of-combat set-level reconciliation. | Split weapon execution could not preserve coherent pre-click history or transaction ownership. The safe compatibility contract favors correctness over claiming arbitrary in-combat set swaps. |
 | 2026-09-03 | Keep the RC at NO-GO after automated closure. | The implementation is ready for candidate validation, but protected-action/taint behavior, historical profile upgrades, reporter cases, performance, and exact committed-package integrity remain unrun. |
+| 2026-09-03 | Publish `v4.45-beta1` as the Primary Reliability Overhaul and keep stable gated. | The exact tagged archive passed automated/package validation and was installed across all four local clients. Live-client and reporter evidence now determines whether corrections or stable promotion follow. |
 
 ## Information requested from maintainers/reporters
 
