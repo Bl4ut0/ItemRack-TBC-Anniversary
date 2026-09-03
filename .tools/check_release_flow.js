@@ -198,6 +198,34 @@ check(
   'The synchronized in-addon changelog must support a corrected candidate without duplicated notes or stable headers.'
 );
 
+const cumulativeBetaPost = releaseTools.releasePostBody(
+  'beta',
+  '4.45-beta2',
+  `# Changelog
+
+## [Development]
+
+## [4.45-beta2] - 2026-09-03
+- Beta two correction
+
+## [4.45-beta1] - 2026-09-02
+### Bug Fixes & Improvements
+- Primary overhaul
+
+## [4.44-beta9] - 2026-08-01
+- Unrelated line
+`,
+  '- Beta two correction'
+);
+check(
+  cumulativeBetaPost.indexOf('### 4.45-beta2') < cumulativeBetaPost.indexOf('### 4.45-beta1') &&
+    (cumulativeBetaPost.match(/Beta two correction/g) || []).length === 1 &&
+    (cumulativeBetaPost.match(/Primary overhaul/g) || []).length === 1 &&
+    !cumulativeBetaPost.includes('Bug Fixes & Improvements') &&
+    !cumulativeBetaPost.includes('Unrelated line'),
+  'Generated beta posts must include this version and prior betas from the same line without duplicating changelog history.'
+);
+
 check(
   packageJson.scripts['validate:structure'] && packageJson.scripts['test:release'],
   'The default test stack must expose structure and release-flow checks.'

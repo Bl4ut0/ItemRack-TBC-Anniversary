@@ -926,19 +926,20 @@ For each finding/report cluster, the release ledger must record: affected versio
 
 ## Validation snapshot
 
-On 2026-09-03, on branch `dev` with the remediation working tree based on `04a6efe`, `npm test` passed end to end:
+On 2026-09-03, on branch `dev` with the post-beta working tree based on `8dbc607`, `npm test` passed end to end:
 
 - 11 production files parsed as Lua 5.1.
 - Transactions: 25 integration plus 30 engine assertions.
-- Events: 159 frame/reducer, 19 integration, and 39 processor assertions.
+- Events: 177 frame/reducer, 19 integration, and 39 processor assertions.
 - Queues: 12 policy, 9 runtime, 21 intent, 42 migration, and 6 migration-static checks.
 - Cooldowns: 20 authority plus 20 integration assertions.
 - Inventory refresh: 12 coalescing assertions.
 - Set bindings: 37 intent/containment/reconciliation assertions.
+- Large profiles: 42,128 event checks across 64 sets and 100 activations; 8,749 queue checks across 64 sets/19 slots and a 96-entry stack; 7,509 migration checks across 931 queues/3,724 records; and 2,746 transaction checks across 24 complete sets and 97 generated switches.
 - Structure: 32 checks; secure templates: 55; cross-cutting regressions: 40.
-- Event compatibility: 18; item identity: 21; queue/watchdog: 16; release flow: 18.
+- Event compatibility: 18; item identity: 21; queue/watchdog: 16; release flow: 19.
 
-This is 445 reported production-Lua assertions, 6 migration-static guards, and 200 reported structural/release guards. The suite now executes the previously absent buried per-slot restoration, shared/repeated frames, stale intent cancellation, simultaneous movement events, atomic queue context, side-effect-free identity, exact endpoint confirmation, terminal missing/no-space behavior, cursor rollback, cooldown reset publication, closed-popup cooldown state, coalescing, and set-binding containment paths.
+This is 61,595 reported production-Lua checks, 6 migration-static guards, and 201 reported structural/release guards. The suite now executes the previously absent buried per-slot restoration, shared/repeated frames, same-event generation replacement, stale intent cancellation, simultaneous movement events, atomic queue context, large/malformed profile migration, side-effect-free identity, exact endpoint confirmation, terminal missing/no-space behavior, multi-step rollback, cursor ownership, cooldown reset publication, closed-popup cooldown state, coalescing, set-binding containment, and cumulative beta-note generation paths.
 
 Still outside automated proof: Blizzard's protected execution and taint engine, exact client item-lock timing, every unique-equipped rule, real Masque interaction, historical SavedVariables loaded by each supported client, and the CPU/frame budget under macro-driven swaps. Those are the remaining acceptance gates; they must not be inferred from this green suite.
 

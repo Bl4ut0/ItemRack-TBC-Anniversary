@@ -98,14 +98,28 @@ function EventFrames.Activate(state, activation)
 	end
 
 	local existingId = state.byEvent[activation.eventName]
+	local replacementTargets = {}
+	local replacementVisible = {}
+	local replacing = false
 	if existingId then
 		local existing = state.frames[existingId]
 		if existing and existing.eventGeneration == activation.eventGeneration then
 			return { changed=false, frameId=existingId, targets={} }
 		end
 		-- A newer generation for the same logical event replaces the old frame.
-		-- Reuse Pop so its prior ownership is spliced correctly first.
-		EventFrames.Pop(state,activation.eventName,existing and existing.eventGeneration)
+		-- Reuse Pop so its prior ownership is spliced correctly first, retaining
+		-- the restoration plan for slots the replacement no longer owns.
+		replacing = true
+		for slot in pairs(activation.slots) do
+			if type(slot) == "number" then
+				replacementVisible[slot] = EffectiveTarget(state,slot)
+			end
+		end
+		local removed = EventFrames.Pop(state,activation.eventName,
+			existing and existing.eventGeneration)
+		for slot,target in pairs(removed.targets or {}) do
+			replacementTargets[slot] = target
+		end
 	end
 
 	local frameId = state.nextFrameId
@@ -125,7 +139,7 @@ function EventFrames.Activate(state, activation)
 		status = "active",
 		slots = {},
 	}
-	local targets = {}
+	local targets = replacementTargets
 	for slot,target in pairs(CopySlots(activation.slots)) do
 		local higherSlot
 		if insertIndex <= #state.order then
@@ -144,6 +158,12 @@ function EventFrames.Activate(state, activation)
 			prior = EffectiveTarget(state,slot)
 		end
 		if prior == nil and higherSlot then prior = higherSlot.prior end
+		if prior == nil and replacing and replacementTargets[slot] ~= nil then
+			-- The removed top frame's Pop target is the logical layer below it.
+			-- Use that for future restoration even though the old item remains
+			-- physically visible until this coalesced replacement plan is applied.
+			prior = replacementTargets[slot]
+		end
 		if prior == nil then prior = activation.observed and activation.observed[slot] end
 		-- nil means the first physical observation is not reliable yet.  Such a
 		-- slot is deliberately not owned; empty equipment is represented by 0.
@@ -151,6 +171,23 @@ function EventFrames.Activate(state, activation)
 			frame.slots[slot] = { target=target, prior=prior, state="planned" }
 			if higherSlot then
 				higherSlot.prior = target
+				if replacing then targets[slot] = nil end
+			elseif replacing then
+				-- Pop and Activate are one logical replacement. Coalesce their
+				-- physical plans against what is still visible, so an unchanged
+				-- retained target does not briefly restore while an old-only slot
+				-- still receives Pop's restoration target.
+				local visible = activation.observed and activation.observed[slot]
+				if visible == nil then visible = replacementVisible[slot] end
+				if visible ~= nil then
+					if SameValue(target,visible) then
+						targets[slot] = nil
+					else
+						targets[slot] = target
+					end
+				elseif not SameValue(target,prior) then
+					targets[slot] = target
+				end
 			elseif not SameValue(target,prior) then
 				targets[slot] = target
 			end

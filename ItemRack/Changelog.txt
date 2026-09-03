@@ -1,5 +1,9 @@
 __ Development __
 
+- Added deterministic production-Lua stress coverage for large profiles: 64 overlapping sets, a 96-entry event/queue context, 931 legacy queues, and 97 serialized multi-slot equipment transactions now run in the standard release gate.
+- Fixed same-event generation replacement leaving gear from slots that the newer event set no longer owned. Replacement now emits one coalesced plan that restores dropped slots, keeps retained targets stable, and preserves their original lower restoration history.
+- Beta publication notes now include the current beta plus every earlier beta from the same version line, while the in-addon changelog keeps each beta separate for clean stable consolidation.
+
 __ New in 4.45-beta1 - By Bl4ut0 __
 - This beta is the primary reliability overhaul produced by the v4.24-to-development audit of historical source, packages, GitHub reports, and CurseForge comments. It replaces accumulated event, transaction, queue, cooldown, binding, and button workarounds with explicit ownership/state boundaries and production-Lua regression coverage for live-client beta validation.
 - Uses ordered event frames with per-slot restore ownership so shared Ghostwolf/Mounted sets, buried removal, repeated sets, Zone-under-Mounted rebasing, stale generations, and manual gear changes cannot restore over a newer owner.

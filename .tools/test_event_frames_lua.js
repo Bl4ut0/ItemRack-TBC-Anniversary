@@ -447,6 +447,41 @@ do
     "ambiguous legacy ordering must remain explicit in the migration report")
 end
 
+-- Replacing one logical event with a newer, narrower generation is one
+-- coalesced transition. Retained targets stay visible, dropped slots restore,
+-- and the new frame keeps the pre-event base rather than a self-prior.
+do
+  local state = newState()
+  activate(state,"Reusable",1,"Wide",{
+    [13]="Old13", [14]="Same14",
+  },{
+    [13]="Base13", [14]="Base14",
+  })
+  local replacement = API.Activate(state,{
+    eventName="Reusable", eventGeneration=2, setName="Replacement",
+    slots={ [13]="New13", [14]="Same14" },
+    observed={ [13]="Old13", [14]="Same14" },
+  })
+  check(replacement.changed == true and #state.order == 1,
+    "new event generation must replace, not stack with, its old frame")
+  check(replacement.targets[13] == "New13" and replacement.targets[14] == nil,
+    "replacement must emit only the final physical target for retained slots")
+  local frame = state.frames[state.byEvent.Reusable]
+  check(frame.slots[13].prior == "Base13" and frame.slots[14].prior == "Base14",
+    "replacement must preserve the original lower restoration history")
+
+  replacement = API.Activate(state,{
+    eventName="Reusable", eventGeneration=3, setName="Narrow",
+    slots={ [13]="Newest13" },
+    observed={ [13]="New13", [14]="Same14" },
+  })
+  check(replacement.targets[13] == "Newest13" and replacement.targets[14] == "Base14",
+    "narrower replacement must restore every old-only slot")
+  local removed = pop(state,"Reusable",3)
+  check(removed.targets[13] == "Base13",
+    "the final replacement generation must unwind to the pre-event base")
+end
+
 print(string.format("[EVENT FRAME LUA] %d production-Lua ownership checks passed.", checks))
 `;
 

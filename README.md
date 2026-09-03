@@ -119,6 +119,14 @@ The TBC Anniversary Edition runs on a modern WoW client engine, which required s
 - **Visual Fix:** Resolved yellow triangle artifacts in Options Menu via texture cleanup
 - Deprecation fallback shims for critical functions
 
+## Development and testing
+
+Run `npm test` for the complete code-level release gate. The suite includes
+deterministic large-profile workloads with dozens of overlapping saved sets,
+deep event stacks, legacy queue migrations, and serialized equipment failures.
+See [TESTING.md](TESTING.md) for the scenario matrix, reproduction seed, and the
+client behaviors that still require in-game beta testing.
+
 ## Support
 
 For issues specific to the TBC Anniversary port, please open an issue on this GitHub repository.

@@ -404,6 +404,23 @@ function generatePostData(mode, version, body, outputRoot = '.versions') {
   write(path.join(releaseDir, 'CURSEFORGE_RELEASE.md'), curseForge);
 }
 
+function releasePostBody(mode, version, markdown, currentBody) {
+  if (mode !== 'beta') return currentBody;
+  const versionMatch = /^(.*)-beta(\d+)$/.exec(version);
+  if (!versionMatch) return currentBody;
+  const baseVersion = versionMatch[1];
+  const currentNumber = Number(versionMatch[2]);
+  const betaPattern = new RegExp(`^${escapeRegExp(baseVersion)}-beta(\\d+)$`);
+  const sections = parseMarkdownSections(markdown)
+    .map((entry) => ({ entry, match: betaPattern.exec(entry.version) }))
+    .filter(({ match }) => match && Number(match[1]) <= currentNumber)
+    .sort((left, right) => Number(right.match[1]) - Number(left.match[1]));
+  if (sections.length <= 1) return currentBody;
+  return sections.map(({ entry }) =>
+    `### ${entry.version}\n\n${normalizeMarkdownBody(entry.body)}`
+  ).join('\n\n');
+}
+
 function validateModeAndVersion(mode, version) {
   if (!versionPattern.test(version || '')) fail('Specify a valid release version.');
   if (mode === 'beta' && !betaVersionPattern.test(version)) {
@@ -509,7 +526,12 @@ function buildRelease(mode, version, args) {
     path.join(releaseDir, 'ItemRackOptions/ItemRackOptions.lua')
   ]);
   run(process.execPath, [paths.structureScript, releaseDir]);
-  generatePostData(mode, version, releaseSection.body, outputRoot);
+  generatePostData(
+    mode,
+    version,
+    releasePostBody(mode, version, markdown, releaseSection.body),
+    outputRoot
+  );
 
   const zipPath = path.join(outputRoot, 'Compressed', `ItemRack-anniversary-${version}.zip`);
   const hashPath = `${zipPath}.sha256`;
@@ -602,6 +624,7 @@ module.exports = {
   promoteBetaAddon,
   consolidateStableMarkdown,
   consolidateStableAddon,
+  releasePostBody,
   runValidationSuite
 };
 
