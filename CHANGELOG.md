@@ -4,6 +4,8 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 
 ## [Development]
 
+
+## [4.45-beta2] - 2026-09-03
 - **Deterministic Large-Profile Test Suite**: Added production-Lua workloads that model users with 64 overlapping sets, a 96-entry event/queue context, 931 migrated queues, and 97 multi-slot equipment transactions. Seeded buried removal, shared/repeated sets, atomic queue provenance, hostile SavedVariables shapes, lock contention, destination rejection, and exact rollback now run in the standard `npm test` gate.
 - **Same-Event Generation Replacement**: The expanded suite found that replacing an event with a narrower newer generation removed logical ownership but could leave old-only gear physically equipped. Event-frame replacement now coalesces the old Pop and new Activate plans, restores dropped slots, preserves the correct lower prior, and avoids briefly restoring retained targets.
 - **Cumulative Beta Publication Notes**: Generated GitHub and CurseForge notes for beta2 and later now include every earlier beta from the same version line, newest first. Repository changelog sections remain separate so eventual stable consolidation does not duplicate fixes.
