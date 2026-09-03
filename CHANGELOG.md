@@ -4,6 +4,8 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 
 ## [Development]
 
+
+## [4.45-beta1] - 2026-09-03
 ### Bug Fixes & Improvements
 - **Canonical Event Ownership and Restoration**: Replaced the shared per-set live restore graph with ordered event frames and per-slot prior values. Shared-set Ghostwolf/Mounted ownership, buried removal, repeated `X → Y → X` sets, manual slot release, Zone-under-Mounted rebasing, and stale generations now reconcile without a lower event overwriting higher or manually selected gear.
 - **Recoverable Legacy Event Upgrade**: Captures legacy `EventStack`, active flags, mappings, and referenced `old`/`oldset` history before defaults are refreshed. Ordered evidence is migrated once; ambiguous unordered multi-event state is backed up and left unowned rather than guessed, and unknown future schemas suspend automatic swaps without rewriting data.
