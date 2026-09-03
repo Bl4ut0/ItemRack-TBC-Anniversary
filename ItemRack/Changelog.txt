@@ -1,6 +1,7 @@
 __ Development __
 
 __ New in 4.45-beta1 - By Bl4ut0 __
+- This beta is the primary reliability overhaul produced by the v4.24-to-development audit of historical source, packages, GitHub reports, and CurseForge comments. It replaces accumulated event, transaction, queue, cooldown, binding, and button workarounds with explicit ownership/state boundaries and production-Lua regression coverage for live-client beta validation.
 - Uses ordered event frames with per-slot restore ownership so shared Ghostwolf/Mounted sets, buried removal, repeated sets, Zone-under-Mounted rebasing, stale generations, and manual gear changes cannot restore over a newer owner.
 - Captures legacy event order and restore history before defaults load, backs up ambiguous state instead of guessing, and suspends automatic swaps without rewriting unknown future schemas.
 - Routes set, popup, AutoQueue, deferred, empty-slot, and two-hand moves through one serialized, observed transaction with exact identity checks, preflight space validation, bounded retry, and unified cleanup. ItemRack never changes the global Sound_EnableSFX setting.
