@@ -369,7 +369,6 @@ ItemRackSettings = {
 	TooltipColorUnEquipped = "OFF", -- whether to highlight unequipped set items in orange
 	DisableSwapSound = "OFF", -- whether to silence audio when ItemRack automatically swaps gear
 	ShowSetInTooltip = "OFF", -- whether to show set info in tooltips
-	DisableActionBarSound = "OFF", -- whether to silence Action Bar sounds
 }
 
 ItemRack.NoTitansGrip = {
@@ -471,7 +470,7 @@ function ItemRack.InitEventHandlers()
 	handler.ACTIONBAR_UPDATE_COOLDOWN = ItemRack.UpdateButtonCooldowns
 	handler.UNIT_AURA = ItemRack.OnUnitAura
 	handler.UNIT_INVENTORY_CHANGED = ItemRack.OnUnitInventoryChanged
-	handler.UPDATE_BINDINGS = ItemRack.KeyBindingsChanged
+	handler.UPDATE_BINDINGS = ItemRack.OnBindingsChanged
 	handler.PLAYER_REGEN_ENABLED = ItemRack.OnLeavingCombatOrDeath
 	handler.PLAYER_UNGHOST = ItemRack.OnLeavingCombatOrDeath
 	handler.PLAYER_ALIVE = ItemRack.OnLeavingCombatOrDeath
@@ -540,7 +539,7 @@ function ItemRack.FireItemRackEvent(self,event,...)
 end
 
 StaticPopupDialogs["ITEMRACK_MISSING_LSI"] = {
-	text = "ItemRack: 'Disable swap sounds' is enabled, but the required library (LibSoundIndex) is missing.\n\nItemRack will still function normally but will fall back to modifying the game's SFX CVar, which mutes all sounds during equipment swaps.\n\nPlease install LibSoundIndex for a seamless audio experience.",
+	text = "ItemRack: 'Disable swap sounds' requires LibSoundIndex, but the library is missing.\n\nItemRack will continue swapping normally and will not modify the game's global SFX setting. Install LibSoundIndex to mute only equipment-swap sounds.",
 	button1 = "OK",
 	OnAccept = function()
 		ItemRackSettings.LSIWarningSeen = true
@@ -581,13 +580,15 @@ function ItemRack.AuditSavedVariables(printToChat)
 		ItemRackUser.Sets = {}
 		LogIssue("ItemRackUser.Sets was missing. Initialized.", true)
 	end
-	if not ItemRackUser.Queues then
-		ItemRackUser.Queues = {}
-		LogIssue("ItemRackUser.Queues was missing. Initialized.", true)
-	end
-	if not ItemRackUser.QueuesEnabled then
-		ItemRackUser.QueuesEnabled = {}
-		LogIssue("ItemRackUser.QueuesEnabled was missing. Initialized.", true)
+	if not ItemRack.QueueSchemaUnsupported then
+		if not ItemRackUser.Queues then
+			ItemRackUser.Queues = {}
+			LogIssue("ItemRackUser.Queues was missing. Initialized.", true)
+		end
+		if not ItemRackUser.QueuesEnabled then
+			ItemRackUser.QueuesEnabled = {}
+			LogIssue("ItemRackUser.QueuesEnabled was missing. Initialized.", true)
+		end
 	end
 	if not ItemRackUser.EventStack then
 		ItemRackUser.EventStack = {}
@@ -748,7 +749,7 @@ function ItemRack.AuditSavedVariables(printToChat)
 	end
 
 	-- 4. Audit Queues & QueuesEnabled
-	if ItemRackUser.Queues then
+	if not ItemRack.QueueSchemaUnsupported and ItemRackUser.Queues then
 		for slot in pairs(ItemRackUser.Queues) do
 			local numSlot = tonumber(slot)
 			if not numSlot or numSlot < 0 or numSlot > 19 then
@@ -757,7 +758,7 @@ function ItemRack.AuditSavedVariables(printToChat)
 			end
 		end
 	end
-	if ItemRackUser.QueuesEnabled then
+	if not ItemRack.QueueSchemaUnsupported and ItemRackUser.QueuesEnabled then
 		for slot in pairs(ItemRackUser.QueuesEnabled) do
 			local numSlot = tonumber(slot)
 			if not numSlot or numSlot < 0 or numSlot > 19 then
@@ -888,6 +889,12 @@ end
 ItemRack.AutomaticSwapSettleDelay = 3
 
 function ItemRack.IsAutomaticSwapBlocked()
+	if ItemRack.QueueSchemaUnsupported then
+		return true, "unsupported queue schema"
+	end
+	if ItemRack.EventStateSchemaUnsupported then
+		return true, "unsupported event-state schema"
+	end
 	if ItemRack.WorldTransitioning then
 		return true, "world transition"
 	end
@@ -935,6 +942,9 @@ function ItemRack.ScheduleAutomaticSwapResume(reason, delay)
 			end
 		end
 		ItemRack.RunAllEvents(reason or "automatic swap resume")
+		if ItemRack.ProcessPendingSetBinding then
+			ItemRack.ProcessPendingSetBinding("automatic swap resume")
+		end
 		if ItemRack.PeriodicQueueCheck then
 			ItemRack.PeriodicQueueCheck()
 		end
@@ -1156,10 +1166,42 @@ function ItemRack.IsEquippedSlotStateReady(slot)
 	return false
 end
 
+function ItemRack.CancelPendingQueueEquipSet(pendingSet,reason)
+	pendingSet = pendingSet or ItemRack.PendingQueueEquipSet
+	if not pendingSet or ItemRack.PendingQueueEquipSet ~= pendingSet then return false end
+	ItemRack.PendingQueueEquipSet = nil
+	ItemRack.Debug("Equip", "Canceled pending queue-state set:", pendingSet.setname or "nil", reason or "superseded")
+	if pendingSet.eventFrameRevision and ItemRack.EventFramePlanFinished then
+		ItemRack.EventFramePlanFinished(pendingSet.setname,false,reason or "pending_intent_canceled")
+	end
+	return true
+end
+
+function ItemRack.IsPendingQueueEquipSetCurrent(pendingSet)
+	if not pendingSet or not pendingSet.setname or not ItemRackUser.Sets
+	or not ItemRackUser.Sets[pendingSet.setname] then
+		return false,"set_missing"
+	end
+	if pendingSet.eventFrameRevision then
+		local state = ItemRackUser.EventState
+		local plan = ItemRack.EventFramePlans and ItemRack.EventFramePlans[pendingSet.setname]
+		if not state or state.revision ~= pendingSet.eventFrameRevision
+		or not plan or plan.revision ~= pendingSet.eventFrameRevision
+		or ItemRack.EventFramePlanActive ~= pendingSet.setname then
+			return false,"stale_event_frame_revision"
+		end
+	end
+	return true
+end
+
 function ItemRack.TryEquipPendingQueueSet()
 	local pendingSet = ItemRack.PendingQueueEquipSet
-	if not pendingSet or not ItemRack.EquipSet
-	or not ItemRackUser.Sets or not ItemRackUser.Sets[pendingSet.setname] then
+	if not pendingSet or not ItemRack.EquipSet then
+		return false
+	end
+	local current,reason = ItemRack.IsPendingQueueEquipSetCurrent(pendingSet)
+	if not current then
+		ItemRack.CancelPendingQueueEquipSet(pendingSet,reason)
 		return false
 	end
 	if (pendingSet.isEventEquipment or pendingSet.isDeferredEquipment)
@@ -1205,13 +1247,15 @@ function ItemRack.NotifyQueueStateReady()
 			return
 		end
 
-		ItemRack.TryEquipPendingQueueSet()
-
 		local reason = ItemRack.PendingQueueStateEventReason or "Queue state ready"
 		ItemRack.PendingQueueStateEventReason = nil
 		if ItemRack.RunAllEvents then
 			ItemRack.RunAllEvents(reason)
 		end
+		-- Built-in events are reconciled first so a stale automatic request can
+		-- be canceled before any equipment API call. Manual pending intent retains
+		-- precedence when both become ready in the same frame.
+		ItemRack.TryEquipPendingQueueSet()
 		if ItemRack.PeriodicQueueCheck then
 			-- Give UNIT_INVENTORY_CHANGED one frame to record any equip penalty
 			-- produced by a deferred set before AutoQueue evaluates it.
@@ -1518,6 +1562,80 @@ function ItemRack.ReconcileEquippedSnapshot(fromInventoryEvent)
 	return hasUnresolvedSlot, stateChanged, readinessRestored
 end
 
+-- Inventory notifications are intentionally split into immediate state
+-- reconciliation and deferred presentation work. A multi-slot set swap can
+-- emit many UNIT_INVENTORY_CHANGED events; rebuilding buttons, popup contents,
+-- cooldowns, set identity, options, and Masque state for every one is both
+-- redundant and a major hitch amplifier.
+function ItemRack.RequestInventoryRefresh(reason)
+	local refresh = ItemRack.InventoryRefreshState
+	if type(refresh) ~= "table" then
+		refresh = { dirtyEvents=0, batches=0, totalMilliseconds=0 }
+		ItemRack.InventoryRefreshState = refresh
+	end
+	refresh.dirty = true
+	refresh.dirtyEvents = (refresh.dirtyEvents or 0) + 1
+	refresh.lastReason = reason or "inventory"
+
+	-- Chained set steps each create an observed transaction. Keep presentation
+	-- dirty across the chain; FinishRequest calls OnEquipmentTransactionFinalized
+	-- after any completion callback has had a chance to submit the next step.
+	if ItemRack.ActiveEquipmentTransaction or refresh.scheduled then
+		return false
+	end
+	refresh.scheduled = true
+	C_Timer.After(0,ItemRack.FlushInventoryRefresh)
+	return true
+end
+
+function ItemRack.FlushInventoryRefresh()
+	local refresh = ItemRack.InventoryRefreshState
+	if type(refresh) ~= "table" then return false,"clean" end
+	refresh.scheduled = nil
+	if ItemRack.ActiveEquipmentTransaction then
+		return false,"transaction_active"
+	end
+	if not refresh.dirty then return false,"clean" end
+
+	local started = debugprofilestop and debugprofilestop()
+	local eventCount = refresh.dirtyEvents or 0
+	local reason = refresh.lastReason
+	refresh.dirty = nil
+	refresh.dirtyEvents = 0
+
+	if ItemRack.UpdateButtons then ItemRack.UpdateButtons() end
+	if ItemRackMenuFrame and ItemRackMenuFrame:IsVisible() and ItemRack.BuildMenu then
+		ItemRack.BuildMenu()
+	end
+	if ItemRackOptFrame and ItemRackOptFrame:IsVisible()
+	and ItemRackOpt and ItemRackOpt.Inv and ItemRackOpt.UpdateInv then
+		for i=0,19 do
+			if ItemRackOpt.Inv[i] and not ItemRackOpt.Inv[i].selected then
+				ItemRackOpt.Inv[i].id = ItemRack.GetID(i)
+			end
+		end
+		ItemRackOpt.UpdateInv()
+	end
+
+	local elapsed = started and math.max((debugprofilestop() - started),0) or 0
+	refresh.batches = (refresh.batches or 0) + 1
+	refresh.lastBatchEvents = eventCount
+	refresh.lastMilliseconds = elapsed
+	refresh.totalMilliseconds = (refresh.totalMilliseconds or 0) + elapsed
+	if ItemRack.DebugAll or (ItemRack.DebugTags and ItemRack.DebugTags.Performance) then
+		ItemRack.Debug("Performance", "Inventory refresh batch:", eventCount,
+			"events", string.format("%.2fms",elapsed), reason or "")
+	end
+
+	-- A nested callback may have dirtied presentation again while this batch ran.
+	if refresh.dirty then ItemRack.RequestInventoryRefresh("nested_refresh") end
+	return true
+end
+
+function ItemRack.OnEquipmentTransactionFinalized(request)
+	ItemRack.RequestInventoryRefresh("transaction_"..tostring(request and request.status or "finished"))
+end
+
 function ItemRack.ScheduleEquippedStateRetry(delay)
 	if ItemRack.EquippedStateRetryPending or ItemRack.QueueStateReady ~= true then
 		return
@@ -1535,22 +1653,11 @@ function ItemRack.ScheduleEquippedStateRetry(delay)
 		if ItemRack.QueueStateReady == true and ItemRack.ReconcileEquippedSnapshot then
 			local unresolved, changed, readinessRestored = ItemRack.ReconcileEquippedSnapshot(false)
 			if changed then
-				ItemRack.UpdateButtons()
+				ItemRack.RequestInventoryRefresh("equipped_state_resolved")
 				ItemRack.TryEquipPendingQueueSet()
 				ItemRack.UpdateCombatQueue()
 				if readinessRestored and ItemRack.RunAllEvents then
 					ItemRack.RunAllEvents("Equipped item data resolved")
-				end
-				if ItemRackMenuFrame:IsVisible() then
-					ItemRack.BuildMenu()
-				end
-				if ItemRackOptFrame and ItemRackOptFrame:IsVisible() then
-					for i = 0, 19 do
-						if not ItemRackOpt.Inv[i].selected then
-							ItemRackOpt.Inv[i].id = ItemRack.GetID(i)
-						end
-					end
-					ItemRackOpt.UpdateInv()
 				end
 				if ItemRack.PeriodicQueueCheck then
 					C_Timer.After(0.05, function()
@@ -1600,13 +1707,13 @@ function ItemRack.OnEnterWorld(self,event,...)
 			ItemRack.UpdateCurrentSet()
 		end)
 
-		C_Timer.After(15,function()
-			ItemRack.SetSetBindings()
-		end)
 	end
 end
 
 function ItemRack.ResetCooldownCaches()
+	if ItemRack.CooldownState and ItemRack.CooldownState.Reset then
+		ItemRack.CooldownState.Reset(ItemRack.EnsureCooldownState())
+	end
 	ItemRack.CooldownCache = {}
 	ItemRack.MenuCooldownCache = {}
 	ItemRack.CooldownDebugLast = {}
@@ -1615,6 +1722,7 @@ function ItemRack.ResetCooldownCaches()
 			ItemRackUser.ItemsUsed[itemID] = nil
 		end
 	end
+	ItemRack.ItemsUsedCooldownGeneration = {}
 	if ItemRack.UpdateButtonCooldowns then
 		ItemRack.UpdateButtonCooldowns()
 	end
@@ -1628,14 +1736,17 @@ function ItemRack.UpdateArenaVisibilityState()
 	local _, instanceType = IsInInstance()
 	ItemRack.inArena = (instanceType == "arena") and 1 or nil
 	if not wasInArena and ItemRack.inArena then
-		ItemRack.ResetCooldownCaches()
-		-- Arena joins can briefly report stale cooldown data during the zone load.
-		-- Re-clear one second later so quick access buttons match Blizzard's reset state.
-		C_Timer.After(1, function()
-			if ItemRack.inArena then
-				ItemRack.ResetCooldownCaches()
-			end
-		end)
+		-- Arena entry is a generation boundary. Blizzard can briefly publish the
+		-- pre-arena cooldown after this event, so the observer rejects samples
+		-- whose start predates the boundary instead of relying on a timed re-clear.
+		ItemRack.CooldownState.BeginArena(ItemRack.EnsureCooldownState(),GetTime())
+		ItemRack.CooldownCache = {}
+		ItemRack.MenuCooldownCache = {}
+		ItemRack.CooldownDebugLast = {}
+		if ItemRack.UpdateButtonCooldowns then ItemRack.UpdateButtonCooldowns() end
+		if ItemRack.UpdateMenuCooldowns then ItemRack.UpdateMenuCooldowns() end
+	elseif wasInArena and not ItemRack.inArena then
+		ItemRack.CooldownState.EndArena(ItemRack.EnsureCooldownState())
 	end
 	if ItemRack.RefreshButtonVisibility then
 		ItemRack.RefreshButtonVisibility()
@@ -1699,6 +1810,12 @@ function ItemRack.OnCastingStop(self,event,unit,castID)
 			if ItemRack.RunAllEvents then
 				ItemRack.RunAllEvents("OnCastingStop")
 			end
+			if ItemRack.RetryBlockedEventFrames then
+				ItemRack.RetryBlockedEventFrames()
+			end
+			if ItemRack.ProcessPendingSetBinding then
+				ItemRack.ProcessPendingSetBinding("casting stopped")
+			end
 
 			-- Start the delayed timer to handle race conditions where combat/casting status blips
 			ItemRack.OnSpellSucceed()
@@ -1728,6 +1845,9 @@ function ItemRack.DelayedCombatQueue()
 		return
 	end
 	ItemRack.ProcessCombatQueue()
+	if ItemRack.ProcessPendingSetBinding then
+		ItemRack.ProcessPendingSetBinding("delayed combat queue")
+	end
 	-- Also process any sets waiting for a swap
 	if #(ItemRack.SetsWaiting)>0 and not ItemRack.AnythingLocked() then
 		ItemRack.ProcessSetsWaiting()
@@ -1736,8 +1856,17 @@ end
 
 function ItemRack.OnUnitInventoryChanged(self,event,unit)
 	if unit=="player" then
-		ItemRack.UpdateButtons()
-
+		-- Inventory events are observations, not proof by themselves.  Let the
+		-- transaction service compare exact endpoint identities before any queue or
+		-- UI consumer treats the requested move as complete.
+		if ItemRack.ActiveEquipmentTransaction then
+			ItemRack.ReconcileEquipmentTransaction("UNIT_INVENTORY_CHANGED")
+		end
+		if not ItemRack.ActiveEquipmentTransaction and ItemRack.RetryBlockedEventFrames then
+			ItemRack.RetryBlockedEventFrames()
+		elseif not ItemRack.ActiveEquipmentTransaction and ItemRack.TryReconcileEventFrames then
+			ItemRack.TryReconcileEventFrames(true)
+		end
 		local stateWasReady = ItemRack.QueueStateReady == true
 		ItemRack.QueueDiagnostic("inventory_changed", { stateReady = stateWasReady })
 		local preReadyEventTime
@@ -1784,17 +1913,7 @@ function ItemRack.OnUnitInventoryChanged(self,event,unit)
 				ItemRack.UpdateCombatQueue()
 			end
 		end
-		if ItemRackMenuFrame:IsVisible() then
-			ItemRack.BuildMenu()
-		end
-		if ItemRackOptFrame and ItemRackOptFrame:IsVisible() then
-			for i=0,19 do
-				if not ItemRackOpt.Inv[i].selected then
-					ItemRackOpt.Inv[i].id = ItemRack.GetID(i)
-				end
-			end
-			ItemRackOpt.UpdateInv()
-		end
+		ItemRack.RequestInventoryRefresh("UNIT_INVENTORY_CHANGED")
 	end
 end
 
@@ -1820,6 +1939,14 @@ function ItemRack.OnLeavingCombatOrDeath()
 	end
 
 	ItemRack.ProcessCombatQueue()
+	if ItemRack.RetryBlockedEventFrames then
+		ItemRack.RetryBlockedEventFrames()
+	elseif ItemRack.TryReconcileEventFrames then
+		ItemRack.TryReconcileEventFrames(true)
+	end
+	if ItemRack.ProcessPendingSetBinding then
+		ItemRack.ProcessPendingSetBinding("combat ended")
+	end
 	
 	-- Also start delayed timer to ensure any race conditions with InCombatLockdown() are caught
 	ItemRack.StartTimer("DelayedCombatQueue")
@@ -1835,9 +1962,15 @@ function ItemRack.ProcessCombatQueue()
 		ItemRack.Debug("CombatQueue", "ProcessCombatQueue deferred while automatic swaps are suspended")
 		return
 	end
-	-- Safety: clear any items stuck on the cursor from previous partial swaps
+	if ItemRack.ActiveEquipmentTransaction then
+		ItemRack.Debug("CombatQueue", "ProcessCombatQueue deferred while an equipment transaction is settling")
+		return
+	end
+	-- A cursor we did not create belongs to the player or another addon.  Never
+	-- clear it as queue housekeeping; wait until its owner resolves it.
 	if CursorHasItem() then
-		ClearCursor()
+		ItemRack.Debug("CombatQueue", "ProcessCombatQueue deferred while the cursor is occupied")
+		return
 	end
 	if not ItemRack.IsPlayerReallyDead() and next(ItemRack.CombatQueue) then
 		local inCombat = InCombatLockdown()
@@ -1845,8 +1978,6 @@ function ItemRack.ProcessCombatQueue()
 		ItemRack.Debug("CombatQueue", "ProcessCombatQueue: InCombatLockdown="..tostring(inCombat).." UnitAffectingCombat="..tostring(unitCombat))
 		local combat = ItemRackUser.Sets["~CombatQueue"].equip
 		local queue = ItemRack.CombatQueue
-		local queuesEnabled = ItemRack.GetQueuesEnabled()
-		local queues = ItemRack.GetQueues()
 		for i in pairs(combat) do
 			combat[i] = nil
 		end
@@ -1858,14 +1989,17 @@ function ItemRack.ProcessCombatQueue()
 				local discard = false
 				if ItemRack.AutoQueueFlag and ItemRack.AutoQueueFlag[i] then
 					local sourceOwner = ItemRack.AutoQueueOwner and ItemRack.AutoQueueOwner[i]
-					local currentOwner = ItemRack.GetActiveQueueOwner and ItemRack.GetActiveQueueOwner(i) or false
-					local queueEnabled = queuesEnabled[i]
-					local queueList = queues[i]
+					local sourceList = ItemRack.AutoQueueList and ItemRack.AutoQueueList[i]
+					local queueContext = ItemRack.GetQueueContext(i)
+					local currentOwner = queueContext.owner
+					local queueEnabled = queueContext.enabled
+					local queueList = queueContext.list
 					-- Only auto-queued entries are context-sensitive. If the queue owner changed
 					-- (for example: mount/flying event dropped, manual set changed, or per-set
 					-- queues were reconfigured), discard the stale request instead of applying a
 					-- trinket chosen for an older set context after combat ends.
-					if not queueEnabled or not queueList or #queueList == 0 or sourceOwner ~= currentOwner then
+					if not queueEnabled or not queueList or #queueList == 0
+					or sourceOwner ~= currentOwner or sourceList ~= queueList then
 						discard = true
 						ItemRack.Debug("CombatQueue", "  dropping stale auto-queue slot="..tostring(i).." source="..tostring(sourceOwner or "global").." current="..tostring(currentOwner or "global"))
 					end
@@ -2162,96 +2296,34 @@ function ItemRack.InitCore()
 	end
 	ItemRackSettings.CharacterSheetMenusLeft = nil -- removed in 4.27.3, replaced with per-side toggles
 	
-	-- (Temporary?) function to update all queues to tables for 
-	-- the per-set queue settings: delay, priority, and pause.
-	if not isAlreadyMigrated() then
-		ItemRack.MigrateQueues()
-	end
+	ItemRack.MigrateQueues()
+	-- Binding targets must exist as soon as PLAYER_LOGIN initialization finishes.
+	-- The former 15-second timer left saved set keys pointing at missing frames.
+	ItemRack.SetSetBindings()
 end
 
--- Check if we've already migrated by looking at the first entry
--- in the first queue we find (global or per-set).  If it's already
--- setup as a table, we assume we already migrated instead of looping through
--- all the tables everytime we init.
-function isAlreadyMigrated()
-	-- Check global queues
-	for slot, q in pairs(ItemRackUser.Queues) do
-		if q and type(q) == "table" then
-			for _, entry in ipairs(q) do
-				if entry ~= 0 and type(entry) == "table" then
-					-- Found an entry and it's a table = we're on new format
-					return true
-				elseif entry ~= 0 then
-					-- Found an entry but it's not a table = we're on old format
-					return false
-				end
-			end
-		end
-	end
-	
-	-- Check per-set queues
-	for _, set in pairs(ItemRackUser.Sets) do
-		if set.Queues then
-			for slot, q in pairs(set.Queues) do
-				if q and type(q) == "table" then
-					for _, entry in ipairs(q) do
-						if entry ~= 0 and type(entry) == "table" then
-							-- Found an entry and it's a table = we're on new format
-							return true
-						elseif entry ~= 0 then
-							-- Found an entry but it's not a table = we're on old format
-							return false
-						end
-					end
-				end
-			end
-		end
-	end
-	
-	-- No queues found at all, or all queues are empty = nothing to migrate, so just mark true
-	return true
-end
-
--- Convert the global and per-set queues to the new table
--- format to store the per-set queue settings: delay, priority, and pause. 
 function ItemRack.MigrateQueues()
-	-- Migrate global queues
-	for slot, q in pairs(ItemRackUser.Queues) do
-		migrateQueue(q)
+	if not ItemRack.QueueMigration or not ItemRack.QueueMigration.Migrate then
+		ItemRack.QueueSchemaUnsupported = true
+		ItemRack.Print("Queue migration module could not be loaded; queue data was left unchanged and automatic swaps are suspended.")
+		return nil,"module_missing"
 	end
-	
-	-- Migrate per-set queues
-	for _, set in pairs(ItemRackUser.Sets) do
-		if set.Queues then
-			for slot, q in pairs(set.Queues) do
-				migrateQueue(q)
-			end
-		end
+	local migrationClock = GetServerTime or time or GetTime
+	local succeeded,report = pcall(ItemRack.QueueMigration.Migrate,ItemRackUser,ItemRackItems,
+		function(id) return ItemRack.GetIRString(id,true) end,migrationClock)
+	if not succeeded then
+		ItemRack.QueueSchemaUnsupported = true
+		ItemRack.Print("Queue migration failed; queue data was left recoverable and automatic swaps are suspended. "..tostring(report))
+		return nil,"migration_failed"
 	end
-
-	-- Clear ItemRackItems since it should now be redundant with the information being stored in the queues
-	ItemRackItems = {}
-end
-
--- Find every queue entry and lookup if there are currently any 
--- ItemRackItems values to transfer, otherwise set to defaults.
-function migrateQueue(queue)
-	if not queue then 
-		return 
+	ItemRack.QueueSchemaUnsupported = report.skipped == "future_schema" and true or nil
+	if ItemRack.QueueSchemaUnsupported then
+		ItemRack.Print("This profile uses a newer queue schema. Queue data was left unchanged and automatic swaps are suspended to prevent corruption.")
 	end
-	for i, entry in ipairs(queue) do
-		if type(entry) ~= "table" then
-			local id = entry
-			local baseID = ItemRack.GetIRString(id, true)
-			local settings = (ItemRackItems and ItemRackItems[baseID]) or {}
-			queue[i] = {
-				id = id,
-				priority = settings.priority or false,
-				keep = settings.keep or false,
-				delay = settings.delay or 0,
-			}
-		end
-	end
+	ItemRack.Debug("Queue","Queue schema migration",report.fromVersion,"->",report.toVersion,
+		report.queuesVisited,"queues",report.entriesChanged,"changed",
+		report.entriesQuarantined,"quarantined")
+	return report
 end
 
 function ItemRack.Print(msg)
@@ -2261,13 +2333,6 @@ function ItemRack.Print(msg)
 end
 
 function ItemRack.UpdateCurrentSet()
-	local useSound = GetCVar("Sound_EnableSFX")
-	local overrideSound = false
-	if ItemRackSettings.DisableActionBarSound == "ON" and useSound == "1" then
-		SetCVar("Sound_EnableSFX", "0")
-		overrideSound = true
-	end
-
 	local texture = "Interface\\AddOns\\ItemRack\\ItemRackIcon"
 	local setname = ItemRackUser.CurrentSet or _G.CUSTOM
 	if setname and setname ~= _G.CUSTOM then
@@ -2289,8 +2354,6 @@ function ItemRack.UpdateCurrentSet()
 	end
 	ItemRack.Broker.icon = texture
 	ItemRack.Broker.text = setname
-
-	if overrideSound then SetCVar("Sound_EnableSFX", "1") end
 end
 
 --[[ Item info gathering ]]
@@ -3006,6 +3069,17 @@ end
 -- function happens .2 seconds after last ITEM_LOCK_CHANGE
 function ItemRack.LocksChanged()
 	ItemRack.UpdateButtonLocks()
+	if ItemRack.ActiveEquipmentTransaction then
+		ItemRack.ReconcileEquipmentTransaction("ITEM_LOCK_CHANGED")
+		if ItemRack.ActiveEquipmentTransaction then
+			return
+		end
+	end
+	if ItemRack.RetryBlockedEventFrames then
+		ItemRack.RetryBlockedEventFrames()
+	elseif ItemRack.TryReconcileEventFrames then
+		ItemRack.TryReconcileEventFrames(true)
+	end
 	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
 		if ItemRack.SetSwapping and not ItemRack.SetSwappingIsAutomatic then
 			ItemRack.LockChangedDuringSetSwap()
@@ -3196,13 +3270,6 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 
 	ItemRack.Debug("UI", "BuildMenu called. id:", id, "InCombat:", InCombatLockdown(), "menuOpen:", ItemRack.menuOpen)
 
-	local useSound = GetCVar("Sound_EnableSFX")
-	local overrideSound = false
-	if ItemRackSettings.DisableActionBarSound == "ON" and useSound == "1" then
-		SetCVar("Sound_EnableSFX", "0")
-		overrideSound = true
-	end
-
 	local showButtonMenu = (ItemRackButtonMenu and ItemRack.menuMovable) and (IsAltKeyDown() or ItemRackUser.Locked=="OFF")
 
 	for i in pairs(ItemRack.Menu) do
@@ -3332,7 +3399,13 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 				end
 
 				if ItemRack.MasqueGroups[masqueGroup] then
-					ItemRack.MasqueGroups[masqueGroup]:AddButton(button)
+					local name = button:GetName()
+					ItemRack.MasqueGroups[masqueGroup]:AddButton(button,{
+						Icon = _G[name.."Icon"],
+						Cooldown = _G[name.."Cooldown"],
+						Count = _G[name.."Count"],
+						HotKey = _G[name.."HotKey"],
+					})
 				end
 			end
 
@@ -3425,64 +3498,44 @@ function ItemRack.BuildMenu(id,menuInclude,masqueGroup)
 			ItemRack.SetRuneIconOverlay(_G["ItemRackMenu"..i],runeItemID,_G["ItemRackMenu"..i.."Icon"],16,"BOTTOMLEFT")
 		end
 	end
-
-	if overrideSound then SetCVar("Sound_EnableSFX", "1") end
 end
 
--- Cache for menu item cooldowns (keyed by baseID)
+-- Renderer projection for menu item cooldowns (keyed by baseID). The shared
+-- identity-keyed CooldownState remains authoritative even while this menu is closed.
 ItemRack.MenuCooldownCache = ItemRack.MenuCooldownCache or {}
 
 function ItemRack.UpdateMenuCooldowns()
-	local baseID
 	for i=1,#(ItemRack.Menu) do
-		baseID = tonumber(ItemRack.GetIRString(ItemRack.Menu[i],true)) --get baseID and convert it to number to be able to use it in numerical comparisons below
+		local exactID = ItemRack.Menu[i]
+		local baseID = tonumber(ItemRack.GetIRString(exactID,true))
 		if baseID and baseID>0 and ItemRack.menuOpen<20 then
 			local cdFrame = _G["ItemRackMenu"..i.."Cooldown"]
 			local start, duration, enable = GetItemCooldown(baseID)
+			local observed = ItemRack.ObserveItemCooldown(exactID,baseID,
+				start,duration,enable,"menu")
 
 			-- Suppress Blizzard's built-in countdown numbers
 			if cdFrame and cdFrame.SetHideCountdownNumbers and not _G["OmniCC"] then
 				cdFrame:SetHideCountdownNumbers(true)
 			end
 
-			if enable and enable == 1 then
-				-- Normal state: cache real CDs
-				if start and start > 0 and duration and duration > 1.5 then
-					ItemRack.MenuCooldownCache[baseID] = { start = start, duration = duration }
-					CooldownFrame_Set(cdFrame, start, duration, enable)
-				elseif not start or start == 0 or (duration and duration <= 1.5) then
-					-- CC-guard: check cache before clearing
-					local cache = ItemRack.MenuCooldownCache[baseID]
-					if cache then
-						local remaining = cache.duration - (GetTime() - cache.start)
-						if remaining > 0.1 then
-							CooldownFrame_Set(cdFrame, cache.start, cache.duration, 1)
-						else
-							ItemRack.MenuCooldownCache[baseID] = nil
-							CooldownFrame_Set(cdFrame, start, duration, enable)
-						end
-					else
-						CooldownFrame_Set(cdFrame, start, duration, enable)
-					end
-				else
-					CooldownFrame_Set(cdFrame, start, duration, enable)
-				end
-			elseif enable == 0 then
-				-- Stun/LoC: use cache
-				local cache = ItemRack.MenuCooldownCache[baseID]
-				if cache then
-					local remaining = cache.duration - (GetTime() - cache.start)
-					if remaining > 0.1 then
-						CooldownFrame_Set(cdFrame, cache.start, cache.duration, 1)
-					else
-						ItemRack.MenuCooldownCache[baseID] = nil
-						CooldownFrame_Clear(cdFrame)
-					end
+			if observed.active then
+				ItemRack.MenuCooldownCache[baseID] = {
+					start=observed.start, duration=observed.duration, exactID=exactID,
+				}
+				CooldownFrame_Set(cdFrame,observed.start,observed.duration,1)
+			else
+				ItemRack.MenuCooldownCache[baseID] = nil
+				-- Preserve only a genuine short global-cooldown presentation. Arena
+				-- barrier and disabled samples must never draw a synthetic item cooldown.
+				if observed.status ~= "arena_stale_sample"
+				and observed.status ~= "arena_reset"
+				and enable == 1 and start and start > 0
+				and duration and duration > 0 and duration <= 1.5 then
+					CooldownFrame_Set(cdFrame,start,duration,enable)
 				else
 					CooldownFrame_Clear(cdFrame)
 				end
-			else
-				CooldownFrame_Set(cdFrame, start, duration, enable)
 			end
 		else
 			_G["ItemRackMenu"..i.."Cooldown"]:Hide()
@@ -3493,29 +3546,13 @@ end
 
 function ItemRack.WriteMenuCooldowns()
 	if ItemRackSettings.CooldownCount=="ON" and ItemRackMenuFrame:IsVisible() then
-		local baseID
 		for i=1,#(ItemRack.Menu) do
-			baseID = ItemRack.GetIRString(ItemRack.Menu[i],true)
-			if baseID then
-				local numID = tonumber(baseID)
-				local start, duration, enable = GetItemCooldown(baseID)
-				if enable and enable == 1 then
-					ItemRack.WriteCooldown(_G["ItemRackMenu"..i.."Time"], start, duration)
-				elseif enable == 0 then
-					local cache = numID and ItemRack.MenuCooldownCache[numID]
-					if cache then
-						local remaining = cache.duration - (GetTime() - cache.start)
-						if remaining > 0 then
-							ItemRack.WriteCooldown(_G["ItemRackMenu"..i.."Time"], cache.start, cache.duration)
-						else
-							_G["ItemRackMenu"..i.."Time"]:SetText("")
-						end
-					else
-						_G["ItemRackMenu"..i.."Time"]:SetText("")
-					end
-				else
-					ItemRack.WriteCooldown(_G["ItemRackMenu"..i.."Time"], start, duration)
-				end
+			local exactID = ItemRack.Menu[i]
+			local baseID = tonumber(ItemRack.GetIRString(exactID,true))
+			local observed = baseID and ItemRack.GetObservedItemCooldown(exactID,baseID)
+			if observed then
+				ItemRack.WriteCooldown(_G["ItemRackMenu"..i.."Time"],
+					observed.start,observed.duration)
 			else
 				_G["ItemRackMenu"..i.."Time"]:SetText("")
 			end
@@ -3560,7 +3597,7 @@ function ItemRack.CreateMenuButton(idx,itemID)
 	if itemID=="MENU" then return end
 	local button
 	if not _G["ItemRackMenu"..idx] then
-		button = CreateFrame("CheckButton","ItemRackMenu"..idx,ItemRackMenuFrame,"ActionButtonTemplate")
+		button = CreateFrame("CheckButton","ItemRackMenu"..idx,ItemRackMenuFrame,"ItemRackMenuItemTemplate")
 		button:SetID(idx)
 		button:SetFrameStrata("HIGH")
 --		button:SetFrameLevel(ItemRackMenuFrame:GetFrameLevel()+1)
@@ -3568,6 +3605,7 @@ function ItemRack.CreateMenuButton(idx,itemID)
 		button:SetScript("OnClick",ItemRack.MenuOnClick)
 		button:SetScript("OnEnter",ItemRack.MenuTooltip)
 		button:SetScript("OnLeave",ItemRack.ClearTooltip)
+		button.icon = _G["ItemRackMenu"..idx.."Icon"]
 		CreateFrame("Frame",nil,button,"ItemRackTimeTemplate")
 
 		ItemRack.SetFont("ItemRackMenu"..idx)
@@ -3638,13 +3676,6 @@ function ItemRack.MenuOnClick(self,button)
 			end
 			ItemRack.UpdateCombatQueue()
 			
-			-- Workaround: prevent whatever native secure action was queued by immediately equipping the currently worn item
-			if not InCombatLockdown() then
-				local currentID = ItemRack.GetID(slot)
-				if currentID and currentID ~= 0 then
-					ItemRack.EquipItemByID(currentID, slot)
-				end
-			end
 		end
 		-- Re-build the menu to reflect the new gear icon on the main button
 		ItemRack.BuildMenu()
@@ -3790,100 +3821,131 @@ function ItemRack.UnmuteSwapSounds()
 	end
 end
 
-function ItemRack.EquipItemByID(id,slot,isAutoQueue,sourceBag,sourceSlot)
-	if not id then return end
+function ItemRack.EquipItemByID(id,slot,isAutoQueue,sourceBag,sourceSlot,origin)
+	if id == nil or slot == nil then return "failed", "invalid_request" end
+	origin = origin or (isAutoQueue and "autoqueue" or "manual_popup")
+	local isManual = origin == "manual_popup" or origin == "manual_queue"
+
 	if isAutoQueue then
 		if ItemRack.ClearManualQueueChoice then
 			ItemRack.ClearManualQueueChoice(slot)
 		end
-	elseif ItemRack.SetManualQueueChoice then
+	elseif isManual and ItemRack.SetManualQueueChoice then
 		ItemRack.SetManualQueueChoice(slot, id)
 	end
-	if ItemRack.NowCasting or InCombatLockdown() or ItemRack.IsPlayerReallyDead() then
-		-- If it's already queued, don't toggle it off (which can happen during spamming)
-		-- Exception: if id is 0 (empty slot), we allow the toggle to cancel a pending swap.
-		if ItemRack.CombatQueue[slot] ~= id or id == 0 then
-			ItemRack.AddToCombatQueue(slot,id,isAutoQueue)
+
+	-- A satisfied request is still meaningful: it supersedes an older queued
+	-- request for this slot.  Leaving that stale request in CombatQueue makes it
+	-- unexpectedly equip later when combat or casting ends.
+	local currentID = ItemRack.GetID(slot)
+	local alreadyEquipped = (id == 0 and currentID == 0)
+		or (id ~= 0 and ItemRack.MatchesStoredItemID(id,currentID))
+	if alreadyEquipped then
+		if ItemRack.CombatQueue[slot] ~= nil then
+			ItemRack.RemoveFromCombatQueue(slot)
 		end
-	elseif not GetCursorInfo() and not SpellIsTargeting() then
-		-- Guard: if a multi-pass set swap is in progress or items are locked,
-		-- defer this single-item swap to CombatQueue instead of interfering
-		-- with the active swap's lock state (which can cause "Another swap is in progress")
-		if ItemRack.SetSwapping or ItemRack.AnythingLocked() then
-			ItemRack.Debug("CombatQueue", "EquipItemByID: swap in progress, deferring slot="..tostring(slot).." to queue")
+		return "complete"
+	end
+
+	if ItemRack.NowCasting or InCombatLockdown() or ItemRack.IsPlayerReallyDead() then
+		ItemRack.AddToCombatQueue(slot,id,isAutoQueue)
+		return "queued"
+	end
+
+	if ItemRack.SetSwapping or ItemRack.HasActiveEquipmentTransaction()
+	or ItemRack.AnythingLocked() or GetCursorInfo() or SpellIsTargeting() then
+		ItemRack.Debug("CombatQueue", "EquipItemByID: transaction busy, deferring slot="..tostring(slot).." to queue")
+		ItemRack.AddToCombatQueue(slot, id, isAutoQueue)
+		return "queued"
+	end
+
+	local steps = {}
+	if id ~= 0 then
+		local b,s
+		if sourceBag and sourceSlot
+		and ItemRack.MatchesStoredItemID(id,ItemRack.GetID(sourceBag,sourceSlot)) then
+			b,s = sourceBag,sourceSlot
+		elseif isAutoQueue and ItemRack.FindItemInBags then
+			b,s = ItemRack.FindItemInBags(id)
+		else
+			_,b,s = ItemRack.FindItem(id)
+		end
+		if not b then
+			if isManual then ItemRack.Print("Could not find the requested item.") end
+			return "failed", "item_missing"
+		end
+		local _,_,isLocked = GetContainerItemInfo(b,s)
+		if isLocked or IsInventoryItemLocked(slot) then
 			ItemRack.AddToCombatQueue(slot, id, isAutoQueue)
-			return
+			return "queued"
 		end
 
-		local disableSound = ItemRackSettings.DisableSwapSound == "ON"
-		local useSound = GetCVar("Sound_EnableSFX")
-		local overrideSound = false
-		if disableSound and useSound == "1" then
-			-- Try surgical muting via LibSoundIndex
-			if not ItemRack.MuteSwapSounds(1.5) then
-				-- Fallback: blunt CVar mute (silences ALL SFX)
-				SetCVar("Sound_EnableSFX", "0")
-				overrideSound = true
-			end
-		end
-		
-		if id~=0 then -- not an empty slot
-			local b,s
-			if sourceBag and sourceSlot and ItemRack.MatchesStoredItemID(id,ItemRack.GetID(sourceBag,sourceSlot)) then
-				b,s = sourceBag,sourceSlot
-			elseif isAutoQueue and ItemRack.FindItemInBags then
-				b,s = ItemRack.FindItemInBags(id)
-			else
-				_,b,s = ItemRack.FindItem(id)
-			end
-			if b then
-				local _,_,isLocked = GetContainerItemInfo(b,s)
-				if not isLocked and not IsInventoryItemLocked(slot) then
-					-- neither container item nor inventory item locked, perform swap
-					local _,_,equipSlot = ItemRack.GetInfoByID(id)
-					if equipSlot~="INVTYPE_2HWEAPON" or (ItemRack.HasTitansGrip and not ItemRack.NoTitansGrip[select(7,GetItemInfo(GetContainerItemLink(b,s))) or ""]) or not GetInventoryItemLink("player",17) then
-						PickupContainerItem(b,s)
-						PickupInventoryItem(slot)
-					else
-						local bfree,sfree = ItemRack.FindSpace()
-						if bfree then
-							-- Guard: verify offhand slot isn't locked before the 2H removal sequence
-							if IsInventoryItemLocked(17) then
-								ItemRack.Debug("CombatQueue", "EquipItemByID: offhand locked during 2H swap, deferring slot="..tostring(slot))
-								ItemRack.AddToCombatQueue(slot, id, isAutoQueue)
-								return
-							end
-							PickupInventoryItem(17)
-							PickupContainerItem(bfree,sfree)
-							PickupContainerItem(b,s)
-							PickupInventoryItem(slot)
-						else
-							ItemRack.Print("Not enough room to perform swap.")
-						end
-					end
-				end
-			end
-		else
-			local b,s = ItemRack.FindSpace()
-			if b and not IsInventoryItemLocked(slot) then
-				PickupInventoryItem(slot)
-				PickupContainerItem(b,s)
-			else
+		local _,_,equipSlot = ItemRack.GetInfoByID(id)
+		local canDualWieldTwoHand = ItemRack.HasTitansGrip
+			and not ItemRack.NoTitansGrip[select(7,GetItemInfo(GetContainerItemLink(b,s))) or ""]
+		local mustParkOffhand = equipSlot == "INVTYPE_2HWEAPON"
+			and not canDualWieldTwoHand and GetInventoryItemLink("player",17)
+		if mustParkOffhand then
+			local bfree,sfree = ItemRack.FindSpace()
+			if not bfree then
 				ItemRack.Print("Not enough room to perform swap.")
+				return "failed", "no_space"
+			end
+			if IsInventoryItemLocked(17) then
+				ItemRack.Debug("CombatQueue", "EquipItemByID: offhand locked during 2H swap, deferring slot="..tostring(slot))
+				ItemRack.AddToCombatQueue(slot, id, isAutoQueue)
+				return "queued"
+			end
+			table.insert(steps, ItemRack.NewEquipmentMove(17,nil,bfree,sfree))
+		end
+		local equipMove = ItemRack.NewEquipmentMove(b,s,slot,nil)
+		equipMove.expectedSource = id
+		table.insert(steps, equipMove)
+	else
+		local b,s = ItemRack.FindSpace()
+		if not b then
+			ItemRack.Print("Not enough room to perform swap.")
+			return "failed", "no_space"
+		end
+		table.insert(steps, ItemRack.NewEquipmentMove(slot,nil,b,s))
+	end
+
+	local function OnComplete()
+		if isManual and ItemRack.ReleaseEventSlotsForManualChange then
+			ItemRack.ReleaseEventSlotsForManualChange({ [slot]=true })
+		end
+		if ItemRack.CombatQueue[slot] ~= nil then
+			local queuedID = ItemRack.CombatQueue[slot]
+			if (id == 0 and queuedID == 0)
+			or (id ~= 0 and ItemRack.MatchesStoredItemID(queuedID,id)) then
+				ItemRack.RemoveFromCombatQueue(slot)
 			end
 		end
-		
-		-- CVar fallback restore
-		if overrideSound then
-			if ItemRack.CVarMuteTimer then
-				ItemRack.CVarMuteTimer:Cancel()
-			end
-			ItemRack.CVarMuteTimer = C_Timer.NewTimer(1.5, function()
-				SetCVar("Sound_EnableSFX", "1")
-				ItemRack.CVarMuteTimer = nil
-			end)
+		if ItemRack.UpdateCurrentSet then
+			C_Timer.After(0,ItemRack.UpdateCurrentSet)
 		end
 	end
+	local function OnFailure(request)
+		ItemRack.Debug("CombatQueue", "EquipItemByID transaction failed:", request.reason or request.status)
+		if isManual then
+			ItemRack.Print("Item swap failed ("..tostring(request.reason or request.status).."). Your previous gear was restored when possible.")
+		end
+	end
+
+	local result, request, reason = ItemRack.StartEquipmentTransaction({
+		kind = #steps > 1 and "two_hand" or "slot",
+		origin = origin,
+		owner = { kind = origin, slot = slot, target = id },
+		steps = steps,
+		disableSound = ItemRackSettings.DisableSwapSound == "ON",
+		onComplete = OnComplete,
+		onFailure = OnFailure,
+	})
+	if result == "blocked" then
+		ItemRack.AddToCombatQueue(slot,id,isAutoQueue)
+		return "queued", reason
+	end
+	return result, reason, request
 end
 
 function ItemRack.PollMovement()
@@ -4271,6 +4333,11 @@ function ItemRack.ReflectItemUse(id, isRetry)
 		end
 	end
 
+	-- Publish only after every use/equip-penalty/shared-cooldown guard accepted
+	-- the action. This survives the item leaving its slot and feeds closed menus,
+	-- queue readiness, and notifications from the same identity-keyed authority.
+	ItemRack.ObserveItemCooldown(exactID,exactBaseID,start,duration,1,"verified-use")
+
 	if ItemRackUser.Buttons[id] then
 		local btn = _G["ItemRackButton"..id]
 		if btn and btn.OriginalSetChecked then btn:OriginalSetChecked(true) end
@@ -4282,6 +4349,8 @@ function ItemRack.ReflectItemUse(id, isRetry)
 	if baseID and baseID ~= 0 then
 		ItemRackUser.ItemsUsed = ItemRackUser.ItemsUsed or {}
 		ItemRackUser.ItemsUsed[baseID] = 1
+		ItemRack.ItemsUsedCooldownGeneration = ItemRack.ItemsUsedCooldownGeneration or {}
+		ItemRack.ItemsUsedCooldownGeneration[baseID] = ItemRack.EnsureCooldownState().generation
 		if ItemRack.MarkEquippedItemUsed then
 			ItemRack.MarkEquippedItemUsed(id)
 		end
@@ -4341,6 +4410,9 @@ function ItemRack.ClearCombatQueueMetadata(slot)
 	if ItemRack.AutoQueueOwner then
 		ItemRack.AutoQueueOwner[slot] = nil
 	end
+	if ItemRack.AutoQueueList then
+		ItemRack.AutoQueueList[slot] = nil
+	end
 end
 
 function ItemRack.AddToCombatQueue(slot,id,isAutoQueue)
@@ -4349,19 +4421,31 @@ function ItemRack.AddToCombatQueue(slot,id,isAutoQueue)
 	if id and id ~= 0 then
 		local equippedState, equippedID = ItemRack.GetEquippedSlotState(slot)
 		if equippedState == "resolved" and ItemRack.MatchesStoredItemID(id, equippedID) then
+			-- The new intent is already satisfied, so it supersedes any older queued
+			-- item for this slot instead of letting that stale item equip later.
+			if ItemRack.CombatQueue[slot] ~= nil then
+				ItemRack.CombatQueue[slot] = nil
+				ItemRack.ClearCombatQueueMetadata(slot)
+				ItemRack.UpdateCombatQueue()
+			end
 			return
 		end
 	end
-	local queueOwner = nil
+	local queueOwner,queueList = nil,nil
 	if isAutoQueue and ItemRack.GetActiveQueueOwner then
-		queueOwner = ItemRack.GetActiveQueueOwner(slot)
+		local context = ItemRack.GetQueueContext(slot)
+		queueOwner = context.owner
+		queueList = context.list
 	end
 	ItemRack.AutoQueueFlag = ItemRack.AutoQueueFlag or {}
 	ItemRack.AutoQueueOwner = ItemRack.AutoQueueOwner or {}
-	if ItemRack.CombatQueue[slot] ~= id or ItemRack.AutoQueueFlag[slot] ~= isAutoQueue or ItemRack.AutoQueueOwner[slot] ~= queueOwner then
+	ItemRack.AutoQueueList = ItemRack.AutoQueueList or {}
+	if ItemRack.CombatQueue[slot] ~= id or ItemRack.AutoQueueFlag[slot] ~= isAutoQueue
+	or ItemRack.AutoQueueOwner[slot] ~= queueOwner or ItemRack.AutoQueueList[slot] ~= queueList then
 		ItemRack.CombatQueue[slot] = id
 		ItemRack.AutoQueueFlag[slot] = isAutoQueue
 		ItemRack.AutoQueueOwner[slot] = queueOwner
+		ItemRack.AutoQueueList[slot] = queueList
 		-- Debug: trace who is adding to CombatQueue
 		local itemName = id and id ~= 0 and (ItemRack.GetInfoByID(id) or tostring(id)) or "empty"
 		ItemRack.Debug("CombatQueue", "AddToCombatQueue slot="..tostring(slot).." item="..tostring(itemName).." auto="..tostring(isAutoQueue).." owner="..tostring(queueOwner or "global"))
@@ -4760,14 +4844,32 @@ function ItemRack.Notify(msg)
 end
 
 function ItemRack.CooldownUpdate()
-	local inv,bag,slot,start,duration,name,remain
+	local start,duration,enable,name,remain
+	local cooldownState = ItemRack.EnsureCooldownState()
+	ItemRack.ItemsUsedCooldownGeneration = ItemRack.ItemsUsedCooldownGeneration or {}
 	for i in pairs(ItemRackUser.ItemsUsed) do
-		start,duration = GetItemCooldown(i)
-		if start and ItemRackUser.ItemsUsed[i]<3 then
+		local trackedGeneration = ItemRack.ItemsUsedCooldownGeneration[i]
+		if cooldownState.generation > 0 and trackedGeneration ~= cooldownState.generation then
+			-- This use predates a reset boundary. A post-boundary genuine use records
+			-- the current generation in ReflectItemUse and remains eligible.
+			ItemRackUser.ItemsUsed[i] = nil
+			ItemRack.ItemsUsedCooldownGeneration[i] = nil
+		else
+			start,duration,enable = GetItemCooldown(i)
+			local observed = ItemRack.ObserveItemCooldown(i,i,start,duration,enable,"notification")
+			local status = observed.status
+			if status == "arena_reset" or status == "arena_stale_sample" then
+			-- Arena entry resets item cooldowns. Retire notification tracking
+			-- silently; a delayed stale API sample must not announce readiness.
+				ItemRackUser.ItemsUsed[i] = nil
+				ItemRack.ItemsUsedCooldownGeneration[i] = nil
+			elseif ItemRackUser.ItemsUsed[i]<3 then
 			ItemRackUser.ItemsUsed[i] = ItemRackUser.ItemsUsed[i] + 1 -- count for 3 seconds before seeing if this is a real cooldown
-		elseif start then
+			elseif observed.active then
+			start = observed.start
+			duration = observed.duration
+			remain = duration - (GetTime()-start)
 			if start>0 then
-				remain = duration - (GetTime()-start)
 				if ItemRackUser.ItemsUsed[i]<5 then
 					if remain>29 then
 						ItemRackUser.ItemsUsed[i] = 30 -- first actual cooldown greater than 30 seconds, tag it for 30+0 notify
@@ -4784,7 +4886,9 @@ function ItemRack.CooldownUpdate()
 					end
 				end
 				ItemRackUser.ItemsUsed[i]=5 -- tag for just 0 notify now
-			elseif ItemRackUser.ItemsUsed[i]==5 and start==0 then
+			end
+			elseif observed.known then
+			if ItemRackUser.ItemsUsed[i]==5 then
 				if ItemRackSettings.Notify=="ON" then
 					name = GetItemInfo(i)
 					if name then
@@ -4792,8 +4896,8 @@ function ItemRack.CooldownUpdate()
 					end
 				end
 			end
-			if start==0 then
-				ItemRackUser.ItemsUsed[i] = nil
+			ItemRackUser.ItemsUsed[i] = nil
+			ItemRack.ItemsUsedCooldownGeneration[i] = nil
 			end
 		end
 	end
@@ -5191,8 +5295,12 @@ function ItemRack.ToggleHidden(id)
 end
 
 --[[ Key bindings ]]
+function ItemRack.GetSetBindingButtonPrefix()
+	return "ItemRack"..UnitName("player")..GetRealmName()
+end
+
 function ItemRack.GetSetBindingButtonName(setname)
-	return "ItemRack"..UnitName("player")..GetRealmName()..setname
+	return ItemRack.GetSetBindingButtonPrefix()..setname
 end
 
 function ItemRack.SaveCurrentBindings()
@@ -5221,57 +5329,168 @@ function ItemRack.ClearBindingAction(action,persist)
 	return true,changed
 end
 
+ItemRack.SetBindingRequestSequence = ItemRack.SetBindingRequestSequence or 0
+ItemRack.SetBindingButtons = ItemRack.SetBindingButtons or {}
+
+function ItemRack.BeginSetBinding(setname)
+	local set = ItemRackUser.Sets and ItemRackUser.Sets[setname]
+	if not set or not set.equip then return nil end
+	ItemRack.SetBindingRequestSequence = ItemRack.SetBindingRequestSequence + 1
+	local wasEquipped = ItemRack.IsSetEquipped and ItemRack.IsSetEquipped(setname) and true or false
+	local intent = "equip"
+	if ItemRackSettings.EquipToggle == "ON" then
+		intent = wasEquipped and "unequip" or "equip"
+		local prior = ItemRack.PendingSetBindingRequest
+		if prior and prior.setname == setname and prior.observedEquipped == wasEquipped
+		and (prior.intent == "equip" or prior.intent == "unequip") then
+			-- No physical mutation occurs in combat. Toggle repeated presses against
+			-- the newest logical request so two presses still cancel each other.
+			intent = prior.intent == "equip" and "unequip" or "equip"
+		end
+	end
+	local request = {
+		kind = "secure_set_binding",
+		id = ItemRack.SetBindingRequestSequence,
+		setname = setname,
+		createdAt = GetTime and GetTime() or 0,
+		inCombat = InCombatLockdown() and true or nil,
+		queueGeneration = ItemRack.QueueStateGeneration,
+		observedEquipped = wasEquipped,
+		intent = intent,
+	}
+	ItemRack.Debug("API","Captured set binding request",request.id,setname,
+		request.intent,request.inCombat and "combat" or "out_of_combat")
+	return request
+end
+
+function ItemRack.ProcessPendingSetBinding(reason)
+	local request = ItemRack.PendingSetBindingRequest
+	if not request then return false,"empty" end
+	if InCombatLockdown() or ItemRack.NowCasting
+	or (ItemRack.IsPlayerReallyDead and ItemRack.IsPlayerReallyDead()) then
+		return false,"protected"
+	end
+	if ItemRack.IsAutomaticSwapBlocked then
+		local blocked,blockReason,remaining = ItemRack.IsAutomaticSwapBlocked()
+		if blocked then
+			if remaining and ItemRack.ScheduleAutomaticSwapResume then
+				ItemRack.ScheduleAutomaticSwapResume("set binding",remaining)
+			end
+			return false,blockReason or "transition"
+		end
+	end
+	if type(request) ~= "table" or request.kind ~= "secure_set_binding"
+	or (request.intent ~= "equip" and request.intent ~= "unequip")
+	or not ItemRackUser.Sets or not ItemRackUser.Sets[request.setname] then
+		ItemRack.PendingSetBindingRequest = nil
+		ItemRack.Debug("API","Dropped invalid pending set binding",reason or "retry")
+		return false,"invalid"
+	end
+
+	-- Transfer ownership before invoking EquipSet/UnequipSet. If either path is
+	-- busy it records its own manual waiting request; this transient intent must
+	-- never be replayed a second time.
+	ItemRack.PendingSetBindingRequest = nil
+	local pendingQueue = ItemRack.PendingQueueEquipSet
+	if pendingQueue and pendingQueue.isAutomatic and ItemRack.CancelPendingQueueEquipSet then
+		ItemRack.CancelPendingQueueEquipSet(pendingQueue,"set_binding_manual_precedence")
+	end
+	ItemRack.Debug("API","Executing pending set binding",request.id,
+		request.setname,request.intent,reason or "immediate")
+	if request.intent == "unequip" then
+		ItemRack.UnequipSet(request.setname)
+	else
+		ItemRack.EquipSet(request.setname)
+	end
+	return true,request.intent
+end
+
+function ItemRack.RunSetBinding(setname,request)
+	ItemRack.Debug("API", "RunSetBinding triggered for set: " .. tostring(setname) .. " InCombat: " .. tostring(InCombatLockdown()))
+	if type(request) ~= "table" or request.kind ~= "secure_set_binding"
+	or request.setname ~= setname
+	or (request.intent ~= "equip" and request.intent ~= "unequip") then
+		request = ItemRack.BeginSetBinding(setname)
+		if not request then return false,"invalid_set" end
+		ItemRack.Debug("API","Set binding missing its pre-click request; recaptured no-op intent",setname)
+	end
+	local superseded = ItemRack.PendingSetBindingRequest
+	ItemRack.PendingSetBindingRequest = request
+	if superseded and superseded.id ~= request.id then
+		ItemRack.Debug("API","Set binding request superseded",superseded.id,request.id)
+	end
+	local executed,executeReason = ItemRack.ProcessPendingSetBinding("set binding click")
+	return executed and "executed" or "deferred",executeReason
+end
+
+function ItemRack.ConfigureSetBindingButton(button,setname)
+	if not button or not setname or InCombatLockdown() then return false end
+	local buttonName = button.GetName and button:GetName() or ItemRack.GetSetBindingButtonName(setname)
+	ItemRack.SetBindingButtons[buttonName] = button
+	button:SetAttribute("type","macro")
+	button:SetAttribute("macrotext","")
+	button:SetAttribute("useOnKeyDown",false)
+	local pendingRequest
+	button:SetScript("PreClick",function()
+		pendingRequest = ItemRack.BeginSetBinding(setname)
+	end)
+	button:SetScript("PostClick",function()
+		local request = pendingRequest
+		pendingRequest = nil
+		ItemRack.RunSetBinding(setname,request)
+	end)
+	return true
+end
+
+function ItemRack.NeutralizeSetBindingButton(button)
+	if not button or InCombatLockdown() then return false end
+	button:SetAttribute("type","macro")
+	button:SetAttribute("macrotext","")
+	button:SetAttribute("useOnKeyDown",false)
+	button:SetScript("PreClick",nil)
+	button:SetScript("PostClick",nil)
+	return true
+end
+
+function ItemRack.QueueSetBindingsAfterCombat()
+	ItemRack.RunAfterCombat = ItemRack.RunAfterCombat or {}
+	for _,functionName in ipairs(ItemRack.RunAfterCombat) do
+		if functionName == "SetSetBindings" then return false end
+	end
+	table.insert(ItemRack.RunAfterCombat,"SetSetBindings")
+	return true
+end
+
 function ItemRack.SetSetBindings()
 	if InCombatLockdown() then
-		-- Queue to run after combat ends
-		if not ItemRack.RunAfterCombat then ItemRack.RunAfterCombat = {} end
-		table.insert(ItemRack.RunAfterCombat, "SetSetBindings")
+		ItemRack.QueueSetBindingsAfterCombat()
 		return
 	end
+	if ItemRack.SetBindingsReconciling then return end
+	ItemRack.SetBindingsReconciling = true
 	local bindingsChanged = false
+	local activeButtons = {}
 	for setname,set in pairs(ItemRackUser.Sets) do
 		local buttonName = ItemRack.GetSetBindingButtonName(setname)
 		local action = "CLICK "..buttonName..":LeftButton"
 		local boundKey = GetBindingKey(action)
 		local savedKey = set.key
 		if boundKey or (savedKey and savedKey~="") then
-			local button = _G[buttonName] or CreateFrame("Button",buttonName,nil,"SecureActionButtonTemplate")
-
-			button:SetAttribute("type","macro")
-			button:SetAttribute("useOnKeyDown", false)
-			local macrotext = ""
-			for slot = 16, 18 do
-				local itemID = set.equip and set.equip[slot]
-				if itemID and itemID ~= 0 then
-					local itemStr = tostring(itemID)
-					local baseID = string.match(itemStr, "^(%-?%d+)")
-					local enchantID = string.match(itemStr, "^%-?%d+:(%-?%d*)")
-					if baseID then
-						local itemString = "item:" .. baseID
-						if enchantID and enchantID ~= "" and enchantID ~= "0" then
-							itemString = itemString .. ":" .. enchantID
-						end
-						local name = GetItemInfo(itemString)
-						local equipIdentifier = name or itemString
-						macrotext = macrotext .. "/equipslot [combat] " .. slot .. " " .. equipIdentifier .. "\n"
-					end
-				end
-			end
-			button:SetAttribute("macrotext",macrotext)
-			if macrotext ~= "" then
-				ItemRack.Debug("API", "SetSetBindings compiled macro for " .. setname .. ": " .. string.gsub(macrotext, "\n", " | "))
-			end
-			local setNameForClick = setname
-			button:SetScript("PostClick", function() ItemRack.RunSetBinding(setNameForClick) end)
+			local button = ItemRack.SetBindingButtons[buttonName] or _G[buttonName]
+				or CreateFrame("Button",buttonName,nil,"SecureActionButtonTemplate")
+			ItemRack.ConfigureSetBindingButton(button,setname)
+			local bindingActive = false
 
 			if boundKey then
 				-- The active Blizzard binding table is authoritative.
 				set.key = boundKey
+				bindingActive = true
 			elseif savedKey and savedKey~="" then
 				local existingAction = GetBindingAction(savedKey)
 				if existingAction=="" or existingAction==action then
 					if SetBindingClick(savedKey,buttonName) then
 						bindingsChanged = true
+						bindingActive = true
 					else
 						set.key = nil
 					end
@@ -5281,24 +5500,53 @@ function ItemRack.SetSetBindings()
 					set.key = nil
 				end
 			end
+			if bindingActive then activeButtons[buttonName] = true end
 		end
 	end
-	
+
+	-- Frames cannot be destroyed. Clear both the saved action and scripts on any
+	-- button whose set was deleted, unbound, or failed conflict reconciliation.
+	for buttonName,button in pairs(ItemRack.SetBindingButtons) do
+		if not activeButtons[buttonName] then
+			local _,changed = ItemRack.ClearBindingAction("CLICK "..buttonName..":LeftButton",false)
+			bindingsChanged = changed or bindingsChanged
+			ItemRack.NeutralizeSetBindingButton(button)
+		end
+	end
+	-- Older releases could leave a normal SetBindingClick action behind after
+	-- deleting its set. Those frames do not survive a reload, so the registry
+	-- alone cannot find them. Enumerate first, then clear only this character's
+	-- ItemRack set-action namespace without mutating the list during traversal.
+	if type(GetNumBindings) == "function" and type(GetBinding) == "function" then
+		local staleActions = {}
+		local buttonPrefix = ItemRack.GetSetBindingButtonPrefix()
+		for index=1,(GetNumBindings() or 0) do
+			local action = GetBinding(index)
+			local buttonName = type(action) == "string"
+				and string.match(action,"^CLICK (.+):LeftButton$") or nil
+			if buttonName and string.sub(buttonName,1,#buttonPrefix) == buttonPrefix
+			and not activeButtons[buttonName] then
+				table.insert(staleActions,action)
+			end
+		end
+		for _,action in ipairs(staleActions) do
+			local _,changed = ItemRack.ClearBindingAction(action,false)
+			bindingsChanged = changed or bindingsChanged
+		end
+	end
+
 	ItemRack.BindingsInitialized = true
-	
+	ItemRack.SetBindingsReconciling = nil
+
 	-- Batch-save binding changes once at the end rather than per-key
 	if bindingsChanged then
 		ItemRack.SaveCurrentBindings()
 	end
 end
 
-function ItemRack.RunSetBinding(setname)
-	ItemRack.Debug("API", "RunSetBinding triggered for set: " .. tostring(setname) .. " InCombat: " .. tostring(InCombatLockdown()))
-	if ItemRackSettings.EquipToggle=="ON" then
-		ItemRack.ToggleSet(setname, nil, nil, true)
-	else
-		ItemRack.EquipSet(setname, nil, true)
-	end
+function ItemRack.OnBindingsChanged()
+	if ItemRack.KeyBindingsChanged then ItemRack.KeyBindingsChanged() end
+	if not ItemRack.SetBindingsReconciling then ItemRack.SetSetBindings() end
 end
 
 --[[ Slash Handler ]]
@@ -5801,68 +6049,44 @@ function ItemRack.ProfileFuncs()
 	end
 end
 
--- Per-slot queue inheritance helper.
--- Walks the event stack backwards (most recent event first) to find queue data
--- for a slot that the current set doesn't define.  This ensures that event sets
--- which only touch a few slots (e.g., a mount set with 1 trinket) don't wipe
--- out the auto-queue state for every other slot.
-local function resolveSlotFromStack(field, slot)
-	local stack = ItemRackUser.EventStack
-	if stack then
-		for i = #stack, 1, -1 do
-			local evtName = stack[i]
-			local evtSetName = (ItemRack.GetEventSet and ItemRack.GetEventSet(evtName)) or ItemRackUser.Events.Set[evtName]
-			if evtSetName then
-				local evtSet = ItemRackUser.Sets[evtSetName]
-				if evtSet and evtSet[field] and evtSet[field][slot] ~= nil then
-					return evtSet[field][slot]
-				end
-			end
-		end
+-- Resolve owner, list, and enabled state in one operation. QueuePolicy is
+-- loaded immediately after the core file and is deliberately API-free so this
+-- decision can be executed in the production-Lua harness.
+function ItemRack.GetQueueContext(slot,setname)
+	if ItemRack.QueueSchemaUnsupported then
+		return { owner=false, list=nil, enabled=false, reason="unsupported_schema" }
 	end
-	return nil
+	return ItemRack.QueuePolicy.Resolve(ItemRackUser,ItemRack.GetEventSet,slot,setname)
 end
 
-local function setOwnsQueueSlot(setData, slot)
-	return setData and (
-		(setData.QueuesEnabled and setData.QueuesEnabled[slot] ~= nil) or
-		(setData.Queues and setData.Queues[slot] ~= nil) or
-		(setData.equip and setData.equip[slot] ~= nil)
-	)
+local function QueueFieldProxy(field,setname)
+	if ItemRack.QueueSchemaUnsupported then
+		ItemRack.UnsupportedQueueViews = ItemRack.UnsupportedQueueViews or {
+			Queues={}, QueuesEnabled={}
+		}
+		return ItemRack.UnsupportedQueueViews[field]
+	end
+	ItemRackUser[field] = ItemRackUser[field] or {}
+	local targetSetName = setname or ItemRackUser.CurrentSet
+	local targetSet = ItemRackUser.EnablePerSetQueues == "ON" and targetSetName
+		and ItemRackUser.Sets[targetSetName]
+	if not targetSet then return ItemRackUser[field] end
+	return setmetatable({}, {
+		__index = function(_,slot)
+			local context = ItemRack.GetQueueContext(slot,setname)
+			return context[field == "Queues" and "list" or "enabled"]
+		end,
+		__newindex = function(_,slot,value)
+			targetSet[field] = targetSet[field] or {}
+			targetSet[field][slot] = value
+		end,
+	})
 end
 
 -- Returns the set currently providing queue context for a slot.
 -- `false` means the slot is currently using the global queue tables.
 function ItemRack.GetActiveQueueOwner(slot, setname)
-	if ItemRackUser.EnablePerSetQueues ~= "ON" then
-		return false
-	end
-
-	local targetSet = setname or ItemRackUser.CurrentSet
-	local currentSet = targetSet and ItemRackUser.Sets[targetSet]
-	if currentSet and setOwnsQueueSlot(currentSet, slot) then
-		return targetSet
-	end
-
-	if setname or ItemRackUser.EnableQueueContextCheck ~= "ON" then
-		return false
-	end
-
-	local stack = ItemRackUser.EventStack
-	if stack then
-		for i = #stack, 1, -1 do
-			local evtName = stack[i]
-			local evtSetName = (ItemRack.GetEventSet and ItemRack.GetEventSet(evtName)) or ItemRackUser.Events.Set[evtName]
-			if evtSetName and evtSetName ~= targetSet then
-				local evtSet = ItemRackUser.Sets[evtSetName]
-				if setOwnsQueueSlot(evtSet, slot) then
-					return evtSetName
-				end
-			end
-		end
-	end
-
-	return false
+	return ItemRack.GetQueueContext(slot,setname).owner
 end
 
 -- returns Queues for the current set if EnablePerSetQueues is enabled, otherwise the global Queues
@@ -5876,54 +6100,7 @@ end
 -- When called WITH an explicit setname (editing, saving, checking a specific
 -- set), returns that set's raw queue data directly — no inheritance.
 function ItemRack.GetQueues(setname)
-	if ItemRackUser.EnablePerSetQueues == "ON" then
-		local targetSet = setname or ItemRackUser.CurrentSet
-		local currentSet = targetSet and ItemRackUser.Sets[targetSet]
-		if currentSet then
-			-- Explicit setname, or context check disabled: return proxy for raw set-specific data
-			if setname or ItemRackUser.EnableQueueContextCheck ~= "ON" then
-				return setmetatable({}, {
-					__index = function(_, slot)
-						if currentSet.Queues and currentSet.Queues[slot] ~= nil then
-							return currentSet.Queues[slot]
-						end
-						return nil
-					end,
-					__newindex = function(_, slot, value)
-						if not currentSet.Queues then
-							currentSet.Queues = {}
-						end
-						currentSet.Queues[slot] = value
-					end
-				})
-			end
-			-- Active context: per-slot inheritance via metatable
-			return setmetatable({}, {
-				__index = function(_, slot)
-					if currentSet.Queues and currentSet.Queues[slot] ~= nil then
-						return currentSet.Queues[slot]
-					end
-					if currentSet.equip and currentSet.equip[slot] ~= nil then
-						return nil
-					end
-					local inherited = resolveSlotFromStack("Queues", slot)
-					if inherited ~= nil then
-						return inherited
-					end
-					return ItemRackUser.Queues[slot]
-				end,
-				__newindex = function(_, slot, value)
-					if not currentSet.Queues then
-						currentSet.Queues = {}
-					end
-					currentSet.Queues[slot] = value
-				end
-			})
-		end
-		return ItemRackUser.Queues -- fallback to global if set doesn't exist
-	else
-		return ItemRackUser.Queues
-	end
+	return QueueFieldProxy("Queues",setname)
 end
 
 -- returns QueuesEnabled for the current set if EnablePerSetQueues is enabled, otherwise the global QueuesEnabled
@@ -5931,53 +6108,7 @@ end
 --
 -- Same per-slot inheritance logic as GetQueues (see above).
 function ItemRack.GetQueuesEnabled(setname)
-	if ItemRackUser.EnablePerSetQueues == "ON" then
-		local targetSet = setname or ItemRackUser.CurrentSet
-		local currentSet = targetSet and ItemRackUser.Sets[targetSet]
-		if currentSet then
-			-- Explicit setname, or context check disabled: return proxy for raw set-specific data
-			if setname or ItemRackUser.EnableQueueContextCheck ~= "ON" then
-				return setmetatable({}, {
-					__index = function(_, slot)
-						if currentSet.QueuesEnabled and currentSet.QueuesEnabled[slot] ~= nil then
-							return currentSet.QueuesEnabled[slot]
-						end
-						return nil
-					end,
-					__newindex = function(_, slot, value)
-						if not currentSet.QueuesEnabled then
-							currentSet.QueuesEnabled = {}
-						end
-						currentSet.QueuesEnabled[slot] = value
-					end
-				})
-			end
-			return setmetatable({}, {
-				__index = function(_, slot)
-					if currentSet.QueuesEnabled and currentSet.QueuesEnabled[slot] ~= nil then
-						return currentSet.QueuesEnabled[slot]
-					end
-					if currentSet.equip and currentSet.equip[slot] ~= nil then
-						return nil
-					end
-					local inherited = resolveSlotFromStack("QueuesEnabled", slot)
-					if inherited ~= nil then
-						return inherited
-					end
-					return ItemRackUser.QueuesEnabled[slot]
-				end,
-				__newindex = function(_, slot, value)
-					if not currentSet.QueuesEnabled then
-						currentSet.QueuesEnabled = {}
-					end
-					currentSet.QueuesEnabled[slot] = value
-				end
-			})
-		end
-		return ItemRackUser.QueuesEnabled -- fallback to global if set doesn't exist
-	else
-		return ItemRackUser.QueuesEnabled
-	end
+	return QueueFieldProxy("QueuesEnabled",setname)
 end
 
 ItemRack.DefaultSettings = {}

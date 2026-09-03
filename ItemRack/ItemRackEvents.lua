@@ -4,6 +4,7 @@ local LoadAddOn = LoadAddOn or (C_AddOns and C_AddOns.LoadAddOn)
 -- Compatibility shim for loadstring (renamed to load in Lua 5.2+)
 local loadstring = loadstring or load
 local _refreshMountState = 0
+local CaptureLegacyEventState
 
 -- Compatibility shim for GetSpellInfo (deprecated in 11.0.0, changed in 1.15.0)
 local GetSpellInfo = GetSpellInfo or function(spellID)
@@ -254,6 +255,11 @@ function ItemRack.ResetEvents(resetDefault,resetAll)
 end
 
 function ItemRack.InitEvents()
+	-- Capture legacy Active flags and restore trails before LoadEvents refreshes
+	-- default definitions and can overwrite their transient SavedVariable fields.
+	if ItemRackUser.EventStateMigrationVersion == nil and CaptureLegacyEventState then
+		CaptureLegacyEventState()
+	end
 	ItemRack.LoadEvents()
 	ItemRack.MigrateDefaultScriptEvents()
 	-- Deferred Script triggers are runtime-only. Never carry a one-shot game
@@ -265,14 +271,13 @@ function ItemRack.InitEvents()
 	ItemRack.CreateTimer("CheckForMountedEvents",ItemRack.CheckForMountedEvents,.5,1)
 	ItemRack.CreateTimer("SpecChangeTimer",ItemRack.ProcessSpecializationEvent,0.5,1)
 	ItemRack.CreateTimer("MovementPollingTimer",ItemRack.PollMovement,.2,1)
-	ItemRack.CreateTimer("OnMovementUnequipTimer",ItemRack.ProcessOnMovementUnequip,.5)
 	
-	-- Initialize Event Stack and BaseGear set if missing
-	if not ItemRackUser.EventStack then
-		ItemRackUser.EventStack = {}
-	end
+	-- EventState is persistent logical ownership. EventStack remains a derived
+	-- compatibility projection for older UI/debug consumers.
+	local eventState = ItemRack.EnsureEventFrameState()
 	ItemRack.ScriptEventSets = {}
 	ItemRack.ScriptEventDisableSound = {}
+	ItemRack.ScriptEventGenerations = {}
 	if not ItemRackUser.Sets["~BaseGear"] then
 		ItemRackUser.Sets["~BaseGear"] = {
 			equip = {},
@@ -292,111 +297,43 @@ function ItemRack.InitEvents()
 		eventData.LastZoneSignature = nil
 	end
 
-	-- ======================================================================
-	-- CLEANUP: Purge the EventStack.
-	-- Events with Unequip=false never pop, so the stack accumulates entries
-	-- across sessions. On a fresh login, the stack should always be empty;
-	-- events will push onto it naturally as zone/buff/stance conditions match.
-	-- ======================================================================
-	for i = #ItemRackUser.EventStack, 1, -1 do
-		table.remove(ItemRackUser.EventStack, i)
-	end
+	ItemRack.RefreshEventStackProjection()
 
-	-- ======================================================================
-	-- CLEANUP: Wipe ALL stale old/oldset data on every set.
-	-- The .old table stores which items were displaced when the set was
-	-- equipped, and .oldset stores which set was active before. This data
-	-- is only valid during a single session — on login/reload, no set
-	-- should have restoration data. It will be correctly re-populated
-	-- when PushEvent/EquipSet actually fires during gameplay.
-	-- This prevents ghost set restores, self-referential loops
-	-- (Arena.oldset = "Arena"), and stale circular chains
-	-- (9% -> 6% 1H -> 6% 2H -> 9%).
-	-- ======================================================================
-	-- CLEANUP: Clean up self-referential loops or invalid oldset entries on login/reload.
-	-- We preserve the rest of .old and .oldset so that events active across reload/login
-	-- (e.g. Mounted, Stance, Zone) can correctly restore gear upon dismounting or shifting.
+	-- Legacy manual-set history may still be useful after a reload, so preserve it.
+	-- Only remove references that can never be valid; automatic event ownership is
+	-- restored exclusively from EventState above, never inferred from old/oldset.
 	for setname, setData in pairs(ItemRackUser.Sets) do
 		if setData.oldset == setname or (setData.oldset and not ItemRackUser.Sets[setData.oldset]) then
 			setData.oldset = nil
 		end
 	end
 
-	-- Prime all events to prevent redundant swaps on login/reload
-	-- Only check enabled events to avoid false-positives on disabled events
+	-- Rehydrate Active as a compatibility/UI projection from canonical frames.
+	-- Never reconstruct ownership merely because currently worn gear matches a
+	-- configured set; that gear may have been selected manually.
 	local enabled = ItemRackUser.Events.Enabled
 	local getSpec = GetActiveTalentGroup or (C_Talent and C_Talent.GetActiveTalentGroup)
 	local currentSpec = getSpec and getSpec()
-	local currentStance = GetShapeshiftForm()
-	local curZone = GetRealZoneText()
-	local curSubZone = GetSubZoneText()
-	local isMounted = IsMounted() and not UnitOnTaxi("player")
-	local _, instanceType = IsInInstance()
-
 	ItemRack.LastLastSpec = (currentSpec and currentSpec > 0) and currentSpec or nil
-
-	for eventName in pairs(enabled) do
-		local eventData = ItemRackEvents[eventName]
-		if eventData then
-			local shouldBeActive = false
-			if eventData.Type == "Specialization" and currentSpec and eventData.Spec == currentSpec then
-				shouldBeActive = true
-			elseif eventData.Type == "Stance" and ItemRack.GetStanceNumber(eventData.Stance) == currentStance then
-				shouldBeActive = true
-			elseif eventData.Type == "Zone" and eventData.Zones and (eventData.Zones[curZone] or eventData.Zones[curSubZone] or eventData.Zones[instanceType] or eventData.Zones[instanceType:gsub("^%l", string.upper)]) then
-				shouldBeActive = true
-			elseif eventData.Type == "Buff" then
-				if eventData.Anymount then
-					if isMounted then
-						if eventData.OnMovement then
-							if GetUnitSpeed("player") > 0 then
-								shouldBeActive = true
-							end
-						else
-							shouldBeActive = true
-						end
-					end
-				elseif eventData.Buff and AuraUtil.FindAuraByName(eventData.Buff, "player") then
-					if eventData.OnMovement then
-						if GetUnitSpeed("player") > 0 then
-							shouldBeActive = true
-						end
-					else
-						shouldBeActive = true
-					end
-				end
-			end
-			
-			if shouldBeActive then
-				local setname = ItemRackUser.Events.Set[eventName]
-				if setname and ItemRack.IsSetEquipped(setname) then
-					-- Matching gear is not sufficient proof that a specialization
-					-- event owns it: the player may have equipped that set manually
-					-- before logging out or reloading. Unlike stateful Buff/Zone/Stance
-					-- events, specialization ownership cannot be reconstructed after
-					-- the runtime stack is purged, so leave it inactive and let the
-					-- next real specialization transition establish a stack layer.
-					if eventData.Type == "Specialization" then
-						eventData.Active = nil
-						ItemRack.Debug("Events", "Startup specialization match left unowned:", eventName, setname)
-					else
-						eventData.Active = true
-						-- Re-populate EventStack with an active state event on startup.
-						local alreadyStacked = false
-						for _, name in ipairs(ItemRackUser.EventStack) do
-							if name == eventName then
-								alreadyStacked = true
-								break
-							end
-						end
-						if not alreadyStacked then
-							table.insert(ItemRackUser.EventStack, eventName)
-						end
-					end
-				end
-			end
+	local orphaned = {}
+	for _,frameId in ipairs(eventState.order) do
+		local frame = eventState.frames[frameId]
+		local eventData = frame and ItemRackEvents[frame.eventName]
+		if eventData and enabled[frame.eventName] and eventData.Type ~= "Script" then
+			eventData.Active = true
+			ItemRack.EventGenerations = ItemRack.EventGenerations or {}
+			ItemRack.EventGenerations[frame.eventName] = frame.eventGeneration or 0
+		else
+			table.insert(orphaned,{ name=frame and frame.eventName, generation=frame and frame.eventGeneration })
 		end
 	end
+	for _,orphan in ipairs(orphaned) do
+		if orphan.name then
+			local result = ItemRack.EventFrames.Pop(eventState,orphan.name,orphan.generation)
+			ItemRack.QueueEventFrameTargets(result)
+		end
+	end
+	ItemRack.RefreshEventStackProjection()
 
 	if ItemRackButton20Queue then
 		ItemRackButton20Queue:SetTexture("Interface\\AddOns\\ItemRack\\ItemRackGear")
@@ -485,40 +422,11 @@ function ItemRack.SpinDownEvent(eventName)
 		eventData.ManualOverride = nil
 	end
 
-	local onStack = false
-	if ItemRackUser and ItemRackUser.EventStack then
-		for i = #ItemRackUser.EventStack, 1, -1 do
-			if ItemRackUser.EventStack[i] == eventName then
-				onStack = true
-				break
-			end
-		end
-	end
-
-	if onStack then
-		if eventData and eventData.Unequip then
-			ItemRack.PopEvent(eventName)
-		else
-			local stack = ItemRackUser.EventStack
-			if stack then
-				for i = #stack, 1, -1 do
-					if stack[i] == eventName then
-						table.remove(stack, i)
-					end
-				end
-			end
-			ItemRack.ClearScriptEventState(eventName)
-		end
-	elseif wasActive and eventData and eventData.Unequip then
-		local setname = ItemRack.GetEventSet(eventName)
-		if setname and ItemRackUser.CurrentSet ~= setname and ItemRack.IsSetEquipped(setname) then
-			ItemRack.UnequipSet(setname)
-		end
-	end
-
-	if ItemRack.PendingOnMovementUnequip == eventName then
-		ItemRack.PendingOnMovementUnequip = nil
-		ItemRack.StopTimer("OnMovementUnequipTimer")
+	local state = ItemRack.EnsureEventFrameState()
+	if state.byEvent[eventName] then
+		ItemRack.PopEvent(eventName)
+	elseif wasActive then
+		ItemRack.Debug("Events", "SpinDownEvent found no owned frame; no restore is permitted:", eventName)
 	end
 
 	ItemRack.ScheduleEventRecheck("Event disabled: " .. eventName, 0.1)
@@ -538,29 +446,23 @@ function ItemRack.SpinDownAllEvents()
 	-- while automatic swaps are suspended, do not replay those moments when
 	-- the event system is enabled again later.
 	ItemRack.DeferredScriptEvents = {}
-	local stack = ItemRackUser.EventStack
-	if stack then
-		for i = #stack, 1, -1 do
-			local eventName = stack[i]
-			local eventData = ItemRackEvents and ItemRackEvents[eventName]
-			if eventData then
-				eventData.Active = nil
-				eventData.LastZoneMatched = nil
-				eventData.LastZoneSignature = nil
-				eventData.ManualOverride = nil
-				if eventData.Unequip then
-					ItemRack.PopEvent(eventName)
-				else
-					for k = #stack, 1, -1 do
-						if stack[k] == eventName then
-							table.remove(stack, k)
-						end
-					end
-					ItemRack.ClearScriptEventState(eventName)
-				end
-			end
-		end
+	local stack = {}
+	for _,eventName in ipairs(ItemRack.RefreshEventStackProjection()) do
+		table.insert(stack,eventName)
 	end
+	ItemRack.BeginEventFrameBatch()
+	for i=#stack,1,-1 do
+		local eventName = stack[i]
+		local eventData = ItemRackEvents and ItemRackEvents[eventName]
+		if eventData then
+			eventData.Active = nil
+			eventData.LastZoneMatched = nil
+			eventData.LastZoneSignature = nil
+			eventData.ManualOverride = nil
+		end
+		ItemRack.PopEvent(eventName)
+	end
+	ItemRack.EndEventFrameBatch()
 	if ItemRackEvents then
 		for eventName, eventData in pairs(ItemRackEvents) do
 			if eventData.Active then
@@ -568,12 +470,7 @@ function ItemRack.SpinDownAllEvents()
 				eventData.LastZoneMatched = nil
 				eventData.LastZoneSignature = nil
 				eventData.ManualOverride = nil
-				if eventData.Unequip then
-					local setname = ItemRack.GetEventSet(eventName)
-					if setname and ItemRack.IsSetEquipped(setname) then
-						ItemRack.UnequipSet(setname)
-					end
-				end
+				-- No frame means no ownership and therefore no permitted restore.
 			end
 		end
 	end
@@ -615,13 +512,343 @@ function ItemRack.GetEventDisableSound(eventName)
 	return ItemRackEvents[eventName] and ItemRackEvents[eventName].DisableSound
 end
 
-function ItemRack.ClearScriptEventState(eventName)
+local function CopyTable(value,seen)
+	if type(value) ~= "table" then return value end
+	seen = seen or {}
+	if seen[value] then return seen[value] end
+	local copy = {}
+	seen[value] = copy
+	for key,item in pairs(value) do
+		if type(item) == "table" then
+			copy[key] = CopyTable(item,seen)
+		else
+			copy[key] = item
+		end
+	end
+	return copy
+end
+
+local EVENT_STATE_MIGRATION_VERSION = 1
+
+CaptureLegacyEventState = function()
+	local backup = ItemRackUser.LegacyEventStateBackup
+	if type(backup) ~= "table" then
+		if backup ~= nil then
+			-- Keep an opaque damaged backup recoverable, but do not let it block a
+			-- new structured snapshot of the legacy event evidence.
+			ItemRackUser.UnknownLegacyEventStateBackup = CopyTable(backup)
+		end
+		backup = {}
+	end
+	if backup.eventStack == nil then backup.eventStack = CopyTable(ItemRackUser.EventStack or {}) end
+	if type(backup.eventStack) ~= "table" then
+		backup.invalidEventStack = CopyTable(backup.eventStack)
+		backup.eventStack = {}
+	end
+	if backup.capturedFrom == nil then backup.capturedFrom = ItemRack.BuildID end
+	if backup.activeEvents == nil then
+		backup.activeEvents = {}
+		for eventName,eventData in pairs(ItemRackEvents or {}) do
+			if type(eventData) == "table" and eventData.Active then
+				backup.activeEvents[eventName] = true
+			end
+		end
+	end
+	if type(backup.activeEvents) ~= "table" then
+		backup.invalidActiveEvents = CopyTable(backup.activeEvents)
+		backup.activeEvents = {}
+	end
+	if backup.eventSets == nil then
+		backup.eventSets = CopyTable(ItemRackUser.Events and ItemRackUser.Events.Set or {})
+	end
+	if type(backup.eventSets) ~= "table" then
+		backup.invalidEventSets = CopyTable(backup.eventSets)
+		backup.eventSets = {}
+	end
+	if backup.events == nil then
+		backup.events = {}
+		for eventName,eventData in pairs(ItemRackEvents or {}) do
+			if type(eventData) == "table" then
+				backup.events[eventName] = {
+					Type=eventData.Type,
+					Unequip=eventData.Unequip,
+				}
+			end
+		end
+	end
+	if type(backup.events) ~= "table" then
+		backup.invalidEvents = CopyTable(backup.events)
+		backup.events = {}
+	end
+	if backup.sets == nil then
+		backup.sets = {}
+		local referenced = {}
+		for _,eventName in pairs(backup.eventStack or {}) do
+			local setName = backup.eventSets[eventName]
+			if setName then referenced[setName] = true end
+		end
+		for eventName in pairs(backup.activeEvents or {}) do
+			local setName = backup.eventSets[eventName]
+			if setName then referenced[setName] = true end
+		end
+		local added = true
+		while added do
+			added = false
+			for setName in pairs(referenced) do
+				local set = ItemRackUser.Sets and ItemRackUser.Sets[setName]
+				if type(set) == "table" and set.oldset and not referenced[set.oldset] then
+					referenced[set.oldset] = true
+					added = true
+				end
+			end
+		end
+		for setName in pairs(referenced) do
+			local set = ItemRackUser.Sets and ItemRackUser.Sets[setName]
+			if type(set) == "table" then
+				backup.sets[setName] = {
+					equip=CopyTable(set.equip or {}),
+					old=CopyTable(set.old or {}),
+					oldset=set.oldset,
+				}
+			end
+		end
+	end
+	if type(backup.sets) ~= "table" then
+		backup.invalidSets = CopyTable(backup.sets)
+		backup.sets = {}
+	end
+	ItemRackUser.LegacyEventStateBackup = backup
+	return backup
+end
+
+local function CaptureReliableEquipment()
+	local observed = {}
+	if not ItemRack.GetEquippedSlotState then return observed end
+	for slot=0,19 do
+		local ok,state,id = pcall(ItemRack.GetEquippedSlotState,slot)
+		if ok and state == "resolved" then
+			observed[slot] = id
+		elseif ok and state == "empty" then
+			observed[slot] = 0
+		end
+	end
+	return observed
+end
+
+function ItemRack.EnsureEventFrameState()
+	if ItemRack.EventFrames.IsState(ItemRackUser.EventState)
+	and ItemRackUser.EventStateMigrationVersion == EVENT_STATE_MIGRATION_VERSION then
+		ItemRackUser.EventStack = ItemRack.EventFrames.ProjectStack(ItemRackUser.EventState)
+		return ItemRackUser.EventState
+	end
+	if type(ItemRackUser.EventState) == "table"
+	and type(ItemRackUser.EventState.schema) == "number"
+	and ItemRackUser.EventState.schema > 1 then
+		ItemRackUser.UnknownEventStateBackup = CopyTable(ItemRackUser.EventState)
+		ItemRack.EventStateSchemaUnsupported = true
+		ItemRack.UnsupportedEventState = ItemRack.UnsupportedEventState
+			or ItemRack.EventFrames.NewState()
+		ItemRackUser.EventStack = {}
+		return ItemRack.UnsupportedEventState
+	end
+
+	local existingState = ItemRackUser.EventState
+	local backup = CaptureLegacyEventState()
+	if ItemRack.EventFrames.IsState(existingState) and #existingState.order > 0 then
+		-- Canonical frames created by an earlier development build are already
+		-- more authoritative than legacy set history; adopt them without replay.
+		ItemRackUser.EventStateMigrationVersion = EVENT_STATE_MIGRATION_VERSION
+		ItemRackUser.EventStateMigrationReport = { source="existing_canonical" }
+		ItemRackUser.EventStack = ItemRack.EventFrames.ProjectStack(existingState)
+		return existingState
+	elseif existingState ~= nil and not ItemRack.EventFrames.IsState(existingState) then
+		ItemRackUser.UnknownEventStateBackup = CopyTable(ItemRackUser.EventState)
+	end
+
+	local state,report = ItemRack.EventFrames.MigrateLegacy({
+		eventStack=backup.eventStack,
+		activeEvents=backup.activeEvents,
+		eventSets=backup.eventSets,
+		events=backup.events,
+		enabled=ItemRackUser.Events and ItemRackUser.Events.Enabled,
+		sets=backup.sets,
+		observed=CaptureReliableEquipment(),
+		matches=function(target,current)
+			if ItemRack.MatchesStoredItemID then
+				return ItemRack.MatchesStoredItemID(target,current)
+			end
+			return target == current
+		end,
+	})
+	ItemRackUser.EventState = state
+	ItemRackUser.EventStateMigrationVersion = EVENT_STATE_MIGRATION_VERSION
+	ItemRackUser.EventStateMigrationReport = report
+	ItemRackUser.EventStack = ItemRack.EventFrames.ProjectStack(state)
+	ItemRack.Debug("Events", "Legacy event-state migration:", report.source,
+		report.framesMigrated, "frames", report.slotsMigrated, "slots",
+		report.slotsReleasedForMismatch, "mismatched slots released")
+	return ItemRackUser.EventState
+end
+
+function ItemRack.RefreshEventStackProjection()
+	local state = ItemRack.EnsureEventFrameState()
+	ItemRackUser.EventStack = ItemRack.EventFrames.ProjectStack(state)
+	return ItemRackUser.EventStack
+end
+
+function ItemRack.GetTopEventFrame()
+	local state = ItemRack.EnsureEventFrameState()
+	local frameId = state.order[#state.order]
+	return frameId and state.frames[frameId]
+end
+
+function ItemRack.ReleaseEventSlotsForManualChange(slots)
+	local state = ItemRack.EnsureEventFrameState()
+	if not ItemRack.EventFrames.ReleaseSlots(state,slots) then return false end
+	for slot in pairs(slots or {}) do
+		if ItemRack.EventFramePendingTargets then
+			ItemRack.EventFramePendingTargets[slot] = nil
+		end
+	end
+	ItemRack.RefreshEventStackProjection()
+	ItemRack.Debug("Events", "Manual equipment intent released automatic slot ownership at revision:", state.revision)
+	return true
+end
+
+function ItemRack.QueueEventFrameTargets(result, disableSound)
+	if not result or type(result.targets) ~= "table" then return end
+	local state = ItemRack.EnsureEventFrameState()
+	local pendingSet = ItemRack.PendingQueueEquipSet
+	if pendingSet and pendingSet.eventFrameRevision
+	and pendingSet.eventFrameRevision ~= state.revision
+	and ItemRack.CancelPendingQueueEquipSet then
+		ItemRack.CancelPendingQueueEquipSet(pendingSet,"event_frame_revision_changed")
+	end
+	ItemRack.EventFramePendingTargets = ItemRack.EventFramePendingTargets or {}
+	for slot,target in pairs(result.targets) do
+		ItemRack.EventFramePendingTargets[slot] = target
+	end
+	ItemRack.EventFramePendingRevision = state.revision
+	if disableSound ~= nil then ItemRack.EventFramePendingDisableSound = disableSound end
+	if not ItemRack.EventFrameBatchDepth or ItemRack.EventFrameBatchDepth == 0 then
+		ItemRack.TryReconcileEventFrames()
+	end
+end
+
+function ItemRack.BeginEventFrameBatch()
+	ItemRack.EventFrameBatchDepth = (ItemRack.EventFrameBatchDepth or 0) + 1
+end
+
+function ItemRack.EndEventFrameBatch()
+	ItemRack.EventFrameBatchDepth = math.max((ItemRack.EventFrameBatchDepth or 1) - 1,0)
+	if ItemRack.EventFrameBatchDepth == 0 then ItemRack.TryReconcileEventFrames() end
+end
+
+function ItemRack.EventFramePlanFinished(setname, succeeded, reason)
+	local plan = ItemRack.EventFramePlans and ItemRack.EventFramePlans[setname]
+	if not plan then return end
+	ItemRack.EventFramePlans[setname] = nil
+	ItemRackUser.Sets[setname] = nil
+	ItemRack.EventFramePlanActive = nil
+	local state = ItemRack.EnsureEventFrameState()
+	if not succeeded and plan.revision == state.revision then
+		-- Retain the latest desired targets for a later inventory/readiness event;
+		-- do not spin on a terminal missing/full-bag condition.
+		ItemRack.EventFramePendingTargets = ItemRack.EventFramePendingTargets or {}
+		for slot,target in pairs(plan.targets) do
+			ItemRack.EventFramePendingTargets[slot] = target
+		end
+		ItemRack.EventFramePlanBlockedReason = reason or "plan_failed"
+	else
+		ItemRack.EventFramePlanBlockedReason = nil
+	end
+	local top = ItemRack.GetTopEventFrame()
+	if succeeded then
+		ItemRackUser.CurrentSet = top and top.setName or nil
+	end
+	ItemRack.RefreshEventStackProjection()
+	if next(ItemRack.EventFramePendingTargets or {}) and (succeeded or plan.revision ~= state.revision) then
+		C_Timer.After(0,function() ItemRack.TryReconcileEventFrames(true) end)
+	elseif ItemRack.UpdateCurrentSet then
+		C_Timer.After(0,ItemRack.UpdateCurrentSet)
+	end
+end
+
+function ItemRack.TryReconcileEventFrames(force)
+	local pending = ItemRack.EventFramePendingTargets
+	if not pending or not next(pending) or ItemRack.EventFramePlanActive then return false end
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then return false end
+	if ItemRack.NowCasting or InCombatLockdown() or ItemRack.IsPlayerReallyDead()
+	or ItemRack.SetSwapping or ItemRack.HasActiveEquipmentTransaction() or ItemRack.AnythingLocked() then
+		return false
+	end
+	if ItemRack.EventFramePlanBlockedReason and not force then return false end
+
+	local state = ItemRack.EnsureEventFrameState()
+	local revision = state.revision
+	local setname = "~EventFrame:"..tostring(revision)
+	local targets = CopyTable(pending)
+	ItemRack.EventFramePendingTargets = {}
+	ItemRack.EventFramePendingRevision = nil
+	ItemRack.EventFramePlans = ItemRack.EventFramePlans or {}
+	ItemRack.EventFramePlans[setname] = { revision=revision, targets=targets }
+	ItemRack.EventFramePlanActive = setname
+	ItemRackUser.Sets[setname] = { equip=CopyTable(targets) }
+	local previousEventEquipment = ItemRack.IsEventEquipment
+	ItemRack.IsEventEquipment = true
+	ItemRack.EquipSet(setname,ItemRack.EventFramePendingDisableSound)
+	ItemRack.IsEventEquipment = previousEventEquipment
+	return true
+end
+
+function ItemRack.RetryBlockedEventFrames()
+	local blocked = ItemRack.EventFrameBlockedActivations or {}
+	local names = {}
+	for eventName in pairs(blocked) do table.insert(names,eventName) end
+	table.sort(names)
+	local retried = false
+	ItemRack.BeginEventFrameBatch()
+	for _,eventName in ipairs(names) do
+		local pending = blocked[eventName]
+		local state = ItemRack.EnsureEventFrameState()
+		local frameId = state.byEvent[eventName]
+		local frame = frameId and state.frames[frameId]
+		if not frame or frame.eventGeneration ~= pending.generation then
+			blocked[eventName] = nil
+		elseif ItemRackEvents[eventName] and ItemRackEvents[eventName].Active
+		and ItemRackUser.Sets[pending.setname] then
+			local ready = ItemRack.PreflightSetSwap(pending.setname)
+			if ready then
+				ItemRack.PopEvent(eventName,pending.generation)
+				blocked[eventName] = nil
+				ItemRack.PushEvent(eventName)
+				retried = true
+			end
+		end
+	end
+	ItemRack.EndEventFrameBatch()
+	if ItemRack.EventFramePlanBlockedReason then
+		ItemRack.EventFramePlanBlockedReason = nil
+		ItemRack.TryReconcileEventFrames(true)
+	end
+	return retried
+end
+
+function ItemRack.ClearScriptEventState(eventName, generation)
+	local currentGeneration = ItemRack.ScriptEventGenerations and ItemRack.ScriptEventGenerations[eventName]
+	if generation ~= nil and currentGeneration ~= nil and generation ~= currentGeneration then
+		return false
+	end
 	if ItemRack.ScriptEventSets then
 		ItemRack.ScriptEventSets[eventName] = nil
 	end
 	if ItemRack.ScriptEventDisableSound then
 		ItemRack.ScriptEventDisableSound[eventName] = nil
 	end
+	if ItemRack.ScriptEventGenerations then
+		ItemRack.ScriptEventGenerations[eventName] = nil
+	end
+	return true
 end
 
 function ItemRack.ScriptEventEquip(eventName, setname, disableSound)
@@ -649,10 +876,16 @@ function ItemRack.ScriptEventEquip(eventName, setname, disableSound)
 	end
 	ItemRack.ScriptEventSets[eventName] = setname
 	ItemRack.ScriptEventDisableSound[eventName] = disableSound
-	ItemRack.PushEvent(eventName)
+	local result = ItemRack.PushEvent(eventName)
+	if result and result.frameId then
+		local frame = ItemRackUser.EventState.frames[result.frameId]
+		ItemRack.ScriptEventGenerations = ItemRack.ScriptEventGenerations or {}
+		ItemRack.ScriptEventGenerations[eventName] = frame and frame.eventGeneration
+		return frame and frame.eventGeneration
+	end
 end
 
-function ItemRack.ScriptEventUnequip(eventName, disableSound)
+function ItemRack.ScriptEventUnequip(eventName, disableSound, expectedGeneration)
 	if not eventName then
 		return
 	end
@@ -660,90 +893,104 @@ function ItemRack.ScriptEventUnequip(eventName, disableSound)
 	if disableSound ~= nil then
 		ItemRack.ScriptEventDisableSound[eventName] = disableSound
 	end
-	ItemRack.PopEvent(eventName)
+	return ItemRack.PopEvent(eventName,expectedGeneration)
 end
 
-function ItemRack.PushEvent(eventName)
+function ItemRack.PushEvent(eventName, belowEventName)
 	if ItemRackUser.EnableEvents == "OFF" then return end
 	ItemRack.Debug("Events", "PushEvent: "..(eventName or "nil"))
-	
-	-- Remove event if it's already in the stack
-	for i = #ItemRackUser.EventStack, 1, -1 do
-		if ItemRackUser.EventStack[i] == eventName then
-			table.remove(ItemRackUser.EventStack, i)
+	if not eventName then return end
+	local state = ItemRack.EnsureEventFrameState()
+	local setname = ItemRack.GetEventSet(eventName)
+	local existingId = state.byEvent[eventName]
+	local existing = existingId and state.frames[existingId]
+	if existing and existing.setName == setname then
+		ItemRack.RefreshEventStackProjection()
+		return { changed=false, frameId=existingId, targets={} }
+	end
+	if existing then
+		local removed = ItemRack.EventFrames.Pop(state,eventName,existing.eventGeneration)
+		ItemRack.QueueEventFrameTargets(removed,ItemRack.GetEventDisableSound(eventName))
+	end
+
+	ItemRack.EventGenerations = ItemRack.EventGenerations or {}
+	local generation = math.max(ItemRack.EventGenerations[eventName] or 0,
+		existing and existing.eventGeneration or 0) + 1
+	ItemRack.EventGenerations[eventName] = generation
+	local slots, observed = {}, {}
+	local blockedReason
+	if setname and ItemRackUser.Sets[setname] then
+		local ready, reason = ItemRack.PreflightSetSwap(setname)
+		if ready then
+			slots = ItemRack.EventFrames.SnapshotSet(ItemRackUser.Sets[setname])
+			for slot in pairs(slots) do observed[slot] = ItemRack.GetID(slot) end
+		else
+			blockedReason = reason
+			ItemRack.EventFrameBlockedActivations = ItemRack.EventFrameBlockedActivations or {}
+			ItemRack.EventFrameBlockedActivations[eventName] = {
+				generation=generation, setname=setname, reason=reason,
+			}
+			ItemRack.Debug("Events", "Event frame activation deferred by preflight:", eventName, reason)
 		end
 	end
-	
-	table.insert(ItemRackUser.EventStack, eventName)
-	
-	local setname = ItemRack.GetEventSet(eventName)
-	if setname then
-		local disableSound = ItemRack.GetEventDisableSound(eventName)
-		ItemRack.IsEventEquipment = true
-		ItemRack.EquipSet(setname, disableSound)
-		ItemRack.IsEventEquipment = nil
+	local eventData = ItemRackEvents and ItemRackEvents[eventName]
+	local beforeFrameId = belowEventName and state.byEvent[belowEventName]
+	local result = ItemRack.EventFrames.Activate(state,{
+		eventName=eventName,
+		eventGeneration=generation,
+		setName=setname,
+		origin=eventData and eventData.Type,
+		restoreOnExit=eventData and eventData.Unequip and true or false,
+		beforeFrameId=beforeFrameId,
+		slots=slots,
+		observed=observed,
+	})
+	if blockedReason and result.frameId and state.frames[result.frameId] then
+		state.frames[result.frameId].status = "blocked"
+		state.frames[result.frameId].blockedReason = blockedReason
 	end
+	ItemRack.RefreshEventStackProjection()
+	ItemRack.QueueEventFrameTargets(result,ItemRack.GetEventDisableSound(eventName))
+	return result
 end
 
-function ItemRack.PopEvent(eventName)
-	local poppedSet = ItemRack.GetEventSet(eventName)
+function ItemRack.PopEvent(eventName, expectedGeneration)
 	local disableSound = ItemRack.GetEventDisableSound(eventName)
-	ItemRack.Debug("Events", "PopEvent: "..(eventName or "nil").." (poppedSet: "..(poppedSet or "nil")..")")
-
-	-- Remove the event from the stack
-	for i = #ItemRackUser.EventStack, 1, -1 do
-		if ItemRackUser.EventStack[i] == eventName then
-			table.remove(ItemRackUser.EventStack, i)
+	ItemRack.Debug("Events", "PopEvent: "..tostring(eventName))
+	if not eventName then return { removed=false, targets={} } end
+	local state = ItemRack.EnsureEventFrameState()
+	local frameId = state.byEvent[eventName]
+	local frame = frameId and state.frames[frameId]
+	local nonRestoringSlots = {}
+	if frame and frame.restoreOnExit == false then
+		for slot,owned in pairs(frame.slots or {}) do
+			nonRestoringSlots[slot] = owned.target
 		end
 	end
-	
-	-- Check if any active Zone event has ManualOverride.
-	-- If so, and this isn't the zone event itself popping, suppress the restore
-	-- IF AND ONLY IF the event popping is buried beneath the user's manual gear choice.
-	-- If the event is the Active CurrentSet (e.g. Mount), it must be allowed to unequip natively.
-	local suppressRestore = false
-	ItemRack.Debug("Events", "PopEvent evaluating suppressRestore. CurrentSet is:", ItemRackUser.CurrentSet)
-	if poppedSet and ItemRackUser.CurrentSet ~= poppedSet and ItemRackEvents[eventName] and ItemRackEvents[eventName].Type ~= "Zone" then
-		
-		ItemRack.Debug("Events", "PopEvent: CurrentSet ~= poppedSet. Checking if pending...")
-
-		-- Check if the set is still actively swapping or waiting to swap.
-		-- If so, CurrentSet hasn't updated yet, so do NOT suppress the unequip.
-		local isPending = (ItemRack.SetSwapping == poppedSet)
-		if not isPending and ItemRack.SetsWaiting then
-			for _, q in ipairs(ItemRack.SetsWaiting) do
-				if q[1] == poppedSet then
-					isPending = true
-					break
-				end
-			end
-		end
-
-		if not isPending then
-			ItemRack.Debug("Events", "PopEvent: Not pending. Checking Zone Overrides for suppressRestore")
-			local enabled = ItemRackUser.Events.Enabled
-			for en in pairs(enabled) do
-				if ItemRackEvents[en] and ItemRackEvents[en].Type == "Zone" and ItemRackEvents[en].ManualOverride and ItemRackEvents[en].Active then
-					suppressRestore = true
-					ItemRack.Debug("Events", "PopEvent: suppressing restore for "..(eventName or "nil").." - zone ManualOverride active for "..(en or "nil").." to protect manual gear context")
-					break
-				end
-			end
-		else
-			ItemRack.Debug("Events", "PopEvent: isPending = true. Skipping suppression.")
+	local generation = expectedGeneration
+	if generation == nil and frame then generation = frame.eventGeneration end
+	local result = ItemRack.EventFrames.Pop(state,eventName,generation)
+	if not result.removed then
+		ItemRack.Debug("Events", "PopEvent ignored unowned or stale event:", eventName, result.reason or "")
+		return result
+	end
+	if ItemRack.EventFrameBlockedActivations then
+		ItemRack.EventFrameBlockedActivations[eventName] = nil
+	end
+	-- Unequip=false retains already-observed gear, but an activation that has
+	-- not been submitted yet must not survive its owner. Replace only that
+	-- owner's still-pending target with the remaining effective owner (if any).
+	for slot,target in pairs(nonRestoringSlots) do
+		if ItemRack.EventFramePendingTargets
+		and ItemRack.EventFramePendingTargets[slot] == target then
+			local effective = ItemRack.EventFrames.EffectiveTarget(state,slot)
+			ItemRack.EventFramePendingTargets[slot] = effective
 		end
 	end
-	
-	-- Unequip the set that we pushed, so it restores its exact swaps
-	if poppedSet and not suppressRestore then
-		ItemRack.Debug("Events", "PopEvent: Calling UnequipSet for:", poppedSet)
-		ItemRack.IsEventEquipment = true
-		ItemRack.UnequipSet(poppedSet, disableSound)
-		ItemRack.IsEventEquipment = nil
-	elseif suppressRestore then
-		ItemRack.Debug("Events", "PopEvent: UnequipSet SUPPRESSED for:", poppedSet)
-	end
-	ItemRack.ClearScriptEventState(eventName)
+	ItemRack.RefreshEventStackProjection()
+	ItemRack.QueueEventFrameTargets(result,disableSound)
+	ItemRack.ClearScriptEventState(eventName,generation)
+	return result
 end
 
 --[[ Event processing ]]
@@ -963,64 +1210,44 @@ function ItemRack.ProcessStanceEvent()
 	end
 	local enabled = ItemRackUser.Events.Enabled
 	local events = ItemRackEvents
-
 	local currentStance = GetShapeshiftForm()
-	local stance, eventToEquip, eventToUnequip, setname
-
+	if currentStance == nil then return end
+	local state = ItemRack.EnsureEventFrameState()
+	local names = {}
 	for eventName in pairs(enabled) do
 		local eventData = events[eventName]
 		if eventData and eventData.Type=="Stance" then
-			local excluded = false
-			if eventData.NotInPVP then
-				local _,instanceType = IsInInstance()
-				if instanceType=="arena" or instanceType=="pvp" then
-					excluded = true
-				end
-			end
-			
-			if excluded then
-				if eventData.Active then
-					if eventData.Unequip then
-						eventToUnequip = eventName
-					end
-					eventData.Active = nil
-				end
-			else
-				stance = ItemRack.GetStanceNumber(eventData.Stance)
-				setname = ItemRackUser.Events.Set[eventName]
-				
-				-- Use .Active to track stance state, ensuring cleaner transitions
-				if stance==currentStance then
-					if not eventData.Active then
-						if not ItemRack.IsSetEquipped(setname) then
-							eventToEquip = eventName
-							eventData.Active = true
-						else
-							eventData.Active = true
-						end
-					end
-				elseif stance~=currentStance then
-					if eventData.Active then
-						if eventData.Unequip then
-							eventToUnequip = eventName
-						end
-						eventData.Active = nil
-					elseif eventData.Unequip and ItemRack.IsSetEquipped(setname) then
-						-- Fallback for consistency: only trigger if the user didn't manually equip this set
-						if ItemRackUser.CurrentSet ~= setname then
-							eventToUnequip = eventName
-						end
-					end
-				end
-			end
+			table.insert(names,eventName)
 		end
 	end
-	if eventToUnequip then
-		ItemRack.PopEvent(eventToUnequip)
+	table.sort(names)
+	local _,instanceType = IsInInstance()
+	local exits,entries = {},{}
+	for _,eventName in ipairs(names) do
+		local eventData = events[eventName]
+		local excluded = eventData.NotInPVP and (instanceType=="arena" or instanceType=="pvp")
+		local stance = not excluded and ItemRack.GetStanceNumber(eventData.Stance)
+		local desired = stance ~= nil and stance == currentStance
+		local ownsFrame = state.byEvent[eventName] ~= nil
+		if desired and not ownsFrame then
+			table.insert(entries,eventName)
+			eventData.Active = nil
+		elseif desired then
+			eventData.Active = true
+		elseif ownsFrame then
+			table.insert(exits,eventName)
+			eventData.Active = nil
+		else
+			eventData.Active = nil
+		end
 	end
-	if eventToEquip then
-		ItemRack.PushEvent(eventToEquip)
+	ItemRack.BeginEventFrameBatch()
+	for _,eventName in ipairs(exits) do ItemRack.PopEvent(eventName) end
+	for _,eventName in ipairs(entries) do
+		ItemRack.PushEvent(eventName)
+		events[eventName].Active = state.byEvent[eventName] and true or nil
 	end
+	ItemRack.EndEventFrameBatch()
 end
 
 local mountZoneRecheckPending
@@ -1040,13 +1267,7 @@ local function scheduleMountZoneRecheck(reason)
 end
 
 local function removeEventFromStack(eventName)
-	local stack = ItemRackUser.EventStack
-	if not stack then return end
-	for i = #stack, 1, -1 do
-		if stack[i] == eventName then
-			table.remove(stack, i)
-		end
-	end
+	ItemRack.PopEvent(eventName)
 end
 
 local function getActiveMountEvents()
@@ -1180,10 +1401,6 @@ local function reconcileInvalidMountEvents(isMounted, instanceType)
 			removeEventFromStack(eventName)
 			ItemRack.ClearScriptEventState(eventName)
 		end
-		if ItemRack.PendingOnMovementUnequip == eventName then
-			ItemRack.PendingOnMovementUnequip = nil
-			ItemRack.StopTimer("OnMovementUnequipTimer")
-		end
 	end
 
 	-- Always yield after one layer. UnequipSet may complete asynchronously, and
@@ -1197,27 +1414,9 @@ end
 -- Zone event was not already stacked (for example, the player mounted before
 -- entering the zone), insert it directly beneath the mount without equipping it.
 local function ensureZoneEventBelowMount(zoneEventName, mountEventName)
-	local stack = ItemRackUser.EventStack
-	if not stack then return end
-	local zoneIndex, mountIndex
-	for i, eventName in ipairs(stack) do
-		if eventName == zoneEventName then zoneIndex = i end
-		if eventName == mountEventName then mountIndex = i end
-	end
-	if zoneIndex then
-		-- Existing stack layers carry oldset/old item history that cannot be
-		-- safely reordered by moving the name alone.
-		return
-	end
-	if not mountIndex then
-		for i, eventName in ipairs(stack) do
-			if eventName == mountEventName then
-				mountIndex = i
-				break
-			end
-		end
-	end
-	table.insert(stack, mountIndex or (#stack + 1), zoneEventName)
+	local state = ItemRack.EnsureEventFrameState()
+	if state.byEvent[zoneEventName] then return end
+	ItemRack.PushEvent(zoneEventName,mountEventName)
 end
 
 -- When the player remains mounted but the destination needs a different
@@ -1228,12 +1427,7 @@ local function prepareMountRebase(eventName)
 	local eventData = eventName and ItemRackEvents[eventName]
 	if eventData then
 		eventData.Active = nil
-		if eventData.Unequip then
-			ItemRack.PopEvent(eventName)
-		else
-			removeEventFromStack(eventName)
-			ItemRack.ClearScriptEventState(eventName)
-		end
+		ItemRack.PopEvent(eventName)
 	end
 	_refreshMountState = 4
 end
@@ -1249,7 +1443,7 @@ local function getZoneMatch(eventData, currentZone, currentSubZone, instanceType
 	end
 end
 
-function ItemRack.ProcessZoneEvent(reason)
+local function ProcessZoneEventLegacy(reason)
 	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
 		ItemRack.Debug("Events", "ProcessZoneEvent deferred while automatic swaps are suspended:", reason or "")
 		return false
@@ -1484,17 +1678,69 @@ function ItemRack.ProcessZoneEvent(reason)
 	return true
 end
 
-local function EventOwnsStackLayer(eventName)
-	local stack = ItemRackUser and ItemRackUser.EventStack
-	if not stack then
+-- Canonical Zone reducer. Logical frames make mount/zone rebasing a pure
+-- insertion operation, so no visible mount set needs to be unequipped and
+-- re-equipped merely to change an underlying Zone owner.
+function ItemRack.ProcessZoneEvent(reason)
+	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
+		ItemRack.Debug("Events", "ProcessZoneEvent deferred while automatic swaps are suspended:", reason or "")
 		return false
 	end
-	for i = #stack, 1, -1 do
-		if stack[i] == eventName then
-			return true
+	local currentZone = GetRealZoneText()
+	local currentSubZone = GetSubZoneText()
+	local _,instanceType = IsInInstance()
+	local _,_,_,_,_,_,_,instanceID = GetInstanceInfo()
+	local signature = table.concat({
+		tostring(instanceType or "none"), tostring(currentZone or ""),
+		tostring(currentSubZone or ""), tostring(instanceID or ""),
+	},"\031")
+	local state = ItemRack.EnsureEventFrameState()
+	local activeMountEvents = getActiveMountEvents()
+	local baseMountEvent = activeMountEvents[#activeMountEvents]
+	local names = {}
+	for eventName in pairs(ItemRackUser.Events.Enabled) do
+		local eventData = ItemRackEvents[eventName]
+		if eventData and eventData.Type == "Zone" then table.insert(names,eventName) end
+	end
+	table.sort(names)
+
+	local exits,entries = {},{}
+	for _,eventName in ipairs(names) do
+		local eventData = ItemRackEvents[eventName]
+		local matched = getZoneMatch(eventData,currentZone,currentSubZone,instanceType)
+		local ownsFrame = state.byEvent[eventName] ~= nil
+		if matched then
+			if not ownsFrame then table.insert(entries,eventName) end
+			eventData.Active = true
+			eventData.LastZoneMatched = matched
+			if eventData.LastZoneSignature ~= signature then
+				eventData.ManualOverride = nil
+			end
+			eventData.LastZoneSignature = signature
+		elseif ownsFrame then
+			table.insert(exits,eventName)
+			eventData.Active = nil
+			eventData.LastZoneMatched = nil
+			eventData.LastZoneSignature = nil
+			eventData.ManualOverride = nil
+		else
+			eventData.Active = nil
 		end
 	end
-	return false
+
+	-- Apply all logical removals before additions; the pending physical plan is
+	-- coalesced by slot and therefore never exposes an intermediate mount unwind.
+	ItemRack.BeginEventFrameBatch()
+	for _,eventName in ipairs(exits) do ItemRack.PopEvent(eventName) end
+	for _,eventName in ipairs(entries) do
+		if baseMountEvent and ItemRackUser.EventState.byEvent[baseMountEvent] then
+			ItemRack.PushEvent(eventName,baseMountEvent)
+		else
+			ItemRack.PushEvent(eventName)
+		end
+	end
+	ItemRack.EndEventFrameBatch()
+	return true
 end
 
 function ItemRack.ProcessSpecializationEvent(force)
@@ -1511,121 +1757,100 @@ function ItemRack.ProcessSpecializationEvent(force)
 	-- Guard against invalid spec index (can occur during zoning/loading)
 	if not currentSpec or currentSpec == 0 then return end
 	
-	-- Only proceed if the spec index has actually changed
-	if not force and ItemRack.LastLastSpec == currentSpec then return end
+	-- Only proceed if the spec index has actually changed. A forced same-spec
+	-- refresh may rebuild event ownership, but it must not consume an associated
+	-- set request whose specialization cast is still in progress.
+	local previousSpec = ItemRack.LastLastSpec
+	if not force and previousSpec == currentSpec then return end
+	local specChanged = previousSpec ~= currentSpec
 	ItemRack.LastLastSpec = currentSpec
 
 	local preserveRequestedSet
+	local suppressDestinationDefaults
 	local pendingSpecSet = ItemRack.PendingSpecSet
 	if pendingSpecSet then
 		local expired = pendingSpecSet.expiresAt and GetTime() > pendingSpecSet.expiresAt
-		local requestedSetExists = pendingSpecSet.setname and ItemRackUser.Sets[pendingSpecSet.setname]
-		if not expired and requestedSetExists and pendingSpecSet.spec == currentSpec and ItemRackUser.CurrentSet == pendingSpecSet.setname then
-			preserveRequestedSet = pendingSpecSet.setname
-			ItemRack.Debug("Events", "Preserving associated set through spec change:", preserveRequestedSet)
+		if specChanged and not expired and pendingSpecSet.spec == currentSpec
+		and pendingSpecSet.cancelledByManualUnequip then
+			suppressDestinationDefaults = true
+			ItemRack.Debug("Events", "Suppressing specialization defaults after newer manual unequip")
+		else
+			local requestedSet = pendingSpecSet.latestManualSet or pendingSpecSet.setname
+			local requestedSetExists = requestedSet and ItemRackUser.Sets[requestedSet]
+			local requestStillCurrent = pendingSpecSet.latestManualSet ~= nil
+				or ItemRackUser.CurrentSet == pendingSpecSet.setname
+			if specChanged and not expired and requestedSetExists
+			and pendingSpecSet.spec == currentSpec and requestStillCurrent then
+				preserveRequestedSet = requestedSet
+				ItemRack.Debug("Events", "Preserving associated set through spec change:", preserveRequestedSet)
+			end
 		end
-		-- A spec transition consumes the request whether it reached the expected
-		-- destination or the player changed course before the cast completed.
-		ItemRack.PendingSpecSet = nil
+		-- An actual spec transition consumes the request whether it reached the
+		-- expected destination or the player changed course. Expiry is also final;
+		-- a forced refresh at the unchanged source spec leaves the request intact.
+		if expired or specChanged then ItemRack.PendingSpecSet = nil end
 	end
 	
-	local eventToEquip, eventToUnequip, eventToAdopt, setname
-	
+	local state = ItemRack.EnsureEventFrameState()
+	local names = {}
 	for eventName in pairs(enabled) do
 		local eventData = events[eventName]
 		if eventData and eventData.Type=="Specialization" and eventData.Spec then
-			setname = ItemRackUser.Events.Set[eventName]
-			local ownsStackLayer = EventOwnsStackLayer(eventName)
-			-- Always equip the set for the current spec
-			if eventData.Spec == currentSpec then
-				if preserveRequestedSet then
-					-- If this event already maps to the requested set, adopt it into
-					-- the event stack without equipping it a second time. Otherwise
-					-- leave the destination event inactive so its default set cannot
-					-- replace another explicitly selected set for the same spec.
-					if setname == preserveRequestedSet then
-						eventToAdopt = eventName
-						eventData.Active = nil
-					else
-						eventData.Active = nil
-					end
-				elseif ownsStackLayer then
-					-- Recover a stale Active flag only when an actual event-owned
-					-- stack layer proves this set was adopted/equipped by the event.
-					eventData.Active = true
-				else
-					eventToEquip = eventName
-					eventData.Active = nil
-				end
-			-- Unequip sets for other specs if they're equipped
-			elseif eventData.Spec ~= currentSpec then
-				if eventData.Active then
-					-- Active alone is not ownership. In particular, a forced
-					-- same-spec evaluation may find the mapped set manually worn.
-					-- Never PopEvent (and restore gear) without its stack layer.
-					if eventData.Unequip and ownsStackLayer then
-						eventToUnequip = eventName
-					end
-					eventData.Active = nil
-				elseif eventData.Unequip and ownsStackLayer then
-					-- A stack layer is the authoritative ownership record. This
-					-- also repairs an inactive flag without treating matching manual
-					-- gear as something the specialization event may restore.
-					eventToUnequip = eventName
-				end
-			end
+			table.insert(names,eventName)
 		end
 	end
-	
-	-- Unequip first, then equip (to avoid conflicts)
-	local unequipTriggered = false
-	if eventToUnequip and eventToUnequip ~= eventToEquip then
-		ItemRack.PopEvent(eventToUnequip)
-		unequipTriggered = true
+	table.sort(names)
+	local exits,entries = {},{}
+	for _,eventName in ipairs(names) do
+		local eventData = events[eventName]
+		local setname = ItemRackUser.Events.Set[eventName]
+		local matchesSpec = eventData.Spec == currentSpec
+		local desired = matchesSpec and not suppressDestinationDefaults
+			and (not preserveRequestedSet or setname == preserveRequestedSet)
+		local ownsFrame = state.byEvent[eventName] ~= nil
+		if desired and not ownsFrame then
+			table.insert(entries,eventName)
+			eventData.Active = nil
+		elseif desired then
+			eventData.Active = true
+		elseif ownsFrame then
+			table.insert(exits,eventName)
+			eventData.Active = nil
+		else
+			eventData.Active = nil
+		end
 	end
+
+	local retrySets = {}
+	ItemRack.BeginEventFrameBatch()
+	for _,eventName in ipairs(exits) do ItemRack.PopEvent(eventName) end
+	for _,eventName in ipairs(entries) do
+		local setname = ItemRackUser.Events.Set[eventName]
+		if setname and ItemRackUser.Sets[setname] then
+			ItemRack.PushEvent(eventName)
+			events[eventName].Active = state.byEvent[eventName] and true or nil
+			if events[eventName].Active then retrySets[setname] = true end
+		else
+			events[eventName].Active = nil
+			ItemRack.Debug("Events", "Specialization event has no valid set mapping:", eventName, setname or "nil")
+		end
+	end
+	ItemRack.EndEventFrameBatch()
+
 	if preserveRequestedSet then
-		-- Remove any stale destination-spec layer before optionally adopting the
-		-- event whose mapping already matches the requested set.
-		for i = #ItemRackUser.EventStack, 1, -1 do
-			local stackedEvent = ItemRackUser.EventStack[i]
-			local stackedData = events[stackedEvent]
-			if stackedData and stackedData.Type=="Specialization" and stackedData.Spec==currentSpec then
-				table.remove(ItemRackUser.EventStack,i)
+		local adopted = false
+		for _,eventName in ipairs(names) do
+			if events[eventName].Active and ItemRackUser.Events.Set[eventName] == preserveRequestedSet then
+				adopted = true
+				break
 			end
 		end
-		if eventToAdopt then
-			table.insert(ItemRackUser.EventStack,eventToAdopt)
-			events[eventToAdopt].Active = true
-			ItemRack.Debug("Events", "Adopted requested set into specialization event:", eventToAdopt, preserveRequestedSet)
-		else
-			ItemRack.Debug("Events", "Suppressed destination specialization default to preserve:", preserveRequestedSet)
-		end
-		ItemRack.ScheduleDualWieldRetry(preserveRequestedSet)
-		ItemRack.UpdateCurrentSet()
-		return
+		ItemRack.Debug("Events", adopted and "Adopted requested set into specialization event:"
+			or "Suppressed destination specialization defaults to preserve:", preserveRequestedSet)
+		retrySets[preserveRequestedSet] = true
+		if ItemRack.UpdateCurrentSet then ItemRack.UpdateCurrentSet() end
 	end
-	if eventToEquip then
-		local setToEquip = ItemRackUser.Events.Set[eventToEquip]
-		if not setToEquip or not ItemRackUser.Sets[setToEquip] then
-			events[eventToEquip].Active = nil
-			ItemRack.Debug("Events", "Specialization event has no valid set mapping:", eventToEquip, setToEquip or "nil")
-			return
-		end
-		if not ItemRack.IsSetEquipped(setToEquip) or unequipTriggered then
-			ItemRack.Print("Spec changed! Equipping set: "..setToEquip)
-			ItemRack.PushEvent(eventToEquip)
-			events[eventToEquip].Active = EventOwnsStackLayer(eventToEquip) and true or nil
-			
-			-- Dual-Wield Awareness: Schedule a delayed re-check for weapon slots
-			ItemRack.ScheduleDualWieldRetry(setToEquip)
-		else
-			-- A matching set may have been selected manually. Keep this event
-			-- inactive unless it owns a stack layer, otherwise the next spec
-			-- change would PopEvent and restore/unequip gear it never equipped.
-			events[eventToEquip].Active = nil
-			ItemRack.UpdateCurrentSet()
-		end
-	end
+	for setname in pairs(retrySets) do ItemRack.ScheduleDualWieldRetry(setname) end
 end
 
 -- Dual-Wield Retry: Re-attempt weapon equip after spec change if offhand wasn't equipped
@@ -1681,13 +1906,13 @@ function ItemRack.RetryDualWieldWeapons(setname, expectedSpec)
 		
 		-- Use EquipItemByID which handles combat queue properly
 		-- and doesn't create temporary sets
-		ItemRack.EquipItemByID(intendedOffhand, 17)
+		ItemRack.EquipItemByID(intendedOffhand, 17, false, nil, nil, "dual_wield_retry")
 		
 		-- Also retry mainhand if needed
 		local currentMainhand = ItemRack.GetID(16)
 		local intendedMainhand = set[16]
 		if intendedMainhand and intendedMainhand ~= 0 and not ItemRack.MatchesStoredItemID(intendedMainhand, currentMainhand) then
-			ItemRack.EquipItemByID(intendedMainhand, 16)
+			ItemRack.EquipItemByID(intendedMainhand, 16, false, nil, nil, "dual_wield_retry")
 		end
 	end
 end
@@ -1751,31 +1976,35 @@ function ItemRack.CheckForMountedEvents()
 	end
 end
 
--- Debounced OnMovement unequip callback. Fires 0.5s after the player stops moving.
--- If they started moving again within that window, PendingOnMovementUnequip was cleared
--- and this function does nothing.
-function ItemRack.ProcessOnMovementUnequip()
-	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
-		ItemRack.PendingOnMovementUnequip = nil
+-- A single generation-bound debounce recomputes every OnMovement event. A
+-- callback from an older movement epoch is a total no-op, so simultaneous
+-- events cannot strand one another or pop after movement resumes.
+local function ScheduleOnMovementRecheck(generation)
+	if ItemRack.PendingOnMovementGeneration == generation then return end
+	ItemRack.PendingOnMovementGeneration = generation
+	C_Timer.After(0.5,function() ItemRack.ProcessOnMovementUnequip(generation) end)
+end
+
+function ItemRack.ProcessOnMovementUnequip(expectedGeneration)
+	local pending = ItemRack.PendingOnMovementGeneration
+	expectedGeneration = expectedGeneration or pending
+	if not expectedGeneration or pending ~= expectedGeneration
+	or ItemRack.OnMovementGeneration ~= expectedGeneration then return end
+	if GetUnitSpeed("player") > 0 then
+		ItemRack.PendingOnMovementGeneration = nil
 		return
 	end
-	local eventName = ItemRack.PendingOnMovementUnequip
-	ItemRack.PendingOnMovementUnequip = nil
-	if not eventName then return end
-
-	local events = ItemRackEvents
-	if not events[eventName] then return end
-
-	local speed = GetUnitSpeed("player")
-	ItemRack.Debug("Events", "ProcessOnMovementUnequip ("..eventName.."): speed="..tostring(speed).." active="..tostring(events[eventName].Active))
-
-	-- Double-check: only unequip if the player is truly not moving
-	if speed > 0 then return end
-
-	if events[eventName].Active then
-		ItemRack.PopEvent(eventName)
-		events[eventName].Active = nil
+	local zoneAge = ItemRack.LastZoneChangeTime and (GetTime() - ItemRack.LastZoneChangeTime)
+	if zoneAge and zoneAge < 1 then
+		C_Timer.After(math.max(1-zoneAge,0.05),function()
+			ItemRack.ProcessOnMovementUnequip(expectedGeneration)
+		end)
+		return
 	end
+	ItemRack.PendingOnMovementGeneration = nil
+	ItemRack.OnMovementDelayElapsedGeneration = expectedGeneration
+	ItemRack.Debug("Events", "OnMovement debounce elapsed; reconciling generation:", expectedGeneration)
+	ItemRack.ProcessBuffEvent()
 end
 function ItemRack.ProcessBuffEvent()
 	if ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
@@ -1787,127 +2016,90 @@ function ItemRack.ProcessBuffEvent()
 		_lastStateMounted = currentlyMounted
 		mountStateChangedAt = GetTime()
 	end
-	if currentlyMounted and (GetTime() - mountStateChangedAt) < mountEquipDelay then
+	local mountReady = not currentlyMounted or (GetTime() - mountStateChangedAt) >= mountEquipDelay
+	if currentlyMounted and not mountReady then
 		scheduleMountEquipCheck()
-		return
-	end
-	if ItemRack.MountZoneTransitionDeferred then
-		ItemRack.Debug("Events", "ProcessBuffEvent paused while mount/zone transition is deferred")
-		return
 	end
 	local enabled = ItemRackUser.Events.Enabled
 	local events = ItemRackEvents
-
-	local buff, setname, isSetEquipped
-
-	-- Zone-transition awareness: suppress OnMovement unequips if a zone change
-	-- happened within the last 1 second. Zone boundaries can cause speed blips
-	-- or aura flickers that would otherwise trigger a spurious unequip.
-	local inZoneTransition = ItemRack.LastZoneChangeTime and (GetTime() - ItemRack.LastZoneChangeTime) < 1
-
+	local state = ItemRack.EnsureEventFrameState()
+	local speed = GetUnitSpeed("player") or 0
+	local moving = speed > 0
+	if ItemRack.LastOnMovementState == nil or ItemRack.LastOnMovementState ~= moving then
+		ItemRack.LastOnMovementState = moving
+		ItemRack.OnMovementGeneration = (ItemRack.OnMovementGeneration or 0) + 1
+		ItemRack.OnMovementDelayElapsedGeneration = nil
+		if moving then ItemRack.PendingOnMovementGeneration = nil end
+	end
+	local movementGeneration = ItemRack.OnMovementGeneration or 0
+	local movementDelayElapsed = ItemRack.OnMovementDelayElapsedGeneration == movementGeneration
+	local _,instanceType = IsInInstance()
+	local names = {}
 	for eventName in pairs(enabled) do
 		local eventData = events[eventName]
-		if eventData and eventData.Type=="Buff" then
-			local excluded = false
-			if eventData.NotInPVP then
-				local _,instanceType = IsInInstance()
-				if instanceType=="arena" or instanceType=="pvp" then
-					excluded = true
-				end
-			end
-			if eventData.NotInPVE then
-				local _,instanceType = IsInInstance()
-				if instanceType=="party" or instanceType=="raid" then
-					excluded = true
-				end
-			end
-			
-			if excluded then
-				if eventData.Active then
-					if eventData.Unequip then
-						ItemRack.PopEvent(eventName)
-					end
-					eventData.Active = nil
-					if ItemRack.PendingOnMovementUnequip == eventName then
-						ItemRack.PendingOnMovementUnequip = nil
-						ItemRack.StopTimer("OnMovementUnequipTimer")
-					end
-				end
-			else
-				-- Determine the underlying buff/mount condition (ignoring movement)
-				local underlyingBuff
-				if eventData.Anymount then
-					underlyingBuff = IsMounted() and not UnitOnTaxi("player")
-				else
-					underlyingBuff = AuraUtil.FindAuraByName(eventData.Buff,"player")
-				end
+		if eventData and eventData.Type=="Buff" then table.insert(names,eventName) end
+	end
+	table.sort(names)
 
-				-- Apply OnMovement check: buff is only true if moving
-				buff = underlyingBuff
-				if buff and eventData.OnMovement then
-					buff = GetUnitSpeed("player") > 0
-				end
-				setname = ItemRackUser.Events.Set[eventName]
-				isSetEquipped = ItemRack.IsSetEquipped(setname)
-				
-				if eventData.OnMovement then
-					ItemRack.Debug("Events", "ProcessBuffEvent checking "..(eventName or "nil")..": moving="..tostring(GetUnitSpeed("player") > 0).." underlyingBuff="..tostring(underlyingBuff).." isSetEquipped="..tostring(isSetEquipped).." active="..tostring(eventData.Active))
-				end
-				
-				-- Use .Active to track if we've already handled this event
-				-- This prevents spamming EquipSet if IsSetEquipped returns false (e.g. due to API bugs or manual swaps)
-				-- And ensures UnequipSet triggers even if the set is only partially equipped
-				if buff then
-					-- Player is moving (or buff active for non-movement events).
-					if eventData.OnMovement and ItemRack.PendingOnMovementUnequip == eventName then
-						ItemRack.PendingOnMovementUnequip = nil
-						ItemRack.StopTimer("OnMovementUnequipTimer")
-					end
-					if not eventData.Active then
-						ItemRack.PushEvent(eventName)
-						eventData.Active = true
-					end
-				elseif not buff then
-					if eventData.Active then
-						if eventData.Unequip then
-							-- Zone-transition suppression: if this is an OnMovement event and the
-							-- underlying buff is still active but we just crossed a zone boundary,
-							-- skip the unequip. The zone transition likely caused a speed blip
-							-- or aura flicker — not an intentional stop.
-							if eventData.OnMovement and underlyingBuff and inZoneTransition then
-								-- Suppress: still mounted, zone boundary artifact. Do nothing.
-							elseif eventData.OnMovement and underlyingBuff then
-								if eventData.OnMovementDelay == false then
-									-- User explicitly disabled the 0.5s stop debounce. Instant unequip.
-									ItemRack.PopEvent(eventName)
-									eventData.Active = nil
-								else
-									-- OnMovement debounce: delay the unequip by 0.5s.
-									-- If the player starts moving again within that window, the
-									-- timer is cancelled above and no swap occurs.
-									if not ItemRack.PendingOnMovementUnequip then
-										ItemRack.PendingOnMovementUnequip = eventName
-										ItemRack.StartTimer("OnMovementUnequipTimer")
-									end
-								end
-							else
-								ItemRack.PopEvent(eventName)
-								eventData.Active = nil
-							end
-						else
-							eventData.Active = nil
-						end
-					elseif isSetEquipped and eventData.Unequip then
-						-- Fallback: If we didn't track it as active but the set IS equipped, unequip it
-						-- Fixed: Skip if the user manually equipped this set right now (CurrentSet check)
-						-- Fixed: Skip if the addon is actively swapping out any set (SetSwapping) or if items are locked (AnythingLocked) to prevent double-pops from server lag
-						if ItemRackUser.CurrentSet ~= setname and not ItemRack.SetSwapping and not ItemRack.AnythingLocked() then
-							ItemRack.PopEvent(eventName)
-						end
-					end
-				end
+	local exits,entries = {},{}
+	local needsMovementDebounce = false
+	for _,eventName in ipairs(names) do
+		local eventData = events[eventName]
+		local excluded = (eventData.NotInPVP and (instanceType=="arena" or instanceType=="pvp"))
+			or (eventData.NotInPVE and (instanceType=="party" or instanceType=="raid"))
+		local underlyingBuff
+		if not excluded then
+			if eventData.Anymount then
+				underlyingBuff = currentlyMounted
+			else
+				underlyingBuff = eventData.Buff and AuraUtil.FindAuraByName(eventData.Buff,"player") and true or false
 			end
 		end
+		local ownsFrame = state.byEvent[eventName] ~= nil
+		local desired = underlyingBuff and true or false
+		if desired and eventData.Anymount and not mountReady then
+			-- Preserve an existing mount frame during stabilization, but do not
+			-- create one until the client reports a stable mount state.
+			desired = ownsFrame
+		elseif desired and eventData.OnMovement then
+			if moving then
+				desired = true
+			elseif eventData.OnMovementDelay == false or movementDelayElapsed then
+				desired = false
+			else
+				desired = ownsFrame
+				if ownsFrame then needsMovementDebounce = true end
+			end
+		end
+		if eventData.OnMovement then
+			ItemRack.Debug("Events", "ProcessBuffEvent checking", eventName,
+				"moving:", moving, "underlying:", underlyingBuff and true or false,
+				"owned:", ownsFrame, "desired:", desired)
+		end
+		if desired and not ownsFrame then
+			table.insert(entries,eventName)
+			eventData.Active = nil
+		elseif desired then
+			eventData.Active = true
+		elseif ownsFrame then
+			table.insert(exits,eventName)
+			eventData.Active = nil
+		else
+			eventData.Active = nil
+		end
+	end
+
+	ItemRack.BeginEventFrameBatch()
+	for _,eventName in ipairs(exits) do ItemRack.PopEvent(eventName) end
+	for _,eventName in ipairs(entries) do
+		ItemRack.PushEvent(eventName)
+		events[eventName].Active = state.byEvent[eventName] and true or nil
+	end
+	ItemRack.EndEventFrameBatch()
+	if needsMovementDebounce then
+		ScheduleOnMovementRecheck(movementGeneration)
+	elseif ItemRack.PendingOnMovementGeneration == movementGeneration then
+		ItemRack.PendingOnMovementGeneration = nil
 	end
 end
 

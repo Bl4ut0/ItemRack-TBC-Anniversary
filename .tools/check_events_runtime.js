@@ -2,6 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 
 const events = fs.readFileSync('ItemRack/ItemRackEvents.lua', 'utf8').replace(/\r\n/g, '\n');
+const eventState = fs.readFileSync('ItemRack/ItemRackEventState.lua', 'utf8').replace(/\r\n/g, '\n');
 
 function between(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -30,7 +31,7 @@ const processingFrame = between(
 
 const startupOwnership = between(
   events,
-  '-- Prime all events to prevent redundant swaps on login/reload',
+  '-- Rehydrate Active as a compatibility/UI projection from canonical frames.',
   'if ItemRackButton20Queue then'
 );
 
@@ -57,35 +58,88 @@ check(
 
 const specialization = between(
   events,
-  'local function EventOwnsStackLayer',
+  'function ItemRack.ProcessSpecializationEvent(force)',
   '-- Dual-Wield Retry:'
 );
-const pushIndex = specialization.indexOf('ItemRack.PushEvent(eventToEquip)');
-const activateIndex = specialization.indexOf(
-  'events[eventToEquip].Active = EventOwnsStackLayer(eventToEquip) and true or nil'
+check(
+  specialization.includes('table.sort(names)') &&
+    specialization.includes('local exits,entries = {},{}') &&
+    specialization.includes('for _,eventName in ipairs(exits) do ItemRack.PopEvent(eventName) end') &&
+    specialization.includes('for _,eventName in ipairs(entries) do'),
+  'Specialization transitions must collect, sort, and batch every matching event.'
 );
 check(
-  pushIndex !== -1 && activateIndex > pushIndex,
-  'A specialization event may become active only after PushEvent creates its stack layer.'
-);
-check(
-  specialization.includes('if eventData.Unequip and ownsStackLayer then') &&
-    specialization.includes('events[eventToEquip].Active = nil\n\t\t\tItemRack.UpdateCurrentSet()') &&
+  specialization.includes('local ownsFrame = state.byEvent[eventName] ~= nil') &&
+    specialization.includes('events[eventName].Active = state.byEvent[eventName] and true or nil') &&
     !specialization.includes('ItemRack.IsSetEquipped(setname)'),
-  'A manually equipped matching specialization set must remain inactive and must not be popped later.'
+  'Specialization Active state must follow canonical ownership rather than physical set matching.'
 );
 check(
-  specialization.includes('table.insert(ItemRackUser.EventStack,eventToAdopt)') &&
-    specialization.indexOf('events[eventToAdopt].Active = true') >
-      specialization.indexOf('table.insert(ItemRackUser.EventStack,eventToAdopt)'),
-  'Explicit specialization adoption must establish stack ownership before activation.'
+  specialization.includes('not preserveRequestedSet or setname == preserveRequestedSet') &&
+    specialization.includes('retrySets[preserveRequestedSet] = true'),
+  'Explicit associated-set intent must suppress different destination specialization defaults.'
 );
 check(
-  startupOwnership.includes('if eventData.Type == "Specialization" then') &&
-    startupOwnership.includes('eventData.Active = nil') &&
-    startupOwnership.indexOf('if eventData.Type == "Specialization" then') <
-      startupOwnership.indexOf('table.insert(ItemRackUser.EventStack, eventName)'),
-  'Startup must not reconstruct specialization ownership solely from matching equipped gear.'
+  startupOwnership.includes('eventState.frames[frameId]') &&
+    startupOwnership.includes('eventData.Active = true') &&
+    !startupOwnership.includes('ItemRack.IsSetEquipped'),
+  'Startup must project persisted frame ownership and never reconstruct it from matching gear.'
 );
 
-console.log(`[EVENT REGRESSION] ${checks} deferred-script and specialization ownership guards passed.`);
+const popEvent = between(
+  events,
+  'function ItemRack.PopEvent(eventName, expectedGeneration)',
+  '--[[ Event processing ]]'
+);
+check(
+  popEvent.includes('ItemRack.EventFrames.Pop(state,eventName,generation)') &&
+    popEvent.includes('if not result.removed then') &&
+    !popEvent.includes('ItemRack.UnequipSet'),
+  'PopEvent must use canonical generation-bound frame ownership and never legacy set restoration.'
+);
+check(
+  eventState.includes('higherSlot.prior = removedSlot.prior') &&
+    eventState.includes('targets[slot] = restore'),
+  'Buried frame removal must transfer history to a higher slot owner and restore only uncovered slots.'
+);
+check(
+  popEvent.includes('ItemRack.QueueEventFrameTargets(result,disableSound)') &&
+    popEvent.includes('ItemRack.ClearScriptEventState(eventName,generation)'),
+  'A successful pop must coalesce its physical plan and clear only matching script generation state.'
+);
+check(eventState.includes('nextFrameId = 1'), 'Every activation must receive a unique frame identity.');
+check(eventState.includes('frame.eventGeneration ~= eventGeneration'), 'Stale generations must be total no-ops.');
+check(eventState.includes('table.insert(state.order,insertIndex,frameId)'), 'Underlying Zone frames must support logical insertion below mount owners.');
+check(eventState.includes('function EventFrames.ReleaseSlots'), 'Manual equipment intent must be able to relinquish automatic slot ownership.');
+
+const stance = between(
+  events,
+  'function ItemRack.ProcessStanceEvent()',
+  'local mountZoneRecheckPending'
+);
+check(
+  stance.includes('table.sort(names)') &&
+    stance.includes('local exits,entries = {},{}') &&
+    stance.includes('ItemRack.BeginEventFrameBatch()'),
+  'Stance processing must deterministically batch all matching transitions.'
+);
+
+const buff = between(
+  events,
+  'local function ScheduleOnMovementRecheck',
+  'local prevIcon, prevText'
+);
+check(
+  buff.includes('ItemRack.PendingOnMovementGeneration') &&
+    buff.includes('ItemRack.OnMovementGeneration ~= expectedGeneration') &&
+    !buff.includes('PendingOnMovementUnequip'),
+  'OnMovement debounce must use one generation-bound full re-evaluation, not one event-name slot.'
+);
+check(
+  buff.includes('table.sort(names)') &&
+    buff.includes('for _,eventName in ipairs(exits) do ItemRack.PopEvent(eventName) end') &&
+    buff.includes('for _,eventName in ipairs(entries) do'),
+  'Buff processing must collect and batch every transition in deterministic order.'
+);
+
+console.log(`[EVENT REGRESSION] ${checks} script, specialization, and event ownership guards passed.`);

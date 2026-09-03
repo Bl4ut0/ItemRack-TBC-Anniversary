@@ -6,6 +6,8 @@ const read = (filePath) => fs.readFileSync(filePath, 'utf8');
 const core = read('ItemRack/ItemRack.lua');
 const equip = read('ItemRack/ItemRackEquip.lua');
 const events = read('ItemRack/ItemRackEvents.lua');
+const buttons = read('ItemRack/ItemRackButtons.lua');
+const options = read('ItemRackOptions/ItemRackOptions.lua');
 const buildScript = read('.tools/build_release_dev.ps1');
 const installScript = read('.tools/install_local.ps1');
 const releaseWorkflow = read('.agent/workflows/release.md');
@@ -62,11 +64,79 @@ check(
     events.includes('ItemRack.MatchesStoredItemID(intendedMainhand, currentMainhand)'),
   'Dual-wield retries must compare the saved rune identity.'
 );
-check(equip.includes('secureMacroMismatch'), 'Secure in-combat macro mismatches must be retained.');
+const setBindings = between(core, 'ItemRack.SetBindingRequestSequence', '--[[ Slash Handler ]]');
+check(
+  !setBindings.includes('/equipslot [combat]') &&
+    setBindings.includes('button:SetAttribute("macrotext","")'),
+  'Set bindings must use an empty secure carrier, never a split in-combat weapon macro.'
+);
+check(
+  setBindings.includes('button:SetScript("PreClick"') &&
+    setBindings.includes('ItemRack.PendingSetBindingRequest = request') &&
+    setBindings.includes('function ItemRack.ProcessPendingSetBinding'),
+  'Set bindings must capture one explicit pre-click intent and defer it through the set-level coordinator.'
+);
+const initCore = between(core, 'function ItemRack.InitCore', 'function ItemRack.MigrateQueues');
+check(
+  initCore.includes('ItemRack.MigrateQueues()') &&
+    initCore.includes('ItemRack.SetSetBindings()') &&
+    initCore.indexOf('ItemRack.MigrateQueues()') < initCore.indexOf('ItemRack.SetSetBindings()') &&
+    !/C_Timer\.After\(15[\s\S]{0,100}SetSetBindings/.test(core),
+  'Set binding targets must initialize during PLAYER_LOGIN without a dead startup window.'
+);
+const initEvents = between(events, 'function ItemRack.InitEvents', 'function ItemRack.RegisterEvents');
+check(
+  initEvents.includes('CaptureLegacyEventState()') &&
+    initEvents.includes('ItemRack.LoadEvents()') &&
+    initEvents.indexOf('CaptureLegacyEventState()') < initEvents.indexOf('ItemRack.LoadEvents()'),
+  'Legacy event state must be captured before LoadEvents can refresh transient Active data.'
+);
+const equipSet = between(equip, 'function ItemRack.EquipSet', 'function ItemRack.StartSetSwapTimeout');
+check(
+  equipSet.includes('pendingSpecSet.latestManualSet = setname') &&
+    equipSet.indexOf('pendingSpecSet.latestManualSet = setname') < equipSet.indexOf('ItemRack.QueueStateReady ~= true'),
+  'A newer manual set choice must supersede a pending specialization set before readiness can defer it.'
+);
+check(
+  equipSet.includes('not ItemRack.IsEventEquipment') &&
+    equipSet.includes('not ItemRack.IsDeferredEquipment') &&
+    equipSet.includes('string.sub(setname,1,1) ~= "~"'),
+  'Automatic, deferred, and internal set requests must not masquerade as manual specialization intent.'
+);
+const unequipSet = between(equip, 'function ItemRack.UnequipSet', 'function ItemRack.ToggleSet');
+check(
+  unequipSet.includes('pendingSpecSet.cancelledByManualUnequip = true') &&
+    unequipSet.indexOf('pendingSpecSet.cancelledByManualUnequip = true') < unequipSet.indexOf('ItemRack.SetSwapping or ItemRack.AnythingLocked()'),
+  'Manual toggle-off must supersede a pending specialization set before lock deferral.'
+);
+const afterCombatInsertions = [...buttons.matchAll(/table\.insert\(ItemRack\.RunAfterCombat,([^\r\n)]+)/g)];
+check(
+  afterCombatInsertions.length === 1 && afterCombatInsertions[0][1].trim() === 'functionName',
+  'Button layout/visibility work must use the deduplicating post-combat scheduler.'
+);
+check(
+  ['ConstructLayout', 'ReflectMainScale', 'ReflectRightClickUse', 'RefreshButtonVisibility', 'UpdateDisableAltClick']
+    .every((functionName) => buttons.includes(`queueAfterCombatOnce("${functionName}")`)),
+  'Every protected button refresh must coalesce duplicate post-combat work.'
+);
+const bindSet = between(options, 'function ItemRackOpt.BindSet', 'function ItemRackOpt.BindFrameOnShow');
+check(
+  bindSet.indexOf('if InCombatLockdown() then') < bindSet.indexOf('CreateFrame('),
+  'The binding dialog must reject combat before attempting protected frame creation.'
+);
+check(
+  !/SetCVar\s*\(\s*["']Sound_EnableSFX["']/.test([core, equip, events, options].join('\n')),
+  'ItemRack must never mutate the client-wide Sound_EnableSFX CVar.'
+);
+check(
+  !core.includes('DisableActionBarSound') && !options.includes('DisableActionBarSound'),
+  'The obsolete action-template sound workaround must not be exposed as a setting.'
+);
 
 check(
   events.includes('function ItemRack.ProcessSpecializationEvent(force)') &&
-    events.includes('if not force and ItemRack.LastLastSpec == currentSpec then return end'),
+    events.includes('if not force and previousSpec == currentSpec then return end') &&
+    events.includes('if expired or specChanged then ItemRack.PendingSpecSet = nil end'),
   'Specialization events must support a forced same-spec evaluation.'
 );
 check(
@@ -74,9 +144,18 @@ check(
   'Globally re-enabled events must force specialization evaluation.'
 );
 check(
-  events.includes('local wasActive = eventData and eventData.Active') &&
-    events.includes('elseif wasActive and eventData and eventData.Unequip then'),
-  'Spin-down fallback must be limited to previously active events.'
+  core.includes('if ItemRack.QueueSchemaUnsupported then') &&
+    core.includes('return { owner=false, list=nil, enabled=false, reason="unsupported_schema" }') &&
+    core.includes('if ItemRack.EventStateSchemaUnsupported then'),
+  'Future queue or event schemas must fail closed without mutating their unknown representation.'
+);
+const spinDownEvent = between(events, 'function ItemRack.SpinDownEvent', 'function ItemRack.SpinUpEvent');
+check(
+  spinDownEvent.includes('local wasActive = eventData and eventData.Active') &&
+    spinDownEvent.includes('if state.byEvent[eventName] then') &&
+    spinDownEvent.includes('elseif wasActive then') &&
+    !spinDownEvent.includes('ItemRack.UnequipSet'),
+  'Spin-down may restore only a canonically owned event frame, never a stale Active/physical match.'
 );
 
 check(

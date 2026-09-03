@@ -1,8 +1,14 @@
 __ Development __
 
-- Captures Script event triggers during transition holds and replays them once after addon readiness, while preventing specialization events from claiming or later removing manually equipped matching sets during live evaluation or startup reconstruction.
-- Gives rune-specific queue entries deterministic precedence over migrated base-item wildcards, distinguishes physical rune-copy swaps from slot-scoped explicit re-engraving under either inventory-event order, and preserves saved item fields in tooltip membership.
-- Keeps the newest manual set request authoritative over duplicate automatic work and pauses the lock watchdog during casting or ordinary multi-pass swaps so only persistent inventory locks can time out.
+- Uses ordered event frames with per-slot restore ownership so shared Ghostwolf/Mounted sets, buried removal, repeated sets, Zone-under-Mounted rebasing, stale generations, and manual gear changes cannot restore over a newer owner.
+- Captures legacy event order and restore history before defaults load, backs up ambiguous state instead of guessing, and suspends automatic swaps without rewriting unknown future schemas.
+- Routes set, popup, AutoQueue, deferred, empty-slot, and two-hand moves through one serialized, observed transaction with exact identity checks, preflight space validation, bounded retry, and unified cleanup. ItemRack never changes the global Sound_EnableSFX setting.
+- Resolves queue owner/list/enabled state atomically and migrates all legacy queue entries with backups, unknown-field preservation, corruption quarantine, and fail-closed gap and future-schema handling.
+- Preserves the newest manual set choice or explicit toggle-off over pending automatic or specialization work even when readiness, casting, or locks delay it, and cancels deferred automatic work whose authorizing generation has ended.
+- Uses one generation-aware cooldown authority for buttons, popups, queues, and notifications, while coalescing inventory and protected post-combat refresh work.
+- Replaces inherited Blizzard action-button templates with ItemRack-owned button templates, keeps slot 20 visual-only, and avoids forcing GameTooltip:Show() from insecure hooks.
+- Uses an empty protected carrier for bound sets and one captured set-level request. Protected requests reconcile after combat; ItemRack no longer emits synthetic /equipslot [combat] macros or promises arbitrary in-combat set swaps.
+- Replays deferred Script events once with their original arguments and preserves exact-first rune-copy identity across queue, swap, tooltip, and engraving paths.
 - Splits stable delivery into a locally installed production candidate and an approved public finalization, with exact committed/tagged-tree packages, verified manifests, and a hard failure when no local client target exists.
 
 __ New in 4.43-beta4 - By Bl4ut0 __
@@ -33,7 +39,7 @@ __ New in 4.43-beta2 - By Bl4ut0 __
 - AutoQueue now skips queue candidates that exist only in an equipped paired ring/trinket slot and continues to the next ready item carried in bags; additional matching bag copies remain eligible. Reported by Bloodasha on CurseForge.
 - Cleared the inherited ItemRackButton20Count action-button region so numeric counts can no longer cover the current set name. Reported by smackadack on CurseForge.
 - Restored the set button's Classic Era right-click behavior: with "Menu on right click" enabled, right-click toggles the gear-set list, while Alt+Right-click still opens the Sets options tab. Reported by gizmo22 on CurseForge.
-- Fixed bound set and weapon swaps being ignored during combat on Classic Era/Season of Discovery 1.15.9 and TBC Anniversary 2.5.6 by explicitly configuring secure set-binding buttons for key-up activation (PR #20, contributed by Hamdor).
+- Fixed bound set and weapon swaps being ignored during combat on Classic Era/Season of Discovery 1.15.9 and TBC Anniversary 2.5.6 by explicitly configuring secure set-binding buttons for key-up activation (PR #20, contributed by Hamdor). Superseded in Development: bindings now capture one set-level request and reconcile it after combat instead of issuing synthetic in-combat /equipslot macros.
 - Changed the AutoQueue diagnostic flight recorder to collect entries only while Queue diagnostics or master debugging is enabled, and to release its buffer when tracing is disabled.
 - Initialized all supported debug tags explicitly and added diagnostic tracking markers so per-tag toggles and support dumps remain consistent.
 

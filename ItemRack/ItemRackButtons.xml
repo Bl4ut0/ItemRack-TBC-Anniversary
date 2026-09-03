@@ -23,10 +23,26 @@
 		</Layers>
 	</Frame>
 
-	<CheckButton name="ItemRackButtonsTemplate" movable="true" parent="UIParent" inherits="ActionBarButtonTemplate" hidden="true" virtual="true">
+	<!--
+		ItemRack owns its presentation regions. Only the inventory-slot variant
+		inherits SecureActionButtonTemplate; neither variant joins Blizzard's
+		action-bar mixins, event dispatchers, range updater, or overlay-glow state.
+	-->
+	<CheckButton name="ItemRackButtonVisualTemplate" movable="true" parent="UIParent" hidden="true" virtual="true">
+		<Size x="36" y="36"/>
 		<Layers>
-			<Layer level="BORDER">
-				<Texture name="$parentItemRackIcon"/>
+			<Layer level="ARTWORK">
+				<Texture name="$parentItemRackIcon">
+					<Anchors>
+						<Anchor point="TOPLEFT"><Offset x="2" y="-2"/></Anchor>
+						<Anchor point="BOTTOMRIGHT"><Offset x="-2" y="2"/></Anchor>
+					</Anchors>
+					<TexCoords left="0.07" right="0.93" top="0.07" bottom="0.93"/>
+				</Texture>
+				<Texture name="$parentBorder" file="Interface\Buttons\UI-ActionButton-Border" hidden="true" alphaMode="ADD">
+					<Size x="62" y="62"/>
+					<Anchors><Anchor point="CENTER"/></Anchors>
+				</Texture>
 			</Layer>
 			<Layer level="OVERLAY">
 				<Texture name="$parentQueue" file="Interface\Cursor\Interact" hidden="true">
@@ -35,15 +51,43 @@
 						<Anchor point="TOPLEFT"/>
 					</Anchors>
 				</Texture>
+				<FontString name="$parentCount" inherits="NumberFontNormal" justifyH="RIGHT">
+					<Anchors><Anchor point="BOTTOMRIGHT"><Offset x="-2" y="2"/></Anchor></Anchors>
+				</FontString>
+				<FontString name="$parentHotKey" inherits="NumberFontNormalSmall" justifyH="RIGHT">
+					<Anchors><Anchor point="TOPRIGHT"><Offset x="-2" y="-2"/></Anchor></Anchors>
+				</FontString>
+				<FontString name="$parentName" inherits="GameFontHighlightSmall" justifyH="CENTER">
+					<Size x="36" y="12"/>
+					<Anchors><Anchor point="BOTTOM"><Offset x="0" y="2"/></Anchor></Anchors>
+				</FontString>
 			</Layer>
 		</Layers>
-			<Scripts>
+		<Frames>
+			<Cooldown name="$parentCooldown" inherits="CooldownFrameTemplate">
+				<Anchors>
+					<Anchor point="TOPLEFT"><Offset x="2" y="-2"/></Anchor>
+					<Anchor point="BOTTOMRIGHT"><Offset x="-2" y="2"/></Anchor>
+				</Anchors>
+			</Cooldown>
+		</Frames>
+		<NormalTexture name="$parentNormalTexture" file="Interface\Buttons\UI-Quickslot2">
+			<Size x="64" y="64"/>
+			<Anchors><Anchor point="CENTER"/></Anchors>
+		</NormalTexture>
+		<PushedTexture name="$parentPushedTexture" file="Interface\Buttons\UI-Quickslot-Depress">
+			<Anchors><Anchor point="TOPLEFT"/><Anchor point="BOTTOMRIGHT"/></Anchors>
+		</PushedTexture>
+		<HighlightTexture name="$parentHighlightTexture" file="Interface\Buttons\ButtonHilight-Square" alphaMode="ADD">
+			<Anchors><Anchor point="TOPLEFT"/><Anchor point="BOTTOMRIGHT"/></Anchors>
+		</HighlightTexture>
+		<CheckedTexture name="$parentCheckedTexture" file="Interface\Buttons\CheckButtonHilight" alphaMode="ADD">
+			<Anchors><Anchor point="TOPLEFT"/><Anchor point="BOTTOMRIGHT"/></Anchors>
+		</CheckedTexture>
+		<Scripts>
 			<OnLoad>
 				ItemRack.ButtonOnLoad(self)
 			</OnLoad>
-			<OnEvent>
-				-- Do nothing to prevent ActionButton_OnEvent from running
-			</OnEvent>
 			<PostClick>
 				ItemRack.ButtonPostClick(self,button)
 			</PostClick>
@@ -61,6 +105,7 @@
 			</OnLeave>
 		</Scripts>
 	</CheckButton>
+	<CheckButton name="ItemRackButtonsTemplate" inherits="ItemRackButtonVisualTemplate,SecureActionButtonTemplate" virtual="true"/>
 	<CheckButton name="ItemRackButton0" inherits="ItemRackButtonsTemplate" id="0"/>
 	<CheckButton name="ItemRackButton1" inherits="ItemRackButtonsTemplate" id="1"/>
 	<CheckButton name="ItemRackButton2" inherits="ItemRackButtonsTemplate" id="2"/>
@@ -81,7 +126,7 @@
 	<CheckButton name="ItemRackButton17" inherits="ItemRackButtonsTemplate" id="17"/>
 	<CheckButton name="ItemRackButton18" inherits="ItemRackButtonsTemplate" id="18"/>
 	<CheckButton name="ItemRackButton19" inherits="ItemRackButtonsTemplate" id="19"/>
-	<CheckButton name="ItemRackButton20" inherits="ItemRackButtonsTemplate" id="20"/>
+	<CheckButton name="ItemRackButton20" inherits="ItemRackButtonVisualTemplate" id="20"/>
 
 	<Frame parent="ItemRackButton0" inherits="ItemRackTimeTemplate"/>
 	<Frame parent="ItemRackButton1" inherits="ItemRackTimeTemplate"/>
@@ -105,7 +150,58 @@
 	<Frame parent="ItemRackButton19" inherits="ItemRackTimeTemplate"/>
 	<Frame parent="ItemRackButton20" inherits="ItemRackTimeTemplate"/>
 
-
+	<!-- Visual-only popup item. It intentionally has no secure/action template. -->
+	<CheckButton name="ItemRackMenuItemTemplate" virtual="true">
+		<Size x="36" y="36"/>
+		<Layers>
+			<Layer level="ARTWORK">
+				<Texture name="$parentIcon">
+					<Anchors>
+						<Anchor point="TOPLEFT"><Offset x="2" y="-2"/></Anchor>
+						<Anchor point="BOTTOMRIGHT"><Offset x="-2" y="2"/></Anchor>
+					</Anchors>
+					<TexCoords left="0.07" right="0.93" top="0.07" bottom="0.93"/>
+				</Texture>
+				<Texture name="$parentBorder" file="Interface\Buttons\UI-ActionButton-Border" hidden="true" alphaMode="ADD">
+					<Size x="62" y="62"/>
+					<Anchors><Anchor point="CENTER"/></Anchors>
+				</Texture>
+			</Layer>
+			<Layer level="OVERLAY">
+				<FontString name="$parentCount" inherits="NumberFontNormal" justifyH="RIGHT">
+					<Anchors><Anchor point="BOTTOMRIGHT"><Offset x="-2" y="2"/></Anchor></Anchors>
+				</FontString>
+				<FontString name="$parentHotKey" inherits="NumberFontNormalSmall" justifyH="RIGHT">
+					<Anchors><Anchor point="TOPRIGHT"><Offset x="-2" y="-2"/></Anchor></Anchors>
+				</FontString>
+				<FontString name="$parentName" inherits="GameFontHighlightSmall" justifyH="CENTER">
+					<Size x="36" y="12"/>
+					<Anchors><Anchor point="BOTTOM"><Offset x="0" y="2"/></Anchor></Anchors>
+				</FontString>
+			</Layer>
+		</Layers>
+		<Frames>
+			<Cooldown name="$parentCooldown" inherits="CooldownFrameTemplate">
+				<Anchors>
+					<Anchor point="TOPLEFT"><Offset x="2" y="-2"/></Anchor>
+					<Anchor point="BOTTOMRIGHT"><Offset x="-2" y="2"/></Anchor>
+				</Anchors>
+			</Cooldown>
+		</Frames>
+		<NormalTexture name="$parentNormalTexture" file="Interface\Buttons\UI-Quickslot2">
+			<Size x="64" y="64"/>
+			<Anchors><Anchor point="CENTER"/></Anchors>
+		</NormalTexture>
+		<PushedTexture name="$parentPushedTexture" file="Interface\Buttons\UI-Quickslot-Depress">
+			<Anchors><Anchor point="TOPLEFT"/><Anchor point="BOTTOMRIGHT"/></Anchors>
+		</PushedTexture>
+		<HighlightTexture name="$parentHighlightTexture" file="Interface\Buttons\ButtonHilight-Square" alphaMode="ADD">
+			<Anchors><Anchor point="TOPLEFT"/><Anchor point="BOTTOMRIGHT"/></Anchors>
+		</HighlightTexture>
+		<CheckedTexture name="$parentCheckedTexture" file="Interface\Buttons\CheckButtonHilight" alphaMode="ADD">
+			<Anchors><Anchor point="TOPLEFT"/><Anchor point="BOTTOMRIGHT"/></Anchors>
+		</CheckedTexture>
+	</CheckButton>
 
 	<Button name="ItemRackButtonMenuTemplate" virtual="true">
 		<Size>

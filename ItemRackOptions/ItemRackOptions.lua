@@ -790,8 +790,10 @@ function ItemRackOpt.DeleteSet()
 		end
 		local button = _G[buttonName]
 		if button then
-			button:SetAttribute("macrotext","")
-			button:SetScript("PostClick",nil)
+			ItemRack.NeutralizeSetBindingButton(button)
+		end
+		if ItemRack.PendingSetBindingRequest and ItemRack.PendingSetBindingRequest.setname == setname then
+			ItemRack.PendingSetBindingRequest = nil
 		end
 		ItemRackUser.Sets[setname] = nil
 	end
@@ -1310,9 +1312,14 @@ function ItemRackOpt.ToggleSoundSettings()
 end
 
 function ItemRackOpt.BindSet()
+	if InCombatLockdown() then
+		ItemRack.Print("Sorry, you can't bind keys while in combat.")
+		return
+	end
 	local setname = ItemRackOptSetsName:GetText()
 	ItemRackOpt.Binding = { type="Set", name="Set \""..setname.."\"", buttonName=ItemRack.GetSetBindingButtonName(setname) }
 	ItemRackOpt.Binding.button = _G[ItemRackOpt.Binding.buttonName] or CreateFrame("Button",ItemRackOpt.Binding.buttonName,nil,"SecureActionButtonTemplate")
+	ItemRack.ConfigureSetBindingButton(ItemRackOpt.Binding.button,setname)
 	
 	ItemRackOptBindFrame:Show()	
 end
@@ -1699,8 +1706,9 @@ function ItemRackOpt.SoundListScrollFrameUpdate()
 	end
 	table.sort(activeEvents)
 	
-	-- We have 2 global sounds + the dynamically enabled events
-	local totalItems = 2 + #activeEvents
+	-- One global swap-sound option plus the dynamically enabled events.
+	-- ItemRack never toggles the client's global SFX CVar for presentation work.
+	local totalItems = 1 + #activeEvents
 	
 	-- We reduced the display from 10 items to 9 to make room for the two-line Active Framework text
 	FauxScrollFrame_Update(ItemRackOptSoundListScrollFrame, totalItems, 9, 24)
@@ -1738,15 +1746,8 @@ function ItemRackOpt.SoundListScrollFrameUpdate()
 						StaticPopup_Show("ITEMRACK_MISSING_LSI")
 					end
 				end
-			elseif idx == 2 then
-				checkText:SetText("Silence Action Bar")
-				checkText:SetTextColor(1, 0.82, 0)
-				thisCheck:SetChecked(ItemRackSettings.DisableActionBarSound == "ON")
-				thisCheck.OnClickAction = function(check)
-					ItemRackSettings.DisableActionBarSound = check
-				end
-			elseif idx <= 2 + #activeEvents then
-				local evName = activeEvents[idx - 2]
+			elseif idx <= 1 + #activeEvents then
+				local evName = activeEvents[idx - 1]
 				checkText:SetText(evName)
 				checkText:SetTextColor(1, 1, 1)
 				thisCheck:SetChecked(ItemRackEvents[evName].DisableSound)
@@ -1768,7 +1769,7 @@ function ItemRackOpt.SoundListOnShow()
 		ItemRackOptSoundTestButton:SetText("Test")
 		ItemRackOptSoundTestButton:Show()
 	else
-		ItemRackOptSoundActiveFramework:SetText("Active Mute Framework:\nCVar Fallback")
+		ItemRackOptSoundActiveFramework:SetText("Swap Sound Muting:\nLibSoundIndex Required")
 		ItemRackOptSoundActiveFramework:SetTextColor(1.0, 0.5, 0.0)
 		ItemRackOptSoundTestButton:SetText("Get Addon")
 		ItemRackOptSoundTestButton:Show()
@@ -1959,20 +1960,26 @@ function ItemRackOpt.ValidateSortButtons()
 		ItemRackOptSortMoveBottom:Disable()
 	end
 	local idx = FauxScrollFrame_GetOffset(ItemRackOptSortListScrollFrame)
-	if selected and list[selected] and list[selected]~=0 then
+	local selectedEntry = selected and list and list[selected]
+	if selectedEntry then
 		ItemRackOptSortMoveDelete:Enable()
-		-- display delay/priority/etc
-		ItemRackOptItemStatsFrame:Show()
-		ItemRackOptSlotQueueName:Hide()
-		ItemRackOptQueueEnable:Hide()
-		local baseID = ItemRack.GetIRString(list[selected].id,true)
-
-		ItemRackOptItemStatsPriority:SetChecked(list[selected].id ~= "0" and list[selected].priority or false)
-		ItemRackOptItemStatsKeepEquipped:SetChecked(list[selected].id ~= "0" and list[selected].keep or false)
-		ItemRackOptItemStatsSwapOnUse:SetChecked(list[selected].id ~= "0" and list[selected].swapOnUse or false)
-		ItemRackOptItemStatsSwapInEnable:SetChecked(list[selected].id ~= "0" and list[selected].swapInEnabled or false)
-		ItemRackOptItemStatsSwapInDelay:SetText((list[selected].id ~= "0" and list[selected].swapIn) or "30")
-		ItemRackOptItemStatsDelay:SetText((list[selected].id ~= "0" and list[selected].delay) or "0")
+		if selectedEntry.id ~= 0 then
+			-- display delay/priority/etc for item entries only
+			ItemRackOptItemStatsFrame:Show()
+			ItemRackOptSlotQueueName:Hide()
+			ItemRackOptQueueEnable:Hide()
+			ItemRackOptItemStatsPriority:SetChecked(selectedEntry.priority or false)
+			ItemRackOptItemStatsKeepEquipped:SetChecked(selectedEntry.keep or false)
+			ItemRackOptItemStatsSwapOnUse:SetChecked(selectedEntry.swapOnUse or false)
+			ItemRackOptItemStatsSwapInEnable:SetChecked(selectedEntry.swapInEnabled or false)
+			ItemRackOptItemStatsSwapInDelay:SetText(selectedEntry.swapIn or "30")
+			ItemRackOptItemStatsDelay:SetText(selectedEntry.delay or "0")
+		else
+			-- The stop marker can be deleted or moved, but has no item settings.
+			ItemRackOptItemStatsFrame:Hide()
+			ItemRackOptSlotQueueName:Show()
+			ItemRackOptQueueEnable:Show()
+		end
 	else
 		ItemRackOptSortMoveDelete:Disable()
 		ItemRackOptItemStatsFrame:Hide()

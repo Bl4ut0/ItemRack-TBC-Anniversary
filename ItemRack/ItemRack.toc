@@ -3,7 +3,7 @@
 ## IconTexture: Interface\AddOns\ItemRack\ItemRackIcon
 ## Version: Dev
 ## Author: Gello - Classic by Rottenbeer,Roadblock - Anniversary by Bl4ut0
-## SavedVariables: ItemRackSettings, ItemRackEvents
+## SavedVariables: ItemRackSettings, ItemRackItems, ItemRackEvents
 ## SavedVariablesPerCharacter: ItemRackUser
 ## OptionalDeps: Masque, LibSoundIndex
 ## X-Curse-Project-ID: 1441253
@@ -12,6 +12,11 @@
 Libs\Libs.xml
 
 ItemRack.lua
+ItemRackTransaction.lua
+ItemRackEventState.lua
+ItemRackQueuePolicy.lua
+ItemRackQueueMigration.lua
+ItemRackCooldownState.lua
 ItemRack.xml
 ItemRackButtons.lua
 ItemRackButtons.xml

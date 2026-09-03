@@ -23,7 +23,7 @@ This addon is based on the original **ItemRack Classic** maintained by Rottenbee
 3. You should have two folders:
    - `ItemRack/`
    - `ItemRackOptions/`
-4. **(Highly Recommended)** Install [LibSoundIndex](https://www.curseforge.com/wow/addons/libsoundindex) so that ItemRack can efficiently mute individual gear swap sound effects without affecting combat alerts or UI. If not installed, ItemRack will temporarily silence the game's Master SFX channel during a swap as a fallback.
+4. **(Optional)** Install [LibSoundIndex](https://www.curseforge.com/wow/addons/libsoundindex) to mute individual gear-swap sounds without affecting combat alerts or UI. ItemRack never changes the game's global SFX setting when the library is absent.
 5. Restart WoW or type `/reload` if already in-game
 6. ItemRack should appear as equipment slot buttons on your character panel
 

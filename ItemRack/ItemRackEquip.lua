@@ -52,6 +52,7 @@ function ItemRack.StartSetsWaitingWatchdog()
 
 		local automaticSwapBlocked = ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked()
 		local ordinarySwapBlocked = ItemRack.SetSwapping or ItemRack.NowCasting
+			or (ItemRack.HasActiveEquipmentTransaction and ItemRack.HasActiveEquipmentTransaction())
 		local hardLocked
 		if not automaticSwapBlocked and not ordinarySwapBlocked then
 			hardLocked = ItemRack.AnythingLocked()
@@ -409,11 +410,111 @@ function ItemRack.PreventLiveOldsetCycle(targetSet, proposedOldSet)
 	end
 end
 
+function ItemRack.PreflightSetSwap(setname)
+	local set = ItemRackUser.Sets[setname]
+	if not set or type(set.equip) ~= "table" then
+		return nil, "invalid_set"
+	end
+	ItemRack.ClearLockList()
+	local swap = {}
+	local missing = {}
+	local requiredFreeSlots = 0
+
+	-- Reserve already-satisfied physical copies before locating the remaining
+	-- targets.  Without this, one worn item can be incorrectly promised to two
+	-- slots that request the same identity.
+	for slot=0,19 do
+		local target = set.equip[slot]
+		if target and target ~= 0
+		and ItemRack.MatchesStoredItemID(target,ItemRack.GetID(slot))
+		and ItemRack.LockList[-2] then
+			ItemRack.LockList[-2][slot] = 1
+		end
+	end
+
+	for targetSlot=0,19 do
+		local target = set.equip[targetSlot]
+		if target ~= nil then
+			local current = ItemRack.GetID(targetSlot)
+			if target == 0 then
+				if current ~= 0 then
+					swap[targetSlot] = 0
+					requiredFreeSlots = requiredFreeSlots + 1
+				end
+			elseif not ItemRack.MatchesStoredItemID(target,current) then
+				local inv,bag,slot = ItemRack.FindItem(target,1)
+				if not inv and not bag then
+					table.insert(missing,{ slot=targetSlot, id=target })
+				else
+					swap[targetSlot] = target
+				end
+			end
+		end
+	end
+
+	-- A non-Titan's-Grip two-hander needs a separate temporary bag slot for an
+	-- equipped offhand unless that offhand was already counted as an explicit
+	-- empty target.
+	local mainTarget = set.equip[16]
+	if mainTarget and mainTarget ~= 0 and swap[16]
+	and select(3,ItemRack.GetInfoByID(mainTarget)) == "INVTYPE_2HWEAPON"
+	and GetInventoryItemLink("player",17) and set.equip[17] ~= 0 then
+		local canDualWieldTwoHand = false
+		if ItemRack.HasTitansGrip then
+			local _,sourceBag,sourceSlot = ItemRack.FindItem(mainTarget)
+			local subtype = sourceBag and select(7,GetItemInfo(GetContainerItemLink(sourceBag,sourceSlot)))
+			canDualWieldTwoHand = not ItemRack.NoTitansGrip[subtype or ""]
+		end
+		if not canDualWieldTwoHand then
+			requiredFreeSlots = requiredFreeSlots + 1
+		end
+	end
+
+	local freeSlots = 0
+	for bag=4,0,-1 do
+		if ItemRack.ValidBag(bag) then
+			for slot=1,GetContainerNumSlots(bag) do
+				if not GetContainerItemLink(bag,slot) then
+					freeSlots = freeSlots + 1
+				end
+			end
+		end
+	end
+	ItemRack.ClearLockList()
+
+	if #missing > 0 then
+		local labels = {}
+		for _,entry in ipairs(missing) do
+			table.insert(labels,"slot "..tostring(entry.slot).." ["..tostring(ItemRack.GetInfoByID(entry.id)).."]")
+		end
+		return nil, "missing_items: "..table.concat(labels,", "), missing
+	end
+	if freeSlots < requiredFreeSlots then
+		return nil, "no_space: requires "..tostring(requiredFreeSlots)..", available "..tostring(freeSlots)
+	end
+	return swap
+end
+
 function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	ItemRack.Debug("Equip", "EquipSet invoked for set:", setname or "nil")
 	if not setname or not ItemRackUser.Sets[setname] then
 		ItemRack.Print("Set \""..tostring(setname).."\" doesn't exist.")
 		return
+	end
+	-- A set-associated specialization cast may still be in progress. Capture a
+	-- newer explicit set choice before any readiness, lock, combat, or casting
+	-- return so the destination specialization event cannot overwrite it. All
+	-- set-selection entry points converge here; automatic and internal replays
+	-- carry separate provenance and must not supersede manual intent.
+	local pendingSpecSet = ItemRack.PendingSpecSet
+	if pendingSpecSet and not ItemRack.IsEventEquipment and not ItemRack.IsDeferredEquipment
+	and string.sub(setname,1,1) ~= "~" then
+		pendingSpecSet.latestManualSet = setname
+		if ItemRack.ReleaseEventSlotsForManualChange then
+			ItemRack.ReleaseEventSlotsForManualChange(ItemRackUser.Sets[setname].equip)
+		end
+		ItemRack.Debug("Events", "Newer manual set superseded associated spec-set intent:",
+			pendingSpecSet.setname, "->", setname)
 	end
 	local unresolvedSetSlot
 	if ItemRackUser.EnableQueues == "ON" and ItemRack.QueueStateReady == true then
@@ -425,13 +526,32 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 		end
 	end
 	if (ItemRackUser.EnableQueues == "ON" and ItemRack.QueueStateReady ~= true) or unresolvedSetSlot then
-		ItemRack.PendingQueueEquipSet = {
+		ItemRack.PendingQueueRequestSequence = (ItemRack.PendingQueueRequestSequence or 0) + 1
+		local eventPlan = ItemRack.IsEventEquipment and ItemRack.EventFramePlans
+			and ItemRack.EventFramePlans[setname]
+		local pending = {
+			id = ItemRack.PendingQueueRequestSequence,
 			setname = setname,
 			disableSound = disableSound,
 			isSecureKeybind = isSecureKeybind,
 			isEventEquipment = ItemRack.IsEventEquipment and true or nil,
-			isDeferredEquipment = ItemRack.IsDeferredEquipment and true or nil
+			isDeferredEquipment = ItemRack.IsDeferredEquipment and true or nil,
+			isAutomatic = (ItemRack.IsEventEquipment or ItemRack.IsDeferredEquipment) and true or nil,
+			eventFrameRevision = eventPlan and eventPlan.revision or nil,
 		}
+		local existing = ItemRack.PendingQueueEquipSet
+		if existing and pending.isAutomatic and not existing.isAutomatic then
+			ItemRack.Debug("Equip", "Manual pending set retained over automatic request:", existing.setname, setname)
+			if pending.eventFrameRevision and ItemRack.EventFramePlanFinished then
+				ItemRack.EventFramePlanFinished(setname,false,"manual_pending_precedence")
+			end
+			return "superseded"
+		end
+		if existing then
+			ItemRack.CancelPendingQueueEquipSet(existing,
+				pending.isAutomatic and "newer_automatic_intent" or "newer_manual_intent")
+		end
+		ItemRack.PendingQueueEquipSet = pending
 		ItemRack.PendingQueueStateEventReason = "Deferred EquipSet"
 		if ItemRack.ScheduleQueueStateRetry then
 			ItemRack.ScheduleQueueStateRetry()
@@ -440,12 +560,34 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 			ItemRack.ScheduleEquippedStateRetry()
 		end
 		ItemRack.Debug("Equip", "EquipSet deferred until exact equipped state is ready:", setname, unresolvedSetSlot or "")
-		return
+		return "deferred"
 	end
-	ItemRack.PendingQueueEquipSet = nil
-	if ItemRack.SetSwapping or ItemRack.AnythingLocked() then
+	local existingPending = ItemRack.PendingQueueEquipSet
+	if existingPending then
+		local incomingAutomatic = (ItemRack.IsEventEquipment or ItemRack.IsDeferredEquipment) and true or nil
+		if incomingAutomatic and not existingPending.isAutomatic then
+			ItemRack.Debug("Equip", "Ready automatic set deferred behind manual pending intent:", setname)
+			local eventPlan = ItemRack.IsEventEquipment and ItemRack.EventFramePlans
+				and ItemRack.EventFramePlans[setname]
+			if eventPlan and ItemRack.EventFramePlanFinished then
+				ItemRack.EventFramePlanFinished(setname,false,"manual_pending_precedence")
+			end
+			return "superseded"
+		end
+		ItemRack.CancelPendingQueueEquipSet(existingPending,
+			incomingAutomatic and "newer_automatic_intent" or "newer_manual_intent")
+	end
+	if ItemRack.SetSwapping or ItemRack.HasActiveEquipmentTransaction() or ItemRack.AnythingLocked() then
 		local blockReason = ItemRack.SetSwapping and ("SetSwapping("..tostring(ItemRack.SetSwapping)..")") or ItemRack.GetLockedReason()
 		ItemRack.Debug("Equip", "EquipSet deferred set:", setname, "- locked item:", blockReason)
+		local eventPlan = ItemRack.IsEventEquipment and ItemRack.EventFramePlans
+			and ItemRack.EventFramePlans[setname]
+		if eventPlan and ItemRack.EventFramePlanFinished then
+			-- Canonical automatic intent is already retained as frame targets. Do
+			-- not duplicate it into the unversioned legacy waiting queue.
+			ItemRack.EventFramePlanFinished(setname,false,"event_plan_inventory_busy")
+			return "deferred"
+		end
 		-- a swap is in progress, add this set to the wait list and leave
 		ItemRack.AddSetToSetsWaiting(setname,ItemRack.EquipSet, disableSound, isSecureKeybind)
 		return
@@ -455,16 +597,20 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	for i in pairs(swap) do
 		swap[i] = nil
 	end
-	local inv,bag,slot
-	local couldntFind
 	local inCombat = InCombatLockdown()
 	local isInternalSet = setname and string.sub(setname, 1, 1) == "~" -- Internal sets like ~Unequip, ~CombatQueue, ~DualWieldRetry
+	local plannedSwap, preflightReason = ItemRack.PreflightSetSwap(setname)
+	if not plannedSwap then
+		ItemRack.FailSetSwap(setname, preflightReason, string.match(preflightReason or "","^no_space") and 1 or 4)
+		return
+	end
+	for slot,target in pairs(plannedSwap) do
+		swap[slot] = target
+	end
 	
 	if ItemRack.ManualQueueChoice then
 		for i in pairs(set.equip) do
-			if type(i) == "number" then
-				ItemRack.ManualQueueChoice[i] = nil
-			end
+			if type(i) == "number" then ItemRack.ClearManualQueueChoice(i) end
 		end
 	end
 	if not isInternalSet then
@@ -475,33 +621,23 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 		end
 	end
 	
-	for i in pairs(set.equip) do
-		if type(i) == "number" then
-			if ItemRack.GetID(i)~=set.equip[i] then -- if intended item is not worn (exact match)
-				inv,bag,slot = ItemRack.FindItem(set.equip[i])
-				if not inv and not bag then
-					-- if not found at all, then start/add to list of items not found
-					-- Suppress these messages during combat or for internal sets (they're noise)
-					if set.equip[i] == 0 then
-						swap[i] = 0
-					elseif not inCombat and not isInternalSet then
-						couldntFind = couldntFind or "Could not find: "
-						couldntFind = couldntFind.."["..tostring(ItemRack.GetInfoByID(set.equip[i])).."] "
-					end
-				elseif inv~=i then -- and finding intended item doesn't point to worn
-					swap[i] = set.equip[i] -- then note this item for a swap
-				end
-			end
-		end
-	end
-	ItemRack.Print(couldntFind) -- if couldntFind is nil then nothing will print
- 
 	-- Snapshot current gear BEFORE checking if set is already equipped.
 	-- Even when no swaps are needed (set already worn), we must record what was
 	-- previously equipped so that UnequipSet can restore it later.
 	-- Without this, events like "stop moving" or "leave zone" find an empty
 	-- set.old table and silently fail to restore any gear.
 	if not isInternalSet then
+		ItemRack.PendingSetHistory = ItemRack.PendingSetHistory or {}
+		if not ItemRack.PendingSetHistory[setname] then
+			local previousOld = {}
+			for slot,id in pairs(set.old or {}) do previousOld[slot] = id end
+			ItemRack.PendingSetHistory[setname] = {
+				hadOld = set.old ~= nil,
+				old = previousOld,
+				oldset = set.oldset,
+				currentSet = ItemRackUser.CurrentSet,
+			}
+		end
 		set.old = set.old or {}
 		if ItemRackUser.CurrentSet == setname and next(set.old) then
 			-- Set is already actively tracking History. Do not overwrite.
@@ -511,6 +647,9 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 				set.old[i] = nil -- wipe old items
 			end
 			local proposedOldSet = ItemRackUser.CurrentSet
+			if proposedOldSet == setname then
+				proposedOldSet = nil
+			end
 			if proposedOldSet and proposedOldSet ~= setname then
 				ItemRack.PreventLiveOldsetCycle(setname, proposedOldSet)
 			end
@@ -539,12 +678,21 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	-- PickupInventoryItem is blocked by the game during InCombatLockdown() for armor, but weapons (16, 17, 18) can swap in combat if not casting/dead
 	if InCombatLockdown() or ItemRack.IsPlayerReallyDead() or ItemRack.NowCasting then
 		local reason = InCombatLockdown() and "combat" or (ItemRack.NowCasting and "casting" or "dead")
+		local eventPlan = ItemRack.IsEventEquipment and ItemRack.EventFramePlans
+			and ItemRack.EventFramePlans[setname]
+		if eventPlan and ItemRack.EventFramePlanFinished then
+			-- The frame reducer remains the sole owner of automatic work. A race
+			-- into combat/casting is retried from its current revision instead of
+			-- leaking anonymous slots into CombatQueue.
+			for slot in pairs(ItemRack.SwapList) do ItemRack.SwapList[slot] = nil end
+			ItemRack.EventFramePlanFinished(setname,false,"event_plan_"..reason)
+			return "deferred"
+		end
 		ItemRack.Debug("Equip", "EquipSet checking swap deferrals: set=" .. tostring(setname) .. " reason=" .. reason .. " slots queued:")
-		local isWeaponOnly = InCombatLockdown() and ItemRack.IsWeaponOnlySet(setname)
 		for i in pairs(swap) do
 			local isWeaponSlot = (i >= 16 and i <= 18)
 			local canSwapWeaponInCombat = InCombatLockdown() and isWeaponSlot and not ItemRack.NowCasting and not ItemRack.IsPlayerReallyDead()
-			local secureMacroMismatch = isWeaponOnly and isSecureKeybind
+			local secureMacroMismatch = isWeaponSlot and isSecureKeybind
 			if canSwapWeaponInCombat and not secureMacroMismatch then
 				ItemRack.Debug("Equip", "  slot " .. tostring(i) .. " -> weapon swap allowed in combat")
 			else
@@ -565,25 +713,20 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 		return
 	end
 
-	if ItemRackUser.Sets[setname].ShowHelm ~= nil then
-		if ItemRackUser.Sets[setname].ShowHelm == 1 then
-			ShowHelm(true)
-		else
-			ShowHelm(false)
-		end
-	end
-	
-	if ItemRackUser.Sets[setname].ShowCloak ~= nil then
-		if ItemRackUser.Sets[setname].ShowCloak == 1 then
-			ShowCloak(true)
-		else
-			ShowCloak(false)
-		end
-	end
-
 	ItemRack.OrderSwaps(swap) -- bump items with unique gems to the end of the line
 
-	ItemRack.IterateSwapList(setname, disableSound) -- run SwapList swaps
+	local iterateResult = ItemRack.IterateSwapList(setname, disableSound) -- submit one observed transaction step
+	if iterateResult == "failed" then
+		return
+	end
+	if ItemRack.ActiveEquipmentTransaction then
+		ItemRack.SetSwapping = setname
+		ItemRack.SetSwappingDisableSound = disableSound
+		ItemRack.SetSwappingIsAutomatic = (ItemRack.IsEventEquipment or ItemRack.IsDeferredEquipment) and true or nil
+		ItemRack.Debug("Equip", "Move submitted; waiting for observed endpoint state:", setname)
+		ItemRack.StartSetSwapTimeout()
+		return
+	end
 	if not next(swap) then
 		if not ItemRack.AnythingLocked() then
 			ItemRack.EndSetSwap(setname)
@@ -606,7 +749,7 @@ function ItemRack.EquipSet(setname, disableSound, isSecureKeybind)
 	-- stuck. The CombatQueue will process them cleanly when combat ends.
 	if InCombatLockdown() then
 		for i in pairs(swap) do
-			ItemRack.AddToCombatQueue(i, swap[i])
+			ItemRack.AddToCombatQueue(i,swap[i])
 			if set.old then
 				set.old[i] = ItemRack.GetID(i)
 				ItemRack.CombatSet = setname
@@ -636,6 +779,17 @@ function ItemRack.StartSetSwapTimeout()
 	end
 	ItemRack.SetSwapTimeout = C_Timer.NewTimer(5, function()
 		if ItemRack.SetSwapping then
+			if ItemRack.ActiveEquipmentTransaction then
+				-- The transaction service owns retry/timeout classification.  This
+				-- watchdog may request an observation, but must never resubmit a move
+				-- merely because an ITEM_LOCK_CHANGED event was lost.
+				ItemRack.SetSwapTimeout = nil
+				ItemRack.ReconcileEquipmentTransaction("set_watchdog")
+				if ItemRack.ActiveEquipmentTransaction and ItemRack.SetSwapping then
+					ItemRack.StartSetSwapTimeout()
+				end
+				return
+			end
 			if ItemRack.SetSwappingIsAutomatic
 			and ItemRack.IsAutomaticSwapBlocked and ItemRack.IsAutomaticSwapBlocked() then
 				ItemRack.SetSwapTimeout = nil
@@ -710,6 +864,10 @@ function ItemRack.GetLockedReason()
 end
 
 function ItemRack.LockChangedDuringSetSwap()
+	if ItemRack.ActiveEquipmentTransaction then
+		ItemRack.ReconcileEquipmentTransaction("set_resume")
+		if ItemRack.ActiveEquipmentTransaction then return end
+	end
 	if not ItemRack.AnythingLocked() then
 		local setname = ItemRack.SetSwapping
 		local disableSound = ItemRack.SetSwappingDisableSound
@@ -718,7 +876,15 @@ function ItemRack.LockChangedDuringSetSwap()
 		ItemRack.SetSwapping = nil
 		ItemRack.SetSwappingDisableSound = nil
 		ItemRack.SetSwappingIsAutomatic = nil
-		ItemRack.IterateSwapList(setname, disableSound)
+		local iterateResult = ItemRack.IterateSwapList(setname, disableSound)
+		if iterateResult == "failed" then return end
+		if ItemRack.ActiveEquipmentTransaction then
+			ItemRack.SetSwapping = setname
+			ItemRack.SetSwappingDisableSound = disableSound
+			ItemRack.SetSwappingIsAutomatic = isAutomatic
+			ItemRack.StartSetSwapTimeout()
+			return
+		end
 
 		-- Re-check: if the second pass locked new items or left work undone,
 		-- re-enter swap-waiting mode instead of immediately starting the next swap.
@@ -753,23 +919,137 @@ function ItemRack.LockChangedDuringSetSwap()
 	end
 end
 
+function ItemRack.FailSetSwap(setname, reason, abortCode)
+	local isEventFramePlan = ItemRack.EventFramePlans and ItemRack.EventFramePlans[setname]
+	if ItemRack.SetSwapTimeout then
+		ItemRack.SetSwapTimeout:Cancel()
+		ItemRack.SetSwapTimeout = nil
+	end
+	ItemRack.SetSwapping = nil
+	ItemRack.SetSwappingDisableSound = nil
+	ItemRack.SetSwappingIsAutomatic = nil
+	ItemRack.AbortSwap = abortCode or 4
+	for slot in pairs(ItemRack.SwapList) do
+		ItemRack.SwapList[slot] = nil
+	end
+	ItemRack.ClearLockList()
+	if setname and ItemRack.SetConfirmedMoves then
+		ItemRack.SetConfirmedMoves[setname] = nil
+	end
+	local history = ItemRack.PendingSetHistory and ItemRack.PendingSetHistory[setname]
+	if history and ItemRackUser.Sets[setname] then
+		local set = ItemRackUser.Sets[setname]
+		if history.hadOld then
+			set.old = {}
+			for slot,id in pairs(history.old) do set.old[slot] = id end
+		else
+			set.old = nil
+		end
+		set.oldset = history.oldset
+		ItemRackUser.CurrentSet = history.currentSet
+		ItemRack.PendingSetHistory[setname] = nil
+	end
+	ItemRack.Debug("Equip", "Set swap failed:", setname or "nil", reason or "unknown")
+	if not isEventFramePlan then
+		ItemRack.Print("Set swap failed for \""..tostring(setname).."\" ("..tostring(reason or "unknown").."). Previous gear was restored when possible.")
+	end
+	if ItemRack.UpdateCurrentSet then
+		C_Timer.After(0,ItemRack.UpdateCurrentSet)
+	end
+	if ItemRack.EventFramePlans and ItemRack.EventFramePlans[setname]
+	and ItemRack.EventFramePlanFinished then
+		ItemRack.EventFramePlanFinished(setname,false,reason)
+	end
+end
+
+function ItemRack.SubmitSetMoves(setname, disableSound, steps)
+	ItemRack.SetConfirmedMoves = ItemRack.SetConfirmedMoves or {}
+	ItemRack.SetConfirmedMoves[setname] = ItemRack.SetConfirmedMoves[setname] or {}
+	local function ContinueSet(request)
+		for _,step in ipairs(request.steps or {}) do
+			if step.status == "confirmed" then
+				table.insert(ItemRack.SetConfirmedMoves[setname],step)
+			end
+		end
+		if ItemRack.SetSwapping == setname then
+			ItemRack.LockChangedDuringSetSwap()
+		end
+	end
+	local function FailSet(request)
+		local failureReason = request.reason or request.status
+		local confirmed = ItemRack.SetConfirmedMoves[setname]
+		if not confirmed or #confirmed == 0 then
+			ItemRack.FailSetSwap(setname, failureReason, 4)
+			return
+		end
+		local rollbackSteps = {}
+		for index=#confirmed,1,-1 do
+			local original = confirmed[index]
+			table.insert(rollbackSteps,ItemRack.NewEquipmentMove(
+				original.to.bag,original.to.slot,original.from.bag,original.from.slot
+			))
+		end
+		ItemRack.SetConfirmedMoves[setname] = nil
+		local function RollbackComplete()
+			ItemRack.FailSetSwap(setname, failureReason, 4)
+		end
+		local function RollbackFailed(rollbackRequest)
+			ItemRack.FailSetSwap(setname, failureReason..":set_rollback_"..tostring(rollbackRequest.reason or rollbackRequest.status), 4)
+		end
+		local rollbackResult, rollbackRequest, rollbackReason = ItemRack.StartEquipmentTransaction({
+			kind = "set_rollback",
+			origin = "recovery",
+			owner = { kind = "set_rollback", setname = setname },
+			steps = rollbackSteps,
+			onComplete = RollbackComplete,
+			onFailure = RollbackFailed,
+		})
+		if rollbackResult == "submitted" then
+			ItemRack.Debug("Equip", "Rolling back previously confirmed set moves:", setname, #rollbackSteps)
+			ItemRack.StartSetSwapTimeout()
+		elseif not rollbackRequest or not rollbackRequest.finished then
+			ItemRack.FailSetSwap(setname, failureReason..":set_rollback_"..tostring(rollbackReason or rollbackResult), 4)
+		end
+	end
+	local eventPlan = ItemRack.EventFramePlans and ItemRack.EventFramePlans[setname]
+	if eventPlan and ItemRackUser.EventState
+	and eventPlan.revision ~= ItemRackUser.EventState.revision then
+		FailSet({ status="failed", reason="stale_event_owner" })
+		return "failed", nil, "stale_event_owner"
+	end
+	local result, request, reason = ItemRack.StartEquipmentTransaction({
+		kind = "set_step",
+		origin = (ItemRack.IsEventEquipment and "event")
+			or (ItemRack.IsDeferredEquipment and "deferred") or "set",
+		owner = { kind = "set", setname = setname },
+		steps = steps,
+		disableSound = disableSound or ItemRackSettings.DisableSwapSound == "ON",
+		onComplete = ContinueSet,
+		onFailure = FailSet,
+	})
+	if result ~= "submitted" then
+		ItemRack.Debug("Equip", "Set move was not submitted:", setname, reason or result)
+		if not request or not request.finished then
+			ItemRack.FailSetSwap(setname, reason or result, 4)
+		end
+	end
+	return result, request, reason
+end
+
 function ItemRack.IterateSwapList(setname, disableSound)
 	ItemRack.Debug("Equip", "IterateSwapList running for set:", setname)
 	local set = ItemRackUser.Sets[setname]
 	local swap = ItemRack.SwapList
+	if ItemRack.ActiveEquipmentTransaction then
+		return "pending"
+	end
 
-	local useSound = GetCVar("Sound_EnableSFX")
-	local overrideSound = false
-	local usedSurgicalMute = false
-	if (disableSound or ItemRackSettings.DisableSwapSound == "ON") and useSound == "1" then
-		-- Try surgical muting via LibSoundIndex (mutes equip and UI sounds)
-		if ItemRack.MuteSwapSounds(1.5) then
-			usedSurgicalMute = true
-		else
-			-- Fallback: blunt CVar mute (silences ALL SFX)
-			SetCVar("Sound_EnableSFX", "0")
-			overrideSound = true
-		end
+	if disableSound or ItemRackSettings.DisableSwapSound == "ON" then
+		-- Never modify Sound_EnableSFX as a fallback. A global CVar write cannot be
+		-- scoped safely across early returns, Lua errors, overlapping swaps, or a
+		-- user's own sound-setting changes. LibSoundIndex is deliberately optional;
+		-- without it, the swap proceeds with normal sound.
+		pcall(ItemRack.MuteSwapSounds, 1.5)
 	end
 
 	ItemRack.AbortSwap = nil
@@ -785,22 +1065,30 @@ function ItemRack.IterateSwapList(setname, disableSound)
 		if skip or ItemRack.AbortSwap then
 			skip = nil
 		elseif swap[k] then
-			if swap[k]==0 then -- if intended to be empty
+			if swap[k] ~= 0 and ItemRack.MatchesStoredItemID(swap[k],ItemRack.GetID(i)) then
+				-- A prior observed step may already have fulfilled this slot (for
+				-- example the other half of a ring/trinket exchange).
+				swap[k] = nil
+			elseif swap[k]==0 then -- if intended to be empty
 				bag,slot = ItemRack.FindSpace()
 				if bag then
 					if set.old then
 						if set.old[i] == nil then set.old[i] = ItemRack.GetID(i) end
 					end
 					ItemRack.Debug("Equip", "IterateSwapList emptying slot", i, "to bag", bag, "slot", slot)
-					ItemRack.MoveItem(i,nil,bag,slot) -- empty slot
-					if not ItemRack.AbortSwap then
+					local result = ItemRack.SubmitSetMoves(setname, disableSound, {
+						ItemRack.NewEquipmentMove(i,nil,bag,slot),
+					})
+					if result == "submitted" then
 						swap[k] = nil
+						return "submitted"
+					else
+						return "failed"
 					end
 				else
 					ItemRack.Debug("Equip", "IterateSwapList aborted: No space to empty slot", i)
-					ItemRack.AbortSwap = 1
-					ItemRack.ClearLockList()
-					return
+					ItemRack.FailSetSwap(setname, "no_space", 1)
+					return "failed"
 				end
 			else
 				inv,bag,slot = ItemRack.FindItem(swap[k],1)
@@ -821,37 +1109,43 @@ function ItemRack.IterateSwapList(setname, disableSound)
 							if set.old[i] == nil then set.old[i] = ItemRack.GetID(i) end
 							if set.old[i+1] == nil then set.old[i+1] = ItemRack.GetID(i+1) end
 						end
+						local steps = {}
 						if GetInventoryItemLink("player",17) then
 							local freeBag,freeSlot = ItemRack.FindSpace()
 							if freeBag then
 								ItemRack.Debug("Equip", "IterateSwapList emptying offhand to bag", freeBag, "slot", freeSlot)
-								ItemRack.MoveItem(17,nil,freeBag,freeSlot)
+								table.insert(steps,ItemRack.NewEquipmentMove(17,nil,freeBag,freeSlot))
 							else
 								ItemRack.Debug("Equip", "IterateSwapList aborted: No space for offhand removal.")
-								ItemRack.AbortSwap=1
+								ItemRack.FailSetSwap(setname, "no_space_for_offhand", 1)
+								return "failed"
 							end
 						end
-						if not ItemRack.AbortSwap then
-							ItemRack.Debug("Equip", "IterateSwapList swapping 2H weapon from bag", bag, "slot", slot, "to slot 16")
-							ItemRack.MoveItem(bag,slot,16,nil)
-							if not ItemRack.AbortSwap and CursorHasItem() then
-								ItemRack.Debug("Equip", "IterateSwapList putting displaced 1H weapon on cursor into bag", bag, "slot", slot)
-								PickupContainerItem(bag, slot)
-							end
-						end
-						if not ItemRack.AbortSwap then
+						ItemRack.Debug("Equip", "IterateSwapList swapping 2H weapon from bag", bag, "slot", slot, "to slot 16")
+						local equipMove = ItemRack.NewEquipmentMove(bag,slot,16,nil)
+						equipMove.expectedSource = swap[k]
+						table.insert(steps,equipMove)
+						local result = ItemRack.SubmitSetMoves(setname, disableSound, steps)
+						if result == "submitted" then
 							swap[k] = nil
 							swap[k+1] = nil -- fix by Romracer
+							return "submitted"
+						else
+							return "failed"
 						end
-						skip = 1
 					else
 						if set.old then
 							if set.old[i] == nil then set.old[i] = ItemRack.GetID(i) end
 						end
 						ItemRack.Debug("Equip", "IterateSwapList executing normal move from bag", bag, "slot", slot, "--> slot", i)
-						ItemRack.MoveItem(bag,slot,i,nil)
-						if not ItemRack.AbortSwap then
+						local move = ItemRack.NewEquipmentMove(bag,slot,i,nil)
+						move.expectedSource = swap[k]
+						local result = ItemRack.SubmitSetMoves(setname, disableSound, { move })
+						if result == "submitted" then
 							swap[k] = nil
+							return "submitted"
+						else
+							return "failed"
 						end
 					end
 				elseif inv==(i+1) and ItemRack.MatchesStoredItemID(swap[k+1],ItemRack.GetID(i)) then
@@ -861,12 +1155,29 @@ function ItemRack.IterateSwapList(setname, disableSound)
 						if set.old[i] == nil then set.old[i] = ItemRack.GetID(i) end
 						if set.old[i+1] == nil then set.old[i+1] = ItemRack.GetID(i+1) end
 					end
-					ItemRack.MoveItem(i,nil,i+1,nil)
-					if not ItemRack.AbortSwap then
+					local result = ItemRack.SubmitSetMoves(setname, disableSound, {
+						ItemRack.NewEquipmentMove(i,nil,i+1,nil),
+					})
+					if result == "submitted" then
 						swap[k] = nil
 						swap[k+1] = nil
+						return "submitted"
+					else
+						return "failed"
 					end
-					skip = 1
+				elseif inv then
+					local result = ItemRack.SubmitSetMoves(setname, disableSound, {
+						ItemRack.NewEquipmentMove(inv,nil,i,nil),
+					})
+					if result == "submitted" then
+						swap[k] = nil
+						return "submitted"
+					else
+						return "failed"
+					end
+				else
+					ItemRack.FailSetSwap(setname, "source_missing", 4)
+					return "failed"
 				end
 			end
 		end
@@ -880,21 +1191,7 @@ function ItemRack.IterateSwapList(setname, disableSound)
 	if ItemRack.AbortSwap then
 		ItemRack.ClearLockList()
 	end
-	-- Safety: if cursor still has an item from a partial swap, clear it so it doesn't
-	-- block subsequent swaps. ClearCursor() returns the item to its original location.
-	if CursorHasItem() then
-		ClearCursor()
-	end
-	-- CVar fallback restore
-	if overrideSound then
-		if ItemRack.CVarMuteTimer then
-			ItemRack.CVarMuteTimer:Cancel()
-		end
-		ItemRack.CVarMuteTimer = C_Timer.NewTimer(1.5, function()
-			SetCVar("Sound_EnableSFX", "1")
-			ItemRack.CVarMuteTimer = nil
-		end)
-	end
+	return "idle"
 end
 
 function ItemRack.EndSetSwap(setname)
@@ -902,12 +1199,29 @@ function ItemRack.EndSetSwap(setname)
 	ItemRack.SetSwapping = nil
 	ItemRack.SetSwappingDisableSound = nil
 	ItemRack.SetSwappingIsAutomatic = nil
+	if setname and ItemRack.SetConfirmedMoves then
+		ItemRack.SetConfirmedMoves[setname] = nil
+	end
 	-- Cancel safety timeout since swap completed normally
 	if ItemRack.SetSwapTimeout then
 		ItemRack.SetSwapTimeout:Cancel()
 		ItemRack.SetSwapTimeout = nil
 	end
 	if setname then
+		local completedSet = ItemRackUser.Sets[setname]
+		if completedSet and not string.match(setname,"^~")
+		and ItemRack.ReleaseEventSlotsForManualChange then
+			ItemRack.ReleaseEventSlotsForManualChange(completedSet.equip)
+		end
+		if completedSet and completedSet.ShowHelm ~= nil then
+			ShowHelm(completedSet.ShowHelm == 1)
+		end
+		if completedSet and completedSet.ShowCloak ~= nil then
+			ShowCloak(completedSet.ShowCloak == 1)
+		end
+		if ItemRack.PendingSetHistory then
+			ItemRack.PendingSetHistory[setname] = nil
+		end
 		if not string.match(setname,"^~") then --do not list internal sets, prefixed with ~
 			ItemRackUser.CurrentSet = setname
 			C_Timer.After(0.5, ItemRack.UpdateCurrentSet)
@@ -950,7 +1264,11 @@ function ItemRack.EndSetSwap(setname)
 		elseif ItemRackUser.Sets[setname].oldset then
 			-- Internal set (e.g. ~Unequip, ~CombatQueue) finished restoring gear.
 			-- Set CurrentSet back to the set name stored in oldset.
-			ItemRackUser.CurrentSet = ItemRackUser.Sets[setname].oldset
+			local restoredSet = ItemRackUser.Sets[setname].oldset
+			ItemRackUser.CurrentSet = restoredSet
+			if ItemRack.PendingSetHistory then
+				ItemRack.PendingSetHistory[restoredSet] = nil
+			end
 			ItemRackUser.Sets[setname].oldset = nil
 			C_Timer.After(0.5, ItemRack.UpdateCurrentSet)
 		end
@@ -963,74 +1281,34 @@ function ItemRack.EndSetSwap(setname)
 		
 		ItemRack.UpdateCombatQueue() -- update button gear icon if per set queues is active
 	end
+	if setname and ItemRack.EventFramePlans and ItemRack.EventFramePlans[setname]
+	and ItemRack.EventFramePlanFinished then
+		ItemRack.EventFramePlanFinished(setname,true)
+	end
 --	ItemRack.Print("End of set swap. CurrentSet: "..tostring(ItemRackUser.CurrentSet))
 end
 
 -- moves an item from bag,slot to bag,slot (slot is nil for bag=inv)
 function ItemRack.MoveItem(fromBag,fromSlot,toBag,toSlot)
-	local destSlot = toSlot and "bag" or toBag -- for debug: which inv slot is the target
-	local abort
-	if CursorHasItem() then
-		abort = 2
-		ItemRack.Debug("CombatQueue", "MoveItem ABORT=2 (CursorHasItem) dest="..tostring(destSlot))
-	elseif SpellIsTargeting() then
-		abort = 3
-		ItemRack.Debug("CombatQueue", "MoveItem ABORT=3 (SpellIsTargeting) dest="..tostring(destSlot))
-	elseif not fromSlot and ItemRack.PhantomItem[GetInventoryItemID("player",fromBag) or 1] then
-		ItemRack.Debug("CombatQueue", "MoveItem SKIP (PhantomItem) dest="..tostring(destSlot))
-		return  -- oscarucb: ignore swap requests on slots containing "phantom" artifact items
-	elseif (not fromSlot and IsInventoryItemLocked(fromBag)) or (not toSlot and IsInventoryItemLocked(toBag)) then
-		abort = 4
-		ItemRack.Debug("CombatQueue", "MoveItem ABORT=4 (InventoryItemLocked) dest="..tostring(destSlot).." fromLocked="..tostring(not fromSlot and IsInventoryItemLocked(fromBag)).." toLocked="..tostring(not toSlot and IsInventoryItemLocked(toBag)))
-	elseif (fromSlot and select(3,GetContainerItemInfo(fromBag,fromSlot))) or (toSlot and select(3,GetContainerItemInfo(toBag,toSlot))) then
-		abort = 4
-		ItemRack.Debug("CombatQueue", "MoveItem ABORT=4 (ContainerItemLocked) dest="..tostring(destSlot))
+	if not fromSlot and ItemRack.PhantomItem[GetInventoryItemID("player",fromBag) or 1] then
+		ItemRack.AbortSwap = 4
+		return "failed", nil, "phantom_source"
 	end
-	if abort then
-		ItemRack.AbortSwap = abort
-		return
+	local result, request, reason = ItemRack.StartEquipmentTransaction({
+		kind = "move",
+		origin = "legacy_move_adapter",
+		steps = { ItemRack.NewEquipmentMove(fromBag,fromSlot,toBag,toSlot) },
+		disableSound = ItemRackSettings.DisableSwapSound == "ON",
+	})
+	if result == "blocked" then
+		ItemRack.AbortSwap = reason == "cursor_occupied" and 2
+			or (reason == "spell_targeting" and 3 or 4)
+	elseif result == "failed" then
+		ItemRack.AbortSwap = 4
 	else
-		ItemRack.Debug("CombatQueue", "MoveItem ATTEMPT from=("..tostring(fromBag)..","..tostring(fromSlot)..") to=("..tostring(toBag)..","..tostring(toSlot)..") combat="..tostring(InCombatLockdown()))
-		if fromSlot then
-			PickupContainerItem(fromBag,fromSlot)
-		else
-			PickupInventoryItem(fromBag)
-		end
-		if toSlot then
-			PickupContainerItem(toBag,toSlot)
-		else
-			if toBag == INVSLOT_AMMO then -- workaround for classic ammo slot weirdness
-				toBag = INVSLOT_RANGED
-			end
-			PickupInventoryItem(toBag)
-		end
-
-		-- Return displaced items to source locations to complete swaps:
-		if fromSlot and not toSlot and CursorHasItem() then
-			-- Moving from container to inventory: place displaced item into source container slot
-			PickupContainerItem(fromBag, fromSlot)
-		elseif not fromSlot and toSlot and CursorHasItem() then
-			-- Moving from inventory to container: place displaced item into source inventory slot
-			PickupInventoryItem(fromBag)
-		elseif not fromSlot and not toSlot and CursorHasItem() then
-			-- Inner-slot shuffle (inventory to inventory): place displaced item into source inventory slot
-			PickupInventoryItem(fromBag)
-		elseif fromSlot and toSlot and CursorHasItem() then
-			-- Container to container: place displaced item into source container slot
-			PickupContainerItem(fromBag, fromSlot)
-		end
-
-		-- Post-swap safety: if cursor still has an item after return pickup, the swap
-		-- was blocked (e.g. by combat timing, GCD, animation, full bag). Clear the cursor
-		-- to return whatever is held back to its origin and mark as aborted.
-		if CursorHasItem() then
-			ItemRack.Debug("CombatQueue", "MoveItem POST-SWAP FAIL: cursor still has item after swap to dest="..tostring(destSlot)..". ClearCursor called.")
-			ClearCursor()
-			ItemRack.AbortSwap = 4
-		else
-			ItemRack.Debug("CombatQueue", "MoveItem SUCCESS dest="..tostring(destSlot))
-		end
+		ItemRack.AbortSwap = nil
 	end
+	return result, request, reason
 end
 
 function ItemRack.IsSetEquipped(setname,exact)
@@ -1072,8 +1350,9 @@ function ItemRack.IsSetEquipped(setname,exact)
 				-- queue, accept whichever queued item is intentionally active for
 				-- this set context. Dormant queue settings must not make an unchanged
 				-- equipment set appear as "Custom".
-				local slotQueue = ItemRack.GetQueues(setname)[i]
-				if ItemRackUser.EnableQueues == "ON" and slotQueue and #slotQueue > 0 and ItemRack.GetQueuesEnabled(setname)[i] then
+				local queueContext = ItemRack.GetQueueContext(i,setname)
+				local slotQueue = queueContext.list
+				if ItemRackUser.EnableQueues == "ON" and slotQueue and #slotQueue > 0 and queueContext.enabled then
 					local currentBaseID = ItemRack.GetIRString(id,true)
 					local currentCustomTime
 					local currentInQueue = false
@@ -1088,8 +1367,13 @@ function ItemRack.IsSetEquipped(setname,exact)
 							currentCustomTime = currentEntry.swapInEnabled and currentEntry.swapIn or nil
 						end
 						local start,duration,enable = GetInventoryItemCooldown("player",i)
-						local ready = ItemRack.ShouldHoldEquippedItem and ItemRack.ShouldHoldEquippedItem(i, id, currentBaseID, currentCustomTime) or ItemRack.ItemNearReady(currentBaseID, i, currentCustomTime)
-						local _, active = ItemRack.AutoQueueItemToEquip(i, currentBaseID, enable, ready, setname)
+						local ready
+						if ItemRack.ShouldHoldEquippedItem then
+							ready = ItemRack.ShouldHoldEquippedItem(i,id,currentBaseID,currentCustomTime)
+						else
+							ready = ItemRack.ItemNearReady(currentBaseID,i,currentCustomTime)
+						end
+						local _, active = ItemRack.AutoQueueItemToEquip(i, currentBaseID, enable, ready, setname, queueContext)
 						if currentInQueue then
 							match = not active or matchesStored(active, id)
 						elseif match and active and not matchesStored(active, id) then
@@ -1116,6 +1400,20 @@ function ItemRack.UnequipSet(setname, disableSound)
 	-- Otherwise, it restores the set's 'old' to 'ItemRackUser.CurrentSet' via '~Unequip'.
 	if setname and ItemRackUser.Sets[setname] then
 		ItemRack.Debug("Equip", "UnequipSet called for:", setname, "- CurrentSet is:", ItemRackUser.CurrentSet)
+		-- Manual toggle-off is just as authoritative as choosing a different set
+		-- while an associated specialization cast is pending. Record it before a
+		-- lock can defer the restore. Canonical automatic event removals use PopEvent
+		-- and therefore never enter this legacy/manual path with false provenance.
+		local pendingSpecSet = ItemRack.PendingSpecSet
+		if pendingSpecSet and not ItemRack.IsEventEquipment and not ItemRack.IsDeferredEquipment
+		and string.sub(setname,1,1) ~= "~" then
+			pendingSpecSet.cancelledByManualUnequip = true
+			pendingSpecSet.latestManualSet = nil
+			if ItemRack.ReleaseEventSlotsForManualChange then
+				ItemRack.ReleaseEventSlotsForManualChange(ItemRackUser.Sets[setname].equip)
+			end
+			ItemRack.Debug("Events", "Manual unequip superseded associated spec-set intent:", setname)
+		end
 		if ItemRack.SetSwapping or ItemRack.AnythingLocked() then
 			local blockReason = ItemRack.SetSwapping and ("SetSwapping("..tostring(ItemRack.SetSwapping)..")") or ItemRack.GetLockedReason()
 			ItemRack.Debug("Equip", "UnequipSet deferred set:", setname, "- locked item:", blockReason)
