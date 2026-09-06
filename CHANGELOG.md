@@ -4,6 +4,8 @@ All notable changes to the TBC Anniversary port of ItemRack will be documented i
 
 ## [Development]
 
+
+## [4.45-beta3] - 2026-09-06
 - **Script Event Consent Boundary**: Saving valid Script events through ItemRack's editor now records interface approval for their exact name, trigger, and Lua source. Scripts introduced or changed outside that interface remain disabled until the player deliberately enables and accepts them through a warning prompt; unchanged packaged defaults remain privately trusted.
 - **Injected Script Fail-Closed Guards**: Event registration, deferred-trigger detection, final dispatch, and logout persistence independently reject unapproved source before compilation or SavedVariables output. Rejected or invalid new events are removed, while rejected changes restore the last approved version disabled.
 

@@ -1,5 +1,6 @@
 __ Development __
 
+__ New in 4.45-beta3 - By Bl4ut0 __
 - Saving a valid Script event through ItemRack's editor now approves its exact name, trigger, and Lua source. Scripts introduced or changed outside the editor stay disabled until the player enables and accepts them through a warning prompt; unchanged packaged defaults remain privately trusted.
 - Added fail-closed registration, dispatch, and logout checks. Rejected or invalid new Script events are removed before they can persist, while rejected changes restore the last approved version disabled.
 
