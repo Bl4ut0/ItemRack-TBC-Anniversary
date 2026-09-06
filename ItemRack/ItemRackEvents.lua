@@ -6,6 +6,228 @@ local loadstring = loadstring or load
 local _refreshMountState = 0
 local CaptureLegacyEventState
 
+-- Script events execute arbitrary Lua and ItemRackEvents is a shared global
+-- SavedVariable that any addon can modify. Keep the active approval snapshot
+-- private to this file and compare the exact event name, trigger, and source at
+-- every registration/dispatch boundary. This is a consent and persistence
+-- guard, not an addon sandbox: all WoW addons still share one Lua environment.
+local scriptEventPrelude = "local event,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10 = ...;local EquipEventSet = function(setname, disableSound) return ItemRack.ScriptEventEquip(event, setname, disableSound) end;local UnequipEventSet = function(disableSound) return ItemRack.ScriptEventUnequip(event, disableSound) end;local EquipSet = function(setname, disableSound) return EquipEventSet(setname, disableSound) end;local UnequipSet = function(setname, disableSound) local activeSet = ItemRack.GetEventSet(event) if setname and (not activeSet or setname ~= activeSet) then return ItemRack.UnequipSet(setname, disableSound) end return UnequipEventSet(disableSound) end;"
+local maxScriptEventLength = 4096
+local maxScriptTriggerLength = 128
+local approvedScriptEvents = {}
+local lastApprovedScriptEvents = {}
+local scriptApprovalsInitialized = false
+local pendingScriptApproval
+local bundledScriptEvents = {}
+
+local function ScriptApprovalRecord(eventName,eventData,approvedBy)
+	return {
+		Event = eventName,
+		Type = "Script",
+		Trigger = eventData.Trigger,
+		Script = eventData.Script,
+		ApprovedBy = approvedBy,
+	}
+end
+
+local function ScriptApprovalMatches(record,eventName,eventData)
+	return type(record) == "table"
+		and type(eventData) == "table"
+		and record.Event == eventName
+		and record.Trigger == eventData.Trigger
+		and record.Script == eventData.Script
+end
+
+local function ValidateScriptEvent(eventName,eventData)
+	if type(eventName) ~= "string" or eventName == "" then
+		return false,"invalid event name"
+	end
+	if type(eventData) ~= "table" or eventData.Type ~= "Script" then
+		return false,"not a script event"
+	end
+	if type(eventData.Trigger) ~= "string" or eventData.Trigger == ""
+		or #eventData.Trigger > maxScriptTriggerLength
+		or not eventData.Trigger:match("^[A-Z][A-Z0-9_]*$") then
+		return false,"invalid game-event trigger"
+	end
+	if type(eventData.Script) ~= "string" or eventData.Script == "" then
+		return false,"missing script text"
+	end
+	if #eventData.Script > maxScriptEventLength then
+		return false,"script exceeds the 4096-character editor limit"
+	end
+	if eventData.Script:find("%z") then
+		return false,"script contains an invalid null byte"
+	end
+	return true
+end
+
+local function IsBundledScriptEvent(eventName,eventData)
+	local default = bundledScriptEvents[eventName]
+	return type(default) == "table" and default.Type == "Script"
+		and default.Trigger == eventData.Trigger
+		and default.Script == eventData.Script
+end
+
+local function EnsureScriptApprovalStore()
+	local userEvents = ItemRackUser and ItemRackUser.Events
+	if type(userEvents) ~= "table" then return nil end
+	if type(userEvents.ScriptApprovals) ~= "table" then
+		userEvents.ScriptApprovals = {}
+	end
+	return userEvents.ScriptApprovals
+end
+
+local function InitializeScriptEventApprovals()
+	approvedScriptEvents = {}
+	lastApprovedScriptEvents = {}
+	scriptApprovalsInitialized = true
+	local stored = EnsureScriptApprovalStore()
+	if not stored then return end
+	for eventName,record in pairs(stored) do
+		local approvedData = type(record) == "table" and {
+			Type = "Script",
+			Trigger = record.Trigger,
+			Script = record.Script,
+		}
+		local valid = type(record) == "table"
+			and (record.ApprovedBy == "interface" or record.ApprovedBy == "prompt")
+			and record.Event == eventName and ValidateScriptEvent(eventName,approvedData)
+		if valid then
+			lastApprovedScriptEvents[eventName] = ScriptApprovalRecord(eventName,approvedData,record.ApprovedBy)
+		else
+			stored[eventName] = nil
+		end
+	end
+	for eventName,eventData in pairs(ItemRackEvents or {}) do
+		local valid = ValidateScriptEvent(eventName,eventData)
+		if valid and IsBundledScriptEvent(eventName,eventData) then
+			approvedScriptEvents[eventName] = ScriptApprovalRecord(eventName,eventData,"bundled")
+		elseif valid and ScriptApprovalMatches(lastApprovedScriptEvents[eventName],eventName,eventData) then
+			approvedScriptEvents[eventName] = ScriptApprovalRecord(
+				eventName,eventData,lastApprovedScriptEvents[eventName].ApprovedBy)
+		end
+	end
+end
+
+local function IsScriptEventApproved(eventName,eventData)
+	if not scriptApprovalsInitialized then InitializeScriptEventApprovals() end
+	eventData = eventData or (ItemRackEvents and ItemRackEvents[eventName])
+	local valid,reason = ValidateScriptEvent(eventName,eventData)
+	if not valid then return false,reason end
+	if IsBundledScriptEvent(eventName,eventData) then return true,"bundled" end
+	if ScriptApprovalMatches(approvedScriptEvents[eventName],eventName,eventData) then
+		return true,approvedScriptEvents[eventName].ApprovedBy
+	end
+	local stored = ItemRackUser and ItemRackUser.Events
+		and ItemRackUser.Events.ScriptApprovals
+		and ItemRackUser.Events.ScriptApprovals[eventName]
+	if stored then return false,"script changed after approval" end
+	return false,"player approval required"
+end
+
+local function ForgetScriptEventApproval(eventName)
+	if eventName == nil then return end
+	approvedScriptEvents[eventName] = nil
+	lastApprovedScriptEvents[eventName] = nil
+	local stored = ItemRackUser and ItemRackUser.Events and ItemRackUser.Events.ScriptApprovals
+	if type(stored) == "table" then stored[eventName] = nil end
+end
+
+local function SafeScriptEventLabel(value)
+	value = tostring(value or ""):gsub("[%c]"," "):gsub("|","||")
+	if #value > 80 then value = value:sub(1,77).."..." end
+	return value
+end
+
+local function BlockScriptEvent(eventName,reason,quiet)
+	local enabled = ItemRackUser and ItemRackUser.Events and ItemRackUser.Events.Enabled
+	if type(enabled) == "table" and eventName ~= nil then enabled[eventName] = nil end
+	ItemRack.BlockedScriptEvents = ItemRack.BlockedScriptEvents or {}
+	local blockedKey = eventName == nil and "<nil>" or eventName
+	local firstNotice = not ItemRack.BlockedScriptEvents[blockedKey]
+	ItemRack.BlockedScriptEvents[blockedKey] = reason or "player approval required"
+	if not quiet and firstNotice then
+		ItemRack.Print("Blocked script event \""..SafeScriptEventLabel(eventName).."\": "..tostring(reason)..". Review and enable it in ItemRack Events to approve it.")
+	end
+end
+
+local function QuarantineUnapprovedScriptEvents(quiet)
+	local enabled = ItemRackUser and ItemRackUser.Events and ItemRackUser.Events.Enabled
+	if type(enabled) ~= "table" then return 0 end
+	local blocked = 0
+	for eventName in pairs(enabled) do
+		local eventData = ItemRackEvents and ItemRackEvents[eventName]
+		if type(eventData) == "table" and eventData.Type == "Script" then
+			local approved,reason = IsScriptEventApproved(eventName,eventData)
+			if not approved then
+				BlockScriptEvent(eventName,reason,quiet)
+				blocked = blocked + 1
+			end
+		end
+	end
+	return blocked
+end
+
+local function CompileScriptEvent(eventData)
+	return loadstring(scriptEventPrelude..eventData.Script)
+end
+
+local function ApproveScriptEvent(eventName,eventData,approvedBy,enableAfterApproval)
+	local valid,reason = ValidateScriptEvent(eventName,eventData)
+	if not valid then return false,reason end
+	local method,compileErr = CompileScriptEvent(eventData)
+	if not method then
+		ItemRack.Debug("Events", "Approval refused for invalid script '"..tostring(eventName).."': "..tostring(compileErr))
+		return false,"script has a syntax error"
+	end
+	local store = EnsureScriptApprovalStore()
+	if not store then return false,"approval storage is unavailable" end
+	local record = ScriptApprovalRecord(eventName,eventData,approvedBy)
+	store[eventName] = ScriptApprovalRecord(eventName,eventData,approvedBy)
+	lastApprovedScriptEvents[eventName] = ScriptApprovalRecord(eventName,eventData,approvedBy)
+	approvedScriptEvents[eventName] = record
+	ItemRack.BlockedScriptEvents = ItemRack.BlockedScriptEvents or {}
+	ItemRack.BlockedScriptEvents[eventName] = nil
+	if enableAfterApproval then
+		ItemRackUser.Events.Enabled[eventName] = true
+		ItemRackUser.EnableEvents = "ON"
+	end
+	return true,approvedBy
+end
+
+local function DiscardUnapprovedScriptEvent(eventName,reason,quiet)
+	local enabled = ItemRackUser and ItemRackUser.Events and ItemRackUser.Events.Enabled
+	if type(enabled) == "table" and eventName ~= nil then enabled[eventName] = nil end
+	local fallback = lastApprovedScriptEvents[eventName] or bundledScriptEvents[eventName]
+	if fallback and ValidateScriptEvent(eventName,fallback) then
+		ItemRackEvents[eventName] = {
+			Type = "Script",
+			Trigger = fallback.Trigger,
+			Script = fallback.Script,
+		}
+		local approvedBy = fallback.ApprovedBy or "bundled"
+		approvedScriptEvents[eventName] = ScriptApprovalRecord(eventName,ItemRackEvents[eventName],approvedBy)
+		if approvedBy ~= "bundled" then
+			local store = EnsureScriptApprovalStore()
+			if store then store[eventName] = ScriptApprovalRecord(eventName,ItemRackEvents[eventName],approvedBy) end
+		end
+		if not quiet then
+			ItemRack.Print("Rejected unapproved changes to script event \""..SafeScriptEventLabel(eventName).."\" and restored its last approved version disabled.")
+		end
+		return "restored"
+	end
+	if ItemRackEvents and eventName ~= nil then ItemRackEvents[eventName] = nil end
+	if eventName ~= nil and ItemRackUser and ItemRackUser.Events and ItemRackUser.Events.Set then
+		ItemRackUser.Events.Set[eventName] = nil
+	end
+	ForgetScriptEventApproval(eventName)
+	if not quiet then
+		ItemRack.Print("Rejected and removed script event \""..SafeScriptEventLabel(eventName).."\": "..tostring(reason)..".")
+	end
+	return "removed"
+end
+
 -- Compatibility shim for GetSpellInfo (deprecated in 11.0.0, changed in 1.15.0)
 local GetSpellInfo = GetSpellInfo or function(spellID)
 	if not spellID then return nil end
@@ -135,6 +357,19 @@ ItemRack.DefaultEvents = {
 	},
 }
 
+-- Capture packaged Script definitions in a private table while this file is
+-- loading. A later write to the public ItemRack.DefaultEvents table must not be
+-- able to manufacture bundled trust for injected code.
+for eventName,eventData in pairs(ItemRack.DefaultEvents) do
+	if eventData.Type == "Script" then
+		bundledScriptEvents[eventName] = {
+			Type = "Script",
+			Trigger = eventData.Trigger,
+			Script = eventData.Script,
+		}
+	end
+end
+
 -- resetDefault to reload/update default events, resetAll to wipe all events and recreate them
 function ItemRack.LoadEvents(resetDefault,resetAll)
 
@@ -262,6 +497,11 @@ function ItemRack.InitEvents()
 	end
 	ItemRack.LoadEvents()
 	ItemRack.MigrateDefaultScriptEvents()
+	InitializeScriptEventApprovals()
+	local blockedScripts = QuarantineUnapprovedScriptEvents(true)
+	if blockedScripts > 0 then
+		ItemRack.Print("Blocked "..blockedScripts.." unapproved script event(s). Review and enable them in ItemRack Events before they can run.")
+	end
 	-- Deferred Script triggers are runtime-only. Never carry a one-shot game
 	-- event across a reload or a fresh event-system initialization.
 	ItemRack.DeferredScriptEvents = {}
@@ -349,6 +589,7 @@ function ItemRack.RegisterEvents()
 	if not frame then return end
 	frame:UnregisterAllEvents()
 	ItemRack.StopTimer("CheckForMountedEvents")
+	QuarantineUnapprovedScriptEvents(false)
 	ItemRack.ReflectEventsRunning()
 	if ItemRackUser.EnableEvents=="OFF" then
 		return
@@ -392,8 +633,13 @@ function ItemRack.RegisterEvents()
 					frame:RegisterEvent("PLAYER_TALENT_UPDATE")
 				end
 			elseif eventType=="Script" then
-				if not frame:IsEventRegistered(eventData.Trigger) then
-					frame:RegisterEvent(eventData.Trigger)
+				local approved = IsScriptEventApproved(eventName,eventData)
+				if approved and not frame:IsEventRegistered(eventData.Trigger) then
+					local ok,registerErr = pcall(frame.RegisterEvent,frame,eventData.Trigger)
+					if not ok then
+						BlockScriptEvent(eventName,"invalid or unavailable game-event trigger",false)
+						ItemRack.Debug("Events", "Failed to register Script trigger:", eventName, registerErr)
+					end
 				end
 			end
 		else
@@ -406,6 +652,128 @@ function ItemRack.RegisterEvents()
 	ItemRack.ProcessZoneEvent()
 	ItemRack.ProcessBuffEvent()
 	ItemRack.ProcessSpecializationEvent()
+end
+
+-- Public helpers bridge the load-on-demand options UI to the private runtime
+-- approval snapshot. Registration and execution still perform their own exact
+-- content checks immediately before accepting a Script event.
+function ItemRack.IsScriptEventApproved(eventName)
+	return IsScriptEventApproved(eventName)
+end
+
+function ItemRack.ForgetScriptEventApproval(eventName)
+	ForgetScriptEventApproval(eventName)
+end
+
+function ItemRack.ReconcileScriptEventApprovals()
+	return QuarantineUnapprovedScriptEvents(false)
+end
+
+function ItemRack.ApproveScriptEventFromInterface(eventName)
+	local eventData = ItemRackEvents and ItemRackEvents[eventName]
+	local approved,reason = ApproveScriptEvent(eventName,eventData,"interface",true)
+	if not approved then
+		DiscardUnapprovedScriptEvent(eventName,reason,false)
+		return false,reason
+	end
+	return true,"interface"
+end
+
+function ItemRack.RemoveUnapprovedScriptEvents()
+	local candidates = {}
+	for eventName,eventData in pairs(ItemRackEvents or {}) do
+		if type(eventData) == "table" and eventData.Type == "Script"
+		and not IsScriptEventApproved(eventName,eventData) then
+			table.insert(candidates,eventName)
+		end
+	end
+	for _,eventName in ipairs(candidates) do
+		DiscardUnapprovedScriptEvent(eventName,"no player approval was recorded",true)
+	end
+	local stored = ItemRackUser and ItemRackUser.Events and ItemRackUser.Events.ScriptApprovals
+	if type(stored) == "table" then
+		for eventName in pairs(stored) do
+			local eventData = ItemRackEvents and ItemRackEvents[eventName]
+			if type(eventData) ~= "table" or eventData.Type ~= "Script" then
+				ForgetScriptEventApproval(eventName)
+			end
+		end
+	end
+	return #candidates
+end
+
+function ItemRack.RequestScriptEventApproval(eventName,enableAfterApproval)
+	local eventData = ItemRackEvents and ItemRackEvents[eventName]
+	local valid,reason = ValidateScriptEvent(eventName,eventData)
+	if not valid then
+		DiscardUnapprovedScriptEvent(eventName,reason,false)
+		return false,reason
+	end
+	local approved,approvalSource = IsScriptEventApproved(eventName,eventData)
+	if approved then
+		if enableAfterApproval then
+			ItemRackUser.Events.Enabled[eventName] = true
+			ItemRackUser.EnableEvents = "ON"
+			ItemRack.RegisterEvents()
+			if ItemRackOpt and ItemRackOpt.PopulateEventList then ItemRackOpt.PopulateEventList() end
+		end
+		return true,approvalSource
+	end
+	if pendingScriptApproval then
+		return false,"another script approval is already pending"
+	end
+
+	local pending = ScriptApprovalRecord(eventName,eventData,"prompt")
+	local method,compileErr = CompileScriptEvent(eventData)
+	if not method then
+		DiscardUnapprovedScriptEvent(eventName,"script has a syntax error",false)
+		ItemRack.Debug("Events", "Approval refused for invalid script '"..tostring(eventName).."': "..tostring(compileErr))
+		return false,"script has a syntax error"
+	end
+	pendingScriptApproval = pending
+
+	StaticPopupDialogs["ITEMRACK_APPROVE_SCRIPT_EVENT"] = {
+		text = "%s",
+		button1 = enableAfterApproval and "Approve & Enable" or "Approve",
+		button2 = "Reject",
+		timeout = 0,
+		whileDead = true,
+		hideOnEscape = true,
+		preferredIndex = 3,
+		OnAccept = function()
+			if pendingScriptApproval ~= pending then return end
+			pendingScriptApproval = nil
+			local current = ItemRackEvents and ItemRackEvents[eventName]
+			if not ScriptApprovalMatches(pending,eventName,current) then
+				DiscardUnapprovedScriptEvent(eventName,"script changed while approval was open",false)
+				return
+			end
+			local accepted,acceptReason = ApproveScriptEvent(eventName,current,"prompt",enableAfterApproval)
+			if not accepted then
+				DiscardUnapprovedScriptEvent(eventName,acceptReason,false)
+				return
+			end
+			ItemRack.Print("Approved script event \""..SafeScriptEventLabel(eventName).."\" through the confirmation prompt.")
+			ItemRack.RegisterEvents()
+			if ItemRackOpt and ItemRackOpt.PopulateEventList then ItemRackOpt.PopulateEventList() end
+		end,
+		OnCancel = function()
+			if pendingScriptApproval ~= pending then return end
+			pendingScriptApproval = nil
+			DiscardUnapprovedScriptEvent(eventName,"player rejected the approval prompt",false)
+			if ItemRackOpt and ItemRackOpt.PopulateEventList then ItemRackOpt.PopulateEventList() end
+		end,
+	}
+	local prompt = "ItemRack script events execute arbitrary Lua with addon-level access. Only approve code you wrote or reviewed.\n\nEvent: "
+		..SafeScriptEventLabel(eventName).."\nTrigger: "..SafeScriptEventLabel(eventData.Trigger)
+		.."\n\nApprove this exact trigger and script? Any later change will disable it again. Rejecting removes a new event or restores its last approved version."
+	local popup = StaticPopup_Show("ITEMRACK_APPROVE_SCRIPT_EVENT",prompt)
+	if not popup then
+		pendingScriptApproval = nil
+		DiscardUnapprovedScriptEvent(eventName,"approval prompt could not be shown",false)
+		return false,"approval prompt could not be shown"
+	end
+	return false,"approval pending"
 end
 
 function ItemRack.SpinDownEvent(eventName)
@@ -1008,7 +1376,9 @@ local function HasEnabledScriptTrigger(event)
 	for eventName in pairs(enabled) do
 		local eventData = ItemRackEvents and ItemRackEvents[eventName]
 		if eventData and eventData.Type == "Script" and eventData.Trigger == event then
-			return true
+			local approved,reason = IsScriptEventApproved(eventName,eventData)
+			if approved then return true end
+			BlockScriptEvent(eventName,reason,false)
 		end
 	end
 	return false
@@ -1052,13 +1422,19 @@ local function ProcessScriptTriggers(event,args)
 	for eventName in pairs(enabled) do
 		local eventData = events[eventName]
 		if eventData and eventData.Type=="Script" and eventData.Trigger==event then
-			local method, compileErr = loadstring("local event,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10 = ...;local EquipEventSet = function(setname, disableSound) return ItemRack.ScriptEventEquip(event, setname, disableSound) end;local UnequipEventSet = function(disableSound) return ItemRack.ScriptEventUnequip(event, disableSound) end;local EquipSet = function(setname, disableSound) return EquipEventSet(setname, disableSound) end;local UnequipSet = function(setname, disableSound) local activeSet = ItemRack.GetEventSet(event) if setname and (not activeSet or setname ~= activeSet) then return ItemRack.UnequipSet(setname, disableSound) end return UnequipEventSet(disableSound) end;" .. eventData.Script)
-			if not method then
-				ItemRack.Debug("Events", "Error compiling script for event '" .. tostring(eventName) .. "': " .. tostring(compileErr))
+			local approved,reason = IsScriptEventApproved(eventName,eventData)
+			if not approved then
+				BlockScriptEvent(eventName,reason,false)
 			else
-				local ok, runErr = pcall(method,event,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10)
-				if not ok then
-					ItemRack.Debug("Events", "Error running script for event '" .. tostring(eventName) .. "': " .. tostring(runErr))
+				local method, compileErr = loadstring(scriptEventPrelude .. eventData.Script)
+				if not method then
+					BlockScriptEvent(eventName,"script has a syntax error",false)
+					ItemRack.Debug("Events", "Error compiling script for event '" .. tostring(eventName) .. "': " .. tostring(compileErr))
+				else
+					local ok, runErr = pcall(method,event,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10)
+					if not ok then
+						ItemRack.Debug("Events", "Error running script for event '" .. tostring(eventName) .. "': " .. tostring(runErr))
+					end
 				end
 			end
 		end

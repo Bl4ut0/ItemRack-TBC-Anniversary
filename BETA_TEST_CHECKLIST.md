@@ -29,7 +29,17 @@ Use the packaged build from `.versions/Release/v{Version}`. Reload the UI after 
 - Disable and re-enable the global event system while remaining in the same spec. Confirm specialization, stance, zone, and buff state are reconciled without duplicate swaps.
 - Add a one-shot Script event triggered by `PLAYER_ENTERING_WORLD`, cross a loading screen, and confirm it runs exactly once after the transition hold with its original arguments.
 
-## 4. Lock, summon, and transition recovery
+## 4. Script event approval and mutation
+
+- Create a valid custom Script event in ItemRack. Confirm **Save** immediately approves and enables it without a second prompt.
+- Enter a syntax error in a new Script event and click **Save**. Confirm ItemRack refuses the save and leaves the editor open for correction.
+- With another test addon or `/run`, add a Script event directly to `ItemRackEvents`, open the event list, and toggle it on. Confirm a warning identifies the event and trigger and the script cannot run before acceptance.
+- Reject that warning. Confirm a new external event is removed; for an altered approved event, confirm the last approved source is restored disabled.
+- Repeat and choose **Approve & Enable**. Confirm that exact source runs and remains approved after `/reload`.
+- Alter one character after approval and fire the trigger. Confirm ItemRack reports and disables the event without executing the altered source, and logout/reload cannot persist the altered source.
+- Confirm unchanged packaged Script events remain usable, while changing both the live event and public default table does not manufacture bundled trust.
+
+## 5. Lock, summon, and transition recovery
 
 - Trigger a one-item and a multi-item set swap while rapidly mounting/dismounting, accepting a summon, or crossing an instance portal.
 - Confirm automatic swaps pause through the transition and resume after settlement without an internal bag error or permanent `SetsWaiting` state.
@@ -37,14 +47,14 @@ Use the packaged build from `.versions/Release/v{Version}`. Reload the UI after 
 - Queue a request, then begin a channel lasting longer than ten seconds after the inventory unlocks. Confirm the watchdog waits for casting to end instead of reporting `None locked` or canceling the request.
 - After a forced timeout, confirm the minimap/set display reconciles to the gear actually worn.
 
-## 5. Right-click precedence
+## 6. Right-click precedence
 
 - With **Menu on Right-Click** on, confirm right-click opens the flyout.
 - With it off and **Use on Right-Click** on, confirm right-click uses the equipped item.
 - With both off, confirm right-click advances to the next valid queue item.
 - Confirm slot 20 opens the set list only when **Menu on Right-Click** is enabled; Alt+Right-click must always open the Sets options tab.
 
-## 6. Keybindings
+## 7. Keybindings
 
 - Bind, overwrite, and unbind both a set and a slot. Test a set name containing `%`.
 - Confirm rejected overwrites restore both prior bindings, screenshots and extended mouse buttons remain protected, and deleting a set removes its binding.

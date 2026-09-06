@@ -1,5 +1,8 @@
 __ Development __
 
+- Saving a valid Script event through ItemRack's editor now approves its exact name, trigger, and Lua source. Scripts introduced or changed outside the editor stay disabled until the player enables and accepts them through a warning prompt; unchanged packaged defaults remain privately trusted.
+- Added fail-closed registration, dispatch, and logout checks. Rejected or invalid new Script events are removed before they can persist, while rejected changes restore the last approved version disabled.
+
 __ New in 4.45-beta2 - By Bl4ut0 __
 - Added deterministic production-Lua stress coverage for large profiles: 64 overlapping sets, a 96-entry event/queue context, 931 legacy queues, and 97 serialized multi-slot equipment transactions now run in the standard release gate.
 - Fixed same-event generation replacement leaving gear from slots that the newer event set no longer owned. Replacement now emits one coalesced plan that restores dropped slots, keeps retained targets stable, and preserves their original lower restoration history.

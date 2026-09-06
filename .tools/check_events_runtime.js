@@ -3,6 +3,7 @@ const fs = require('fs');
 
 const events = fs.readFileSync('ItemRack/ItemRackEvents.lua', 'utf8').replace(/\r\n/g, '\n');
 const eventState = fs.readFileSync('ItemRack/ItemRackEventState.lua', 'utf8').replace(/\r\n/g, '\n');
+const options = fs.readFileSync('ItemRackOptions/ItemRackOptions.lua', 'utf8').replace(/\r\n/g, '\n');
 
 function between(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -54,6 +55,34 @@ check(
     deferredScripts.includes('ProcessScriptTriggers(pending.event,pending.args)') &&
     !deferredScripts.includes('ProcessingFrameOnEvent('),
   'Replay must drain a snapshot and invoke only Script triggers, not built-in state processing.'
+);
+check(
+  deferredScripts.includes('IsScriptEventApproved(eventName,eventData)') &&
+    deferredScripts.includes('BlockScriptEvent(eventName,reason,false)') &&
+    deferredScripts.includes('loadstring(scriptEventPrelude .. eventData.Script)'),
+  'Script dispatch must recheck private exact-content approval immediately before compilation.'
+);
+
+const eventToggle = between(
+  options,
+  'function ItemRackOpt.EventListEnabledOnClick(self)',
+  'function ItemRackOpt.EventEditOnShow()'
+);
+const eventSave = between(
+  options,
+  'function ItemRackOpt.EventEditSave(override)',
+  'function ItemRackOpt.EventEditDelete(override)'
+);
+check(
+  eventToggle.includes('ItemRack.IsScriptEventApproved(eventName)') &&
+    eventToggle.includes('ItemRack.RequestScriptEventApproval(eventName,true)'),
+  'Enabling an unapproved Script event in the options UI must require player approval.'
+);
+check(
+  eventSave.includes('ItemRack.ApproveScriptEventFromInterface(eventName)') &&
+    eventSave.includes('if not approved then') &&
+    eventSave.includes('was not saved'),
+  'Saving through the ItemRack editor must approve valid source and refuse invalid source.'
 );
 
 const specialization = between(

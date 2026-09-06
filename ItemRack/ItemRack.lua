@@ -882,6 +882,12 @@ function ItemRack.OnPlayerLogin()
 end
 
 function ItemRack.OnPlayerLogout()
+	-- SavedVariables are written after this event. Remove or roll back every
+	-- Script event that was neither saved through ItemRack's editor nor accepted
+	-- through its approval prompt so injected source cannot persist via ItemRack.
+	if ItemRack.RemoveUnapprovedScriptEvents then
+		ItemRack.RemoveUnapprovedScriptEvents()
+	end
 	-- ItemRack binding changes are saved when they are made. Set keys are also
 	-- mirrored in ItemRackUser so older profiles can be reconciled on login.
 end
@@ -2221,6 +2227,7 @@ function ItemRack.InitCore()
 	hooksecurefunc(GameTooltip, "SetHyperlink", ItemRack.OnSetHyperlink)
 
 	ItemRackFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+	ItemRackFrame:RegisterEvent("PLAYER_LOGOUT")
 	ItemRackFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 	ItemRackFrame:RegisterEvent("PLAYER_UNGHOST")
 	ItemRackFrame:RegisterEvent("PLAYER_ALIVE")

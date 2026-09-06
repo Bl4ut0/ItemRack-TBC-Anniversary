@@ -12,6 +12,17 @@ Run only the deterministic many-set workloads:
 node tests/test_large_profiles_lua.js
 ```
 
+The focused script-event trust test can be run independently with:
+
+```powershell
+node .tools/test_script_event_approval_lua.js
+```
+
+It executes the production event dispatcher and verifies interface approval,
+exact prompted approval, first-use blocking, mutation rollback,
+time-of-check/time-of-use rejection, logout persistence cleanup,
+packaged-script matching, and malformed or oversized input removal.
+
 The many-set suite executes the production Lua reducers and transaction engine
 through Fengari. It does not replace the focused regression files under
 `.tools`; it adds long-lived profile shapes and operation sequences that are

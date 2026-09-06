@@ -2296,10 +2296,18 @@ function ItemRackOpt.EventListOnEnter(self,child)
 	elseif eventType=="Specialization" then
 		desc = desc.."activating "..(ItemRackOpt.GetSpecName(event.Spec))
 	else
-		desc = "|cFFBBBBBBScript event triggered on "..event.Trigger
-		local comment = string.match(event.Script,"--%[%[(.+)%]%]")
+		desc = "|cFFBBBBBBScript event triggered on "..tostring(event.Trigger or "<invalid>")
+		local comment = type(event.Script)=="string" and string.match(event.Script,"--%[%[(.+)%]%]")
 		if comment then
 			desc = desc.."\n"..comment
+		end
+		if ItemRack.IsScriptEventApproved then
+			local approved,reason = ItemRack.IsScriptEventApproved(eventName)
+			if approved then
+				desc = desc.."\n|cFF55DD55Approved for this exact trigger and code."
+			else
+				desc = desc.."\n|cFFFF5555Blocked: "..tostring(reason).."."
+			end
 		end
 	end
 	if event.NotInPVP then
@@ -2348,6 +2356,17 @@ function ItemRackOpt.EventListEnabledOnClick(self)
 	ItemRackOpt.EventSelected = idx
 	local checked = self:GetChecked()
 	local eventName = ItemRackOpt.EventList[idx][1]
+	local eventType = ItemRackOpt.EventList[idx][2]
+	if checked and eventType=="Script" and ItemRack.IsScriptEventApproved then
+		local approved = ItemRack.IsScriptEventApproved(eventName)
+		if not approved then
+			ItemRackUser.Events.Enabled[eventName] = nil
+			self:SetChecked(false)
+			ItemRackOpt.PopulateEventList()
+			ItemRack.RequestScriptEventApproval(eventName,true)
+			return
+		end
+	end
 	ItemRackUser.Events.Enabled[eventName] = checked
 	if checked then
 		ItemRackUser.EnableEvents = "ON"
@@ -2362,7 +2381,7 @@ function ItemRackOpt.EventListEnabledOnClick(self)
 			ItemRack.SpinDownEvent(eventName)
 		end
 	end
-	if checked and ItemRackOpt.EventList[idx][2]~="Script" and not ItemRackUser.Events.Set[eventName] then
+	if checked and eventType~="Script" and not ItemRackUser.Events.Set[eventName] then
 		-- if an event without a set is being checked, choose a set
 		ItemRackOpt.EventListIconOnClick(self)
 	end
@@ -2646,11 +2665,18 @@ function ItemRackOpt.EventEditSave(override)
 	elseif event.Type=="Script" then
 		event.Trigger = ItemRackOptEventEditScriptTrigger:GetText()
 		event.Script = ItemRackOptEventEditScriptEditBox:GetText()
-		ItemRackUser.Events.Enabled[eventName] = true
-		ItemRackUser.EnableEvents = "ON"
-		ItemRack.ReflectEventsRunning()
 	end
-	ItemRack.Print("Event \""..eventName.."\" saved.")
+	if event.Type=="Script" then
+		local approved,reason = ItemRack.ApproveScriptEventFromInterface(eventName)
+		if not approved then
+			ItemRack.Print("Event \""..eventName.."\" was not saved: "..tostring(reason)..".")
+			return
+		end
+		ItemRack.Print("Event \""..eventName.."\" saved and approved through the ItemRack editor.")
+	else
+		if ItemRack.ForgetScriptEventApproval then ItemRack.ForgetScriptEventApproval(eventName) end
+		ItemRack.Print("Event \""..eventName.."\" saved.")
+	end
 	ItemRackOptSubFrame8:Hide()     
 	ItemRackOpt.PopulateEventList()
 	-- select this new event in the event list
@@ -2695,6 +2721,7 @@ function ItemRackOpt.EventEditDelete(override)
 	else
 		ItemRackEvents[eventName] = nil
 	end
+	if ItemRack.ForgetScriptEventApproval then ItemRack.ForgetScriptEventApproval(eventName) end
 	ItemRackOpt.EventSelected = nil
 	ItemRack.CleanupEvents()
 	ItemRackOpt.PopulateEventList()

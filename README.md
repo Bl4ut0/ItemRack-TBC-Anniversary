@@ -98,6 +98,19 @@ UnequipEventSet()
 
 Use the new helper names when editing or creating script events going forward. If a script intentionally calls `ItemRack.EquipSet(...)` or `ItemRack.UnequipSet(...)`, that remains the low-level escape hatch and is not automatically stack-managed.
 
+#### Script Event Safety
+
+Script events execute Lua with addon-level access, so ItemRack treats their code as an explicit trust decision:
+
+- Saving a valid custom Script event through ItemRack's editor counts as explicit approval and enables that exact source without an extra prompt.
+- A Script event introduced or changed outside the editor is disabled. Deliberately enabling it opens an **Approve & Enable** prompt.
+- Approval covers the exact event name, game-event trigger, and script text. Changing any of them disables the event and requires prompt approval or an ItemRack editor save.
+- Unchanged scripts shipped with ItemRack are trusted as part of the installed addon. Modifying one removes that bundled trust.
+- Rejected, malformed, oversized, or syntactically invalid new events are removed. Rejected changes to a previously approved event restore its last approved source, disabled.
+- ItemRack removes or rolls back every remaining unapproved Script event before SavedVariables are written at logout. Registration and dispatch also recheck approval before compiling code.
+
+WoW addons share one Lua environment, so no addon can sandbox another hostile addon or WeakAura. This guard prevents unreviewed code from using ItemRack's saved script-event engine as an execution or persistence path; users should still delete any untrusted aura or addon that supplied the code.
+
 ### 🛠️ Diagnostic Debugging Tools (New!)
 ItemRack now includes an incredibly powerful, native diagnostic system built directly into the UI. No more trying to find or zip `WTF` folders—if you experience a bug, you can instantly export exactly what is wrong.
 
